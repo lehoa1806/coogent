@@ -1,0 +1,108 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://isolated-agent.dev/schemas/runbook.schema.json",
+    "title": "Isolated-Agent Task Runbook",
+    "description": "The persistent state file for the Isolated-Agent orchestration engine.",
+    "type": "object",
+    "required": [
+        "project_id",
+        "status",
+        "current_phase",
+        "phases"
+    ],
+    "additionalProperties": false,
+    "properties": {
+        "project_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Unique identifier for the execution run."
+        },
+        "status": {
+            "type": "string",
+            "enum": [
+                "idle",
+                "running",
+                "paused_error",
+                "completed"
+            ],
+            "description": "Global execution status."
+        },
+        "current_phase": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Index of the currently executing (or next-to-execute) phase."
+        },
+        "phases": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Ordered collection of micro-tasks.",
+            "items": {
+                "type": "object",
+                "required": [
+                    "id",
+                    "status",
+                    "prompt",
+                    "context_files",
+                    "success_criteria"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "description": "Sequential phase identifier."
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": [
+                            "pending",
+                            "running",
+                            "completed",
+                            "failed"
+                        ],
+                        "description": "Phase execution status."
+                    },
+                    "prompt": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "The explicit instruction to inject into the ephemeral worker agent."
+                    },
+                    "context_files": {
+                        "type": "array",
+                        "items": {
+                            "type": "string",
+                            "minLength": 1
+                        },
+                        "description": "File paths (relative to workspace root) to read and inject."
+                    },
+                    "success_criteria": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Condition to mark this phase as successful (e.g., 'exit_code:0')."
+                    },
+                    "depends_on": {
+                        "type": "array",
+                        "items": {
+                            "type": "integer"
+                        },
+                        "description": "Phase IDs that must complete before this phase begins (DAG mode)."
+                    },
+                    "evaluator": {
+                        "type": "string",
+                        "enum": [
+                            "exit_code",
+                            "regex",
+                            "toolchain",
+                            "test_suite"
+                        ],
+                        "description": "Evaluator type for success_criteria (default: exit_code)."
+                    },
+                    "max_retries": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "description": "Maximum self-healing retry attempts for this phase."
+                    }
+                }
+            }
+        }
+    }
+}

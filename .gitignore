@@ -1,0 +1,21 @@
+# Build output
+out/
+dist/
+
+# Dependencies
+node_modules/
+
+# Extension package
+*.vsix
+
+# Runtime artifacts
+.isolated_agent/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/settings.json
+!.vscode/launch.json
+!.vscode/tasks.json
