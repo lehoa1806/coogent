@@ -15,6 +15,7 @@ import { OutputBufferRegistry } from './adk/OutputBufferRegistry.js';
 import { ContextScoper, CharRatioEncoder } from './context/ContextScoper.js';
 import { ASTFileResolver } from './context/FileResolver.js';
 import { TelemetryLogger } from './logger/TelemetryLogger.js';
+import { LogStream } from './logger/LogStream.js';
 import { GitManager } from './git/GitManager.js';
 import { GitSandboxManager } from './git/GitSandboxManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
@@ -49,6 +50,7 @@ let engine: Engine | undefined;
 let adkController: ADKController | undefined;
 let contextScoper: ContextScoper | undefined;
 let logger: TelemetryLogger | undefined;
+let logStream: LogStream | undefined;
 let gitManager: GitManager | undefined;
 let gitSandbox: GitSandboxManager | undefined;
 let outputRegistry: OutputBufferRegistry | undefined;
@@ -93,6 +95,12 @@ export async function preFlightGitCheck(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function activate(context: vscode.ExtensionContext): void {
+  // Start log stream FIRST — captures everything from this point on
+  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (wsRoot && !logStream) {
+    logStream = new LogStream(wsRoot);
+  }
+
   // Extension lifecycle starts
   console.log('[Coogent] Extension activating...');
 
@@ -632,7 +640,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export async function deactivate(): Promise<void> {
-  console.log('[Coogent] Extension deactivating...');
+  console.log('[Coogent] Extension deactivating (closing log stream)...');
 
   // Graceful shutdown: abort engine + kill all workers in parallel (Req §6)
   await Promise.allSettled([
@@ -650,6 +658,10 @@ export async function deactivate(): Promise<void> {
   adkController = undefined;
   contextScoper = undefined;
   logger = undefined;
+
+  // Dispose log stream LAST so all shutdown messages are captured
+  logStream?.dispose();
+  logStream = undefined;
   gitManager = undefined;
   gitSandbox = undefined;
   outputRegistry = undefined;
