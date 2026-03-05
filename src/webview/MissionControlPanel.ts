@@ -463,7 +463,7 @@ export class MissionControlPanel {
       <div class="panel-header">Master Task Overview</div>
       <div class="panel-body">
       <div class="master-task-summary" id="master-task-summary"></div>
-      <button id="btn-toggle-plan" class="btn-icon" data-tooltip="Toggle implementation plan" aria-label="Toggle implementation plan">📋</button>
+      <button id="btn-toggle-plan" class="btn-icon" data-tooltip="Toggle implementation plan" aria-label="Toggle implementation plan" style="display:none;">📋 Plan</button>
       <div class="master-task-plan" id="master-task-plan" style="display:none;"></div>
       </div>
     </section>
@@ -482,7 +482,7 @@ export class MissionControlPanel {
           <button id="plan-carousel-next" data-tooltip="Next phase" aria-label="Next phase">→</button>
         </div>
         <div class="plan-decision">
-          <button id="btn-plan-approve" class="primary" data-tooltip="Accept this plan and start execution" aria-label="Accept this plan and start execution">✓ Approve & Run</button>
+          <button id="btn-plan-approve" class="primary" data-tooltip="Accept this plan" aria-label="Accept this plan">✓ Approve</button>
           <div class="plan-replan-group">
             <input type="text" id="plan-feedback" class="plan-feedback-input" placeholder="What should change? (optional)" aria-label="Plan revision feedback" />
             <button id="btn-plan-reject" class="danger" data-tooltip="Send feedback and re-generate the plan" aria-label="Send feedback and re-generate the plan">↻ Revise Plan</button>

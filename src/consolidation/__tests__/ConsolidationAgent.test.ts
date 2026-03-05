@@ -199,20 +199,21 @@ describe('ConsolidationAgent', () => {
 
             const md = agent.formatAsMarkdown(report);
 
-            expect(md).toContain('# Consolidation Report');
+            expect(md).toContain('# Walkthrough');
             expect(md).toContain('## Summary');
-            expect(md).toContain('**Project ID:** proj-123');
-            expect(md).toContain('**Total Phases:** 2');
-            expect(md).toContain('**Successful:** 1');
-            expect(md).toContain('**Failed:** 1');
+            expect(md).toContain('| **Project** | proj-123 |');
+            expect(md).toContain('| **Total Phases** | 2 |');
+            expect(md).toContain('| **Successful** | 1 |');
+            expect(md).toContain('| **Failed** | 1 |');
+            expect(md).toContain('> [!WARNING]');
             expect(md).toContain('## Phase Results');
-            expect(md).toContain('### Phase 0');
-            expect(md).toContain('### Phase 1');
+            expect(md).toContain('### ✅ Phase 0');
+            expect(md).toContain('### ❌ Phase 1');
             expect(md).toContain('## All Modified Files');
-            expect(md).toContain('`src/a.ts`');
+            expect(md).toContain('+ src/a.ts');
             expect(md).toContain('## Decisions Made');
             expect(md).toContain('Used factory pattern');
-            expect(md).toContain('## Unresolved Issues');
+            expect(md).toContain('> [!CAUTION]');
             expect(md).toContain('Performance needs testing');
         });
 
@@ -266,7 +267,7 @@ describe('ConsolidationAgent', () => {
             expect(filePath).toBe(path.join(tmpDir, 'consolidation-report.md'));
 
             const content = await fs.readFile(filePath, 'utf-8');
-            expect(content).toContain('# Consolidation Report');
+            expect(content).toContain('# Walkthrough');
             expect(content).toContain('save-test');
             expect(content).toContain('Initial implementation');
         });
@@ -314,10 +315,10 @@ describe('ConsolidationAgent', () => {
 
             expect(markdown).toContain('Created base module');
             expect(markdown).toContain('Added tests');
-            expect(markdown).toContain('`src/base.ts`');
-            expect(markdown).toContain('`src/base.test.ts`');
+            expect(markdown).toContain('+ src/base.ts');
+            expect(markdown).toContain('+ src/base.test.ts');
             expect(markdown).toContain('Needs documentation');
-            expect(markdown).toContain('**Successful:** 2');
+            expect(markdown).toContain('| **Successful** | 2 |');
         });
     });
 });

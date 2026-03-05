@@ -4,6 +4,7 @@
 
 import * as vscode from 'vscode';
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { RUNBOOK_FILENAME, asPhaseId, asTimestamp } from './types/index.js';
 import type { Phase, HostToWebviewMessage } from './types/index.js';
@@ -380,6 +381,26 @@ export function activate(context: vscode.ExtensionContext): void {
           });
         }
       }).catch(log.onError);
+
+      // Issue 2: Update implementation_plan.md to mark completed phase
+      if (currentSessionDir) {
+        const planPath = path.join(currentSessionDir, 'implementation_plan.md');
+        fs.readFile(planPath, 'utf-8')
+          .then(content => {
+            // Replace the status marker for this phase from ⏳ to ✅
+            const updated = content
+              .replace(
+                new RegExp(`(Phase ${phaseId}[^\n]*?)⏳ Pending`, 'g'),
+                `$1✅ Done`
+              )
+              .replace(
+                new RegExp(`(Phase ${phaseId}[^\n]*?)🔄 Running`, 'g'),
+                `$1✅ Done`
+              );
+            return fs.writeFile(planPath, updated, 'utf-8');
+          })
+          .catch(() => { /* file may not exist yet — ignore */ });
+      }
     });
 
     // ─── Wire ADK → Engine (worker lifecycle) ──────────────────────────
@@ -453,6 +474,19 @@ export function activate(context: vscode.ExtensionContext): void {
           implementationPlan: draft.implementation_plan || '',
         },
       });
+
+      // Issue 1: Write implementation_plan.md to the session IPC directory
+      if (currentSessionDir) {
+        const implPlanContent = buildImplementationPlanMarkdown(draft);
+        fs.mkdir(currentSessionDir, { recursive: true })
+          .then(() => fs.writeFile(
+            path.join(currentSessionDir!, 'implementation_plan.md'),
+            implPlanContent,
+            'utf-8',
+          ))
+          .then(() => log.info('[Coogent] implementation_plan.md written to session dir.'))
+          .catch(err => log.error('[Coogent] Failed to write implementation_plan.md:', err));
+      }
     });
 
     plannerAgent.on('plan:error', (error) => {
@@ -791,4 +825,50 @@ async function executePhase(
   }
   const effectivePhase = { ...phase, prompt: effectivePrompt };
   await adkController.spawnWorker(effectivePhase, result.payload, timeoutMs, masterTaskId);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Implementation Plan File Builder
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Build a walkthrough-style Markdown document from the plan draft.
+ * Each phase is listed with a `⏳ Pending` status marker that will be
+ * replaced with `✅ Done` by the `phase:checkpoint` handler.
+ */
+function buildImplementationPlanMarkdown(draft: { project_id: string; summary?: string; implementation_plan?: string; phases: ReadonlyArray<{ id: number; prompt: string; context_files?: string[] | readonly string[]; success_criteria?: string; depends_on?: number[] | readonly number[] }> }): string {
+  const lines: string[] = [];
+
+  lines.push(`# Implementation Plan — ${draft.project_id}`);
+  lines.push('');
+  if (draft.summary) {
+    lines.push(`> ${draft.summary}`);
+    lines.push('');
+  }
+
+  // If the planner already produced a freeform implementation plan, include it
+  if (draft.implementation_plan) {
+    lines.push('## Detailed Plan');
+    lines.push('');
+    lines.push(draft.implementation_plan);
+    lines.push('');
+  }
+
+  lines.push('## Phases');
+  lines.push('');
+  lines.push('| # | Prompt | Files | Status |');
+  lines.push('|---|--------|-------|--------|');
+
+  for (const phase of draft.phases) {
+    const id = phase.id;
+    const prompt = (phase.prompt || '').replace(/\n/g, ' ').slice(0, 80);
+    const files = (phase.context_files || []).length;
+    lines.push(`| Phase ${id} | ${prompt} | ${files} | ⏳ Pending |`);
+  }
+
+  lines.push('');
+  lines.push(`_Generated at ${new Date().toISOString()}_`);
+  lines.push('');
+
+  return lines.join('\n');
 }

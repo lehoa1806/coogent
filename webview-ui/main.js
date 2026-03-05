@@ -164,17 +164,8 @@ window.addEventListener('message', (event) => {
 
         case 'CONSOLIDATION_REPORT':
             try {
-                // Populate the global terminal with the report text (no modal — Bug 5)
-                const $terminalOutput = document.getElementById('output');
-                if ($terminalOutput) {
-                    $terminalOutput.textContent = msg.payload.report;
-                }
-                // Ensure terminal panel is visible and styled for reporting
-                const $terminalPanel = document.querySelector('.terminal-panel');
-                if ($terminalPanel) {
-                    /** @type {HTMLElement} */ ($terminalPanel).style.display = '';
-                    $terminalPanel.classList.add('reporting');
-                }
+                // Show the consolidation report in a rich modal
+                showReportModal(msg.payload.report);
             } catch (err) { console.error('[main] CONSOLIDATION_REPORT handler error:', err); }
             break;
 
@@ -191,8 +182,16 @@ window.addEventListener('message', (event) => {
                 const $masterSummary = document.getElementById('master-task-summary');
                 const $masterPlan = document.getElementById('master-task-plan');
                 if ($masterSection) $masterSection.style.display = 'block';
-                if ($masterSummary) $masterSummary.textContent = msg.payload.summary;
-                // Render implementation plan as rich Markdown with toggle (#BUG-2)
+                // Issue 6: Truncate summary to ~200 chars for conciseness
+                if ($masterSummary) {
+                    const fullSummary = msg.payload.summary || '';
+                    const truncated = truncateSummary(fullSummary, 200);
+                    $masterSummary.textContent = truncated;
+                    if (fullSummary.length > 200) {
+                        $masterSummary.title = fullSummary; // Full text on hover
+                    }
+                }
+                // Render implementation plan as rich Markdown with toggle
                 if ($masterPlan && msg.payload.implementationPlan) {
                     $masterPlan.innerHTML = createMarkdownContainer(msg.payload.implementationPlan, 'impl-plan-md');
                     attachMarkdownToggleHandlers($masterPlan);
@@ -262,4 +261,21 @@ function updateConversationModeUI(activeMode) {
         const mode = btn.getAttribute('data-mode');
         btn.classList.toggle('active', mode === activeMode);
     });
+}
+
+/**
+ * Truncate a summary string to the given max length, breaking at sentence boundaries.
+ * @param {string} text
+ * @param {number} maxLen
+ * @returns {string}
+ */
+function truncateSummary(text, maxLen) {
+    if (!text || text.length <= maxLen) return text;
+    // Try to break at end of a sentence within the limit
+    const snippet = text.slice(0, maxLen);
+    const lastPeriod = snippet.lastIndexOf('. ');
+    if (lastPeriod > maxLen * 0.4) {
+        return snippet.slice(0, lastPeriod + 1) + ' …';
+    }
+    return snippet.trimEnd() + '…';
 }
