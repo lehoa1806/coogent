@@ -41,7 +41,7 @@ renderer.code = function (code, lang) {
 marked.setOptions({
     renderer,
     gfm: true,
-    breaks: true,
+    breaks: false,
 });
 
 /**

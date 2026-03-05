@@ -229,6 +229,10 @@ export function initControls() {
         postMessage({ type: 'CMD_REQUEST_REPORT' });
     });
 
+    $('btn-view-plan')?.addEventListener('click', () => {
+        postMessage({ type: 'CMD_REQUEST_PLAN' });
+    });
+
     // ── Terminal Resizer ─────────────────────────────────────────────────────
     initResizer();
 }

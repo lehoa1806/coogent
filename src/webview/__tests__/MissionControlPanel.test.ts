@@ -152,4 +152,8 @@ describe('isValidWebviewMessage — IPC Runtime Validation (P1-3)', () => {
             payload: { mode: 'isolated' }
         })).toBe(true);
     });
+
+    it('accepts CMD_REQUEST_PLAN (no payload)', () => {
+        expect(isValidWebviewMessage({ type: 'CMD_REQUEST_PLAN' })).toBe(true);
+    });
 });

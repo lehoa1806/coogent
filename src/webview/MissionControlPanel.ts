@@ -146,7 +146,7 @@ export class MissionControlPanel {
       typeof raw === 'object' && raw !== null &&
       (raw as Record<string, unknown>).type === 'PLAN_SUMMARY'
     ) {
-      const msg = raw as { type: 'PLAN_SUMMARY'; payload: { summary: string; implementationPlan: string } };
+      const msg = raw as { type: 'PLAN_SUMMARY'; payload: { summary: string } };
       log.info('[MissionControl] Host → Webview (pass-through): PLAN_SUMMARY');
       this.sendToWebview({
         type: 'PLAN_SUMMARY',
@@ -277,6 +277,9 @@ export class MissionControlPanel {
       case 'CMD_DELETE_SESSION':
         this.handleDeleteSession(message.payload.sessionId);
         break;
+      case 'CMD_REQUEST_PLAN':
+        this.handleRequestPlan();
+        break;
       case 'CMD_REVIEW_DIFF':
         this.engine.reviewDiff(message.payload.phaseId).catch(err => this.handleError(err));
         break;
@@ -385,6 +388,30 @@ export class MissionControlPanel {
       .catch(err => this.handleError(err));
   }
 
+  private handleRequestPlan(): void {
+    const stateManager = (this.engine as unknown as { stateManager: { getSessionDir?: () => string } }).stateManager;
+    const sessionDir = stateManager?.getSessionDir?.();
+    if (!sessionDir) return;
+
+    const planPath = path.join(sessionDir, 'implementation_plan.md');
+    fs.readFile(planPath, 'utf-8')
+      .then(plan => {
+        this.sendToWebview({
+          type: 'IMPLEMENTATION_PLAN',
+          payload: { plan },
+        });
+      })
+      .catch(() => {
+        this.sendToWebview({
+          type: 'ERROR',
+          payload: {
+            code: 'COMMAND_ERROR',
+            message: 'No implementation plan available for this session.',
+          },
+        });
+      });
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
   //  HTML Generation
   // ═══════════════════════════════════════════════════════════════════════════
@@ -453,6 +480,7 @@ export class MissionControlPanel {
         <button id="btn-abort" data-tooltip="Abort execution" aria-label="Abort execution">⏹ Abort</button>
         <div class="controls-spacer"></div>
         <button id="btn-view-report" class="btn-icon" data-tooltip="View consolidation report" aria-label="View consolidation report" style="display:none;">📊</button>
+        <button id="btn-view-plan" class="btn-icon" data-tooltip="View implementation plan" aria-label="View implementation plan" style="display:none;">📋</button>
         <span class="elapsed-time" id="elapsed-time" data-tooltip="Elapsed time" aria-label="Elapsed time">00:00</span>
       </div>
       </div>
@@ -463,8 +491,6 @@ export class MissionControlPanel {
       <div class="panel-header">Master Task Overview</div>
       <div class="panel-body">
       <div class="master-task-summary" id="master-task-summary"></div>
-      <button id="btn-toggle-plan" class="btn-icon" data-tooltip="Toggle implementation plan" aria-label="Toggle implementation plan" style="display:none;">📋 Plan</button>
-      <div class="master-task-plan" id="master-task-plan" style="display:none;"></div>
       </div>
     </section>
 
@@ -551,6 +577,17 @@ export class MissionControlPanel {
           <button class="btn-close-drawer" id="btn-close-report" aria-label="Close report">✕</button>
         </div>
         <div class="report-content" id="report-content"></div>
+      </div>
+    </div>
+
+    <!-- Plan Modal Overlay -->
+    <div class="report-overlay" id="plan-overlay" role="dialog" aria-modal="true" aria-label="Implementation Plan">
+      <div class="report-modal">
+        <div class="report-header">
+          <h2>Implementation Plan</h2>
+          <button class="btn-close-drawer" id="btn-close-plan" aria-label="Close plan">✕</button>
+        </div>
+        <div class="report-content" id="plan-content"></div>
       </div>
     </div>
   </div>

@@ -16,7 +16,6 @@
  * @property {number} planSlideIndex
  * @property {Record<number, string>} phaseOutputs
  * @property {string} masterSummary
- * @property {string} implementationPlan
  * @property {Record<number, { totalTokens: number, limit: number, fileCount: number }>} phaseTokenBudgets
  */
 
@@ -34,7 +33,6 @@ let _state = {
     planSlideIndex: 0,
     phaseOutputs: {},
     masterSummary: '',
-    implementationPlan: '',
     phaseTokenBudgets: {},
 };
 

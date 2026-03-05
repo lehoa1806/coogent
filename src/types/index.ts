@@ -400,7 +400,15 @@ export interface PlanSummaryMessage {
     readonly type: 'PLAN_SUMMARY';
     readonly payload: {
         summary: string;
-        implementationPlan: string;
+    };
+}
+
+/** Implementation plan message — markdown content of implementation_plan.md. */
+export interface ImplementationPlanMessage {
+    readonly type: 'IMPLEMENTATION_PLAN';
+    readonly payload: {
+        /** Markdown-formatted implementation plan. */
+        plan: string;
     };
 }
 
@@ -422,7 +430,8 @@ export type HostToWebviewMessage =
     | ConversationModeMessage
     | ConsolidationReportMessage
     | PhaseOutputMessage
-    | PlanSummaryMessage;
+    | PlanSummaryMessage
+    | ImplementationPlanMessage;
 
 // ── Webview → Host (user commands) ──────────────────────────────────────────
 
@@ -564,6 +573,11 @@ export interface CmdRequestReportMessage {
     readonly type: 'CMD_REQUEST_REPORT';
 }
 
+/** User requests the implementation plan for the current session. */
+export interface CmdRequestPlanMessage {
+    readonly type: 'CMD_REQUEST_PLAN';
+}
+
 /** User deletes a session from history. */
 export interface CmdDeleteSessionMessage {
     readonly type: 'CMD_DELETE_SESSION';
@@ -612,6 +626,7 @@ export type WebviewToHostMessage =
     | CmdLoadSessionMessage
     | CmdSetConversationModeMessage
     | CmdRequestReportMessage
+    | CmdRequestPlanMessage
     | CmdDeleteSessionMessage
     | CmdReviewDiffMessage
     | CmdResumePendingMessage;

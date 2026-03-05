@@ -1728,40 +1728,7 @@ button:focus-visible {
     font-weight: 500;
 }
 
-.master-task-plan {
-    margin-top: 8px;
-    padding: 10px 12px;
-    background: var(--surface-2);
-    border-radius: var(--radius);
-    font-size: 12px;
-    line-height: 1.6;
-    color: var(--text-muted);
-    white-space: pre-wrap;
-    max-height: 300px;
-    overflow-y: auto;
-}
 
-#btn-toggle-plan {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    font-family: var(--font);
-    font-size: 11px;
-    font-weight: 600;
-    margin-top: 6px;
-    padding: 3px 10px;
-    border-radius: var(--radius);
-    border: 1px solid var(--border);
-    background: var(--vscode-button-secondaryBackground, var(--surface-2));
-    color: var(--vscode-button-secondaryForeground, var(--text-muted));
-    cursor: pointer;
-    transition: all var(--transition);
-}
-
-#btn-toggle-plan:hover {
-    background: var(--vscode-button-secondaryHoverBackground, var(--surface-3));
-    color: var(--text);
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /*  Git Error Banner                                                          */
@@ -2189,21 +2156,16 @@ button:focus-visible {
 
 .md-container {
     position: relative;
+    display: flex;
+    flex-direction: column;
 }
 
 .md-toggle-bar {
-    position: absolute;
-    top: 4px;
-    right: 4px;
     display: flex;
+    justify-content: flex-end;
     gap: 2px;
-    z-index: 5;
-    opacity: 0.5;
-    transition: opacity var(--transition);
-}
-
-.md-container:hover .md-toggle-bar {
-    opacity: 1;
+    padding: 4px 0;
+    flex-shrink: 0;
 }
 
 .md-toggle-btn {
@@ -2235,6 +2197,10 @@ button:focus-visible {
     line-height: 1.6;
     word-wrap: break-word;
     overflow-wrap: break-word;
+    background: var(--vscode-textCodeBlock-background, var(--surface-2));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
 }
 
 .md-rendered h1,

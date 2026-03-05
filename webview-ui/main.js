@@ -22,10 +22,11 @@ import {
     renderState,
     updatePhaseStatus,
     showReportModal,
+    showPlanModal,
     markdownToHtml,
     renderPhaseDetails,
 } from './modules/renderers.js';
-import { initMermaid, renderMermaidBlocks, refreshMermaidTheme, createMarkdownContainer, attachMarkdownToggleHandlers } from './modules/markdown.js';
+import { initMermaid, renderMermaidBlocks, refreshMermaidTheme } from './modules/markdown.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Bootstrap
@@ -169,6 +170,12 @@ window.addEventListener('message', (event) => {
             } catch (err) { console.error('[main] CONSOLIDATION_REPORT handler error:', err); }
             break;
 
+        case 'IMPLEMENTATION_PLAN':
+            try {
+                showPlanModal(msg.payload.plan);
+            } catch (err) { console.error('[main] IMPLEMENTATION_PLAN handler error:', err); }
+            break;
+
         case 'CONVERSATION_MODE':
             try {
                 updateConversationModeUI(msg.payload.mode);
@@ -177,10 +184,9 @@ window.addEventListener('message', (event) => {
 
         case 'PLAN_SUMMARY':
             try {
-                setAppState({ masterSummary: msg.payload.summary, implementationPlan: msg.payload.implementationPlan });
+                setAppState({ masterSummary: msg.payload.summary });
                 const $masterSection = document.getElementById('master-task-section');
                 const $masterSummary = document.getElementById('master-task-summary');
-                const $masterPlan = document.getElementById('master-task-plan');
                 if ($masterSection) $masterSection.style.display = 'block';
                 // Issue 6: Truncate summary to ~200 chars for conciseness
                 if ($masterSummary) {
@@ -190,21 +196,6 @@ window.addEventListener('message', (event) => {
                     if (fullSummary.length > 200) {
                         $masterSummary.title = fullSummary; // Full text on hover
                     }
-                }
-                // Render implementation plan as rich Markdown with toggle
-                if ($masterPlan && msg.payload.implementationPlan) {
-                    $masterPlan.innerHTML = createMarkdownContainer(msg.payload.implementationPlan, 'impl-plan-md');
-                    attachMarkdownToggleHandlers($masterPlan);
-                    renderMermaidBlocks();
-                }
-                // Wire toggle button (idempotent — only attach once)
-                const $btnToggle = document.getElementById('btn-toggle-plan');
-                if ($btnToggle && $masterPlan && !$btnToggle.dataset.wired) {
-                    $btnToggle.dataset.wired = 'true';
-                    $btnToggle.style.display = msg.payload.implementationPlan ? 'inline-block' : 'none';
-                    $btnToggle.addEventListener('click', () => {
-                        $masterPlan.style.display = $masterPlan.style.display === 'none' ? 'block' : 'none';
-                    });
                 }
             } catch (err) { console.error('[main] PLAN_SUMMARY handler error:', err); }
             break;
