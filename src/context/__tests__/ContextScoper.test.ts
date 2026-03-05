@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { ContextScoper, CharRatioEncoder } from '../ContextScoper.js';
 import type { Phase } from '../../types/index.js';
+import { asPhaseId } from '../../types/index.js';
 
 describe('ContextScoper', () => {
     let tmpDir: string;
@@ -24,7 +25,7 @@ describe('ContextScoper', () => {
         await fs.writeFile(path.join(tmpDir, 'file1.txt'), 'Hello world');
         await fs.writeFile(path.join(tmpDir, 'file2.txt'), 'Foo bar');
 
-        const phase = { id: 1, status: 'pending', prompt: '', context_files: ['file1.txt', 'file2.txt'], success_criteria: '' } as Phase;
+        const phase = { id: asPhaseId(1), status: 'pending', prompt: '', context_files: ['file1.txt', 'file2.txt'], success_criteria: '' } as Phase;
         const res = await scoper.assemble(phase, tmpDir);
 
         expect(res.ok).toBe(true);
@@ -38,7 +39,7 @@ describe('ContextScoper', () => {
     });
 
     it('should fail if file not found', async () => {
-        const phase = { id: 1, status: 'pending', prompt: '', context_files: ['does-not-exist.txt'], success_criteria: '' } as Phase;
+        const phase = { id: asPhaseId(1), status: 'pending', prompt: '', context_files: ['does-not-exist.txt'], success_criteria: '' } as Phase;
         await expect(scoper.assemble(phase, tmpDir))
             .rejects.toThrow('File not found: does-not-exist.txt');
     });
@@ -48,7 +49,7 @@ describe('ContextScoper', () => {
         const largeText = 'A'.repeat(500);
         await fs.writeFile(path.join(tmpDir, 'large.txt'), largeText);
 
-        const phase = { id: 1, status: 'pending', prompt: '', context_files: ['large.txt'], success_criteria: '' } as Phase;
+        const phase = { id: asPhaseId(1), status: 'pending', prompt: '', context_files: ['large.txt'], success_criteria: '' } as Phase;
         const res = await scoper.assemble(phase, tmpDir);
         expect(res.ok).toBe(false);
         if (!res.ok) {

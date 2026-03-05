@@ -138,7 +138,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
      * Returns the first available model, or null if none found.
      */
     private async tryVscodeLm(
-        cts: vscode.CancellationTokenSource
+        _cts: vscode.CancellationTokenSource
     ): Promise<vscode.LanguageModelChat | null> {
         try {
             const models = await vscode.lm.selectChatModels({});
@@ -188,9 +188,15 @@ export class AntigravityADKAdapter implements IADKAdapter {
                 if (!cts.token.isCancellationRequested) {
                     console.log(`[AntigravityADK] LM session ${sessionId}: completed (${chunkCount} chunks, ${totalChars} chars)`);
                     exitCallback?.(0);
+                } else {
+                    console.log(`[AntigravityADK] LM session ${sessionId}: cancelled`);
+                    exitCallback?.(1);
                 }
             } catch (err: unknown) {
-                if (cts.token.isCancellationRequested) return;
+                if (cts.token.isCancellationRequested) {
+                    exitCallback?.(1);
+                    return;
+                }
                 const message = err instanceof Error ? err.message : String(err);
                 console.error(`[AntigravityADK] LM session ${sessionId} ERROR:`, message);
                 outputCallback?.('stderr', `[AntigravityADK Error] ${message}\n`);
@@ -277,6 +283,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
 
                 if (session.cts.token.isCancellationRequested) {
                     console.log(`[AntigravityADK] Session ${sessionId} was cancelled`);
+                    exitCallback?.(1);
                     return;
                 }
 
@@ -292,7 +299,10 @@ export class AntigravityADKAdapter implements IADKAdapter {
                     exitCallback?.(0);
                 }
             } catch (err: unknown) {
-                if (session.cts.token.isCancellationRequested) return;
+                if (session.cts.token.isCancellationRequested) {
+                    exitCallback?.(1);
+                    return;
+                }
                 const message = err instanceof Error ? err.message : String(err);
                 console.error(`[AntigravityADK] IPC session ${sessionId} ERROR:`, message);
                 outputCallback?.('stderr', `[AntigravityADK Error] ${message}\n`);
@@ -332,11 +342,11 @@ export class AntigravityADKAdapter implements IADKAdapter {
             const cleanup = () => {
                 if (session.watcher) {
                     session.watcher.close();
-                    session.watcher = undefined;
+                    delete session.watcher;
                 }
                 if (session.pollTimer) {
                     clearInterval(session.pollTimer);
-                    session.pollTimer = undefined;
+                    delete session.pollTimer;
                 }
                 clearTimeout(timeoutHandle);
             };
@@ -397,7 +407,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
 
             // Set up fs.watch for fast detection of file creation
             try {
-                session.watcher = watch(dir, (eventType, filename) => {
+                session.watcher = watch(dir, (_eventType, filename) => {
                     if (filename === basename) {
                         checkStability().catch(() => { });
                     }
@@ -535,11 +545,11 @@ export class AntigravityADKAdapter implements IADKAdapter {
 
         if (session.watcher) {
             session.watcher.close();
-            session.watcher = undefined;
+            delete session.watcher;
         }
         if (session.pollTimer) {
             clearInterval(session.pollTimer);
-            session.pollTimer = undefined;
+            delete session.pollTimer;
         }
 
         this.activeSessions.delete(sessionId);

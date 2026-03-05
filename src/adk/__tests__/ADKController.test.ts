@@ -1,15 +1,16 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { ADKController, MockADKAdapter, WorkerHandle } from '../ADKController.js';
+import { ADKController, MockADKAdapter } from '../ADKController.js';
 import type { Phase } from '../../types/index.js';
+import { asPhaseId } from '../../types/index.js';
 
 describe('ADKController (with MockADKAdapter)', () => {
     let controller: ADKController;
     let adapter: MockADKAdapter;
     let tmpDir: string;
     const testPhase: Phase = {
-        id: 42,
+        id: asPhaseId(42),
         prompt: 'Mock phase',
         context_files: [],
         status: 'pending',
@@ -96,4 +97,118 @@ describe('ADKController (with MockADKAdapter)', () => {
         expect(timeoutSpy).toHaveBeenCalledTimes(1);
         expect(exitedSpy).toHaveBeenCalledTimes(0);
     });
+
+    it('should cleanup orphaned PID files (#64)', async () => {
+        // Create fake PID files pointing to non-existent processes
+        const pidDir = path.join(tmpDir, '.coogent', 'pid');
+        await fs.mkdir(pidDir, { recursive: true });
+        await fs.writeFile(path.join(pidDir, 'phase-99.pid'), '99999999');
+
+        await controller.cleanupOrphanedWorkers();
+
+        const remaining = await fs.readdir(pidDir);
+        expect(remaining).toHaveLength(0);
+    });
+
+    it('should return null when concurrency cap (4) is reached (#65)', async () => {
+        const phases = [0, 1, 2, 3].map(id => ({
+            ...testPhase,
+            id: asPhaseId(id),
+        }));
+
+        for (const phase of phases) {
+            const worker = await controller.spawnWorker(phase, 'CTX', 10000);
+            expect(worker).not.toBeNull();
+        }
+
+        // 5th worker should return null
+        const fifth = await controller.spawnWorker({ ...testPhase, id: asPhaseId(99) }, 'CTX', 10000);
+        expect(fifth).toBeNull();
+
+        // Clean up all workers
+        await controller.terminateAll('TEST_CLEANUP');
+    });
+
+    it('should terminateAll active workers (#65)', async () => {
+        const terminateSpy = jest.spyOn(adapter, 'terminateSession');
+
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 'CTX', 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(2) }, 'CTX', 10000);
+
+        expect(controller.getActiveWorker(1)).toBeDefined();
+        expect(controller.getActiveWorker(2)).toBeDefined();
+
+        await controller.terminateAll('TEST');
+
+        expect(controller.getActiveWorker(1)).toBeUndefined();
+        expect(controller.getActiveWorker(2)).toBeUndefined();
+        expect(terminateSpy).toHaveBeenCalledTimes(2);
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Process Isolation & Zombie Prevention Tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('should track worker PIDs in activePids set', async () => {
+        // Initially empty
+        expect(controller.getActivePids().size).toBe(0);
+
+        const worker = await controller.spawnWorker(testPhase, 'FAKECONTEXT', 5000);
+        expect(worker).not.toBeNull();
+
+        // PID should be tracked
+        const pids = controller.getActivePids();
+        expect(pids.size).toBe(1);
+        expect(pids.has(worker!.handle.pid)).toBe(true);
+
+        // After natural exit, PID should be removed
+        await new Promise(res => setTimeout(res, 600));
+        expect(controller.getActivePids().size).toBe(0);
+    });
+
+    it('should remove PIDs from activePids on terminateWorker', async () => {
+        await controller.spawnWorker(testPhase, 'FAKECONTEXT', 5000);
+        expect(controller.getActivePids().size).toBe(1);
+
+        await controller.terminateWorker(testPhase.id, 'TEST');
+        expect(controller.getActivePids().size).toBe(0);
+    });
+
+    it('should track multiple PIDs for parallel workers', async () => {
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 'CTX', 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(2) }, 'CTX', 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(3) }, 'CTX', 10000);
+
+        expect(controller.getActivePids().size).toBe(3);
+
+        await controller.terminateAll('TEST');
+        expect(controller.getActivePids().size).toBe(0);
+    });
+
+    it('should killAllWorkers and clear all PIDs', async () => {
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 'CTX', 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(2) }, 'CTX', 10000);
+
+        expect(controller.getActivePids().size).toBe(2);
+
+        // killAllWorkers sends SIGTERM, waits, then SIGKILL
+        // With mock adapter PIDs are fake (90000+), so process.kill will no-op/throw
+        // but the method should still clean up the set
+        await controller.killAllWorkers();
+
+        expect(controller.getActivePids().size).toBe(0);
+        expect(controller.getActiveWorker(1)).toBeUndefined();
+        expect(controller.getActiveWorker(2)).toBeUndefined();
+    }, 15000); // Extended timeout for the 5s grace period
+
+    it('should dispose and be idempotent', async () => {
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 'CTX', 10000);
+        expect(controller.getActivePids().size).toBe(1);
+
+        await controller.dispose();
+        expect(controller.getActivePids().size).toBe(0);
+
+        // Second dispose should be a no-op (idempotent)
+        await controller.dispose();
+    }, 15000);
 });

@@ -6,8 +6,8 @@
 
 import type { WebviewToHostMessage } from '../types/index.js';
 
-const VALID_TYPES_NO_PAYLOAD = new Set(['CMD_START', 'CMD_PAUSE', 'CMD_ABORT', 'CMD_REQUEST_STATE', 'CMD_PLAN_APPROVE', 'CMD_RESET', 'CMD_LIST_SESSIONS']);
-const VALID_TYPES_WITH_PHASEID = new Set(['CMD_RETRY', 'CMD_SKIP_PHASE', 'CMD_PAUSE_PHASE', 'CMD_STOP_PHASE', 'CMD_RESTART_PHASE']);
+const VALID_TYPES_NO_PAYLOAD = new Set(['CMD_START', 'CMD_PAUSE', 'CMD_ABORT', 'CMD_REQUEST_STATE', 'CMD_PLAN_APPROVE', 'CMD_PLAN_RETRY_PARSE', 'CMD_RESET', 'CMD_LIST_SESSIONS', 'CMD_REQUEST_REPORT', 'CMD_RESUME_PENDING']);
+const VALID_TYPES_WITH_PHASEID = new Set(['CMD_RETRY', 'CMD_SKIP_PHASE', 'CMD_PAUSE_PHASE', 'CMD_STOP_PHASE', 'CMD_RESTART_PHASE', 'CMD_REVIEW_DIFF']);
 
 /**
  * Runtime validation for Webview → Host IPC messages.
@@ -68,6 +68,11 @@ export function isValidWebviewMessage(raw: unknown): raw is WebviewToHostMessage
         const payload = msg.payload as Record<string, unknown> | undefined;
         if (typeof payload !== 'object' || payload === null || typeof payload.mode !== 'string') return false;
         return ['isolated', 'continuous', 'smart'].includes(payload.mode as string);
+    }
+
+    if (msg.type === 'CMD_DELETE_SESSION') {
+        const payload = msg.payload as Record<string, unknown> | undefined;
+        return typeof payload === 'object' && payload !== null && typeof payload.sessionId === 'string';
     }
 
     return false;

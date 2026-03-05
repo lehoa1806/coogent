@@ -31,8 +31,41 @@ export const DEFAULT_CONVERSATION_SETTINGS: ConversationSettings = {
     smartSwitchTokenThreshold: 80_000,
 };
 
+/** Canonical filename for the persisted runbook. */
+export const RUNBOOK_FILENAME = '.task-runbook.json';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Branded Types — nominal type safety for opaque IDs and timestamps
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Nominal branded type for phase identifiers.
+ * Prevents accidental mix-ups between phase IDs and other numbers.
+ */
+export type PhaseId = number & { readonly __brand: 'PhaseId' };
+
+/**
+ * Unix timestamp in milliseconds (Date.now()-style).
+ * Branded to distinguish from plain numbers.
+ */
+export type UnixTimestampMs = number & { readonly __brand: 'UnixTimestampMs' };
+
+/** Cast a plain number to a branded PhaseId. */
+export function asPhaseId(n: number): PhaseId {
+    return n as PhaseId;
+}
+
+/** Cast Date.now() or similar to a branded UnixTimestampMs. */
+export function asTimestamp(ms: number = Date.now()): UnixTimestampMs {
+    return ms as UnixTimestampMs;
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  1. Runbook Data Model — .task-runbook.json schema
+//
+//  Naming convention (#92):
+//    - snake_case for JSON-persisted fields (project_id, context_files, depends_on)
+//    - camelCase for TypeScript-only runtime fields (smartSwitchTokenThreshold)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** Status of an individual phase within the runbook. */
@@ -41,7 +74,7 @@ export type PhaseStatus = 'pending' | 'running' | 'completed' | 'failed';
 /** A single micro-task within the runbook execution plan. */
 export interface Phase {
     /** Sequential identifier (or DAG node ID in V2). */
-    readonly id: number;
+    readonly id: PhaseId;
     /** Current execution status. */
     status: PhaseStatus;
     /** The explicit instruction to inject into the ephemeral worker agent. */
@@ -62,7 +95,7 @@ export interface Phase {
      * Enables DAG-based parallel execution.
      * When absent, sequential ordering via `current_phase` is used.
      */
-    depends_on?: readonly number[];
+    depends_on?: readonly PhaseId[];
     /**
      * Which evaluator to use for `success_criteria`.
      * V1 default: `"exit_code"`.
@@ -88,7 +121,11 @@ export interface Runbook {
     /** Index of the currently executing (or next-to-execute) phase. */
     current_phase: number;
     /** Ordered collection of micro-tasks. */
-    phases: Phase[];
+    readonly phases: readonly Phase[];
+    /** Short human-readable summary generated during the Task Planning phase. */
+    summary?: string;
+    /** Detailed implementation plan markdown generated during the Task Planning phase. */
+    implementation_plan?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -141,6 +178,7 @@ export enum EngineEvent {
     SKIP_PHASE = 'SKIP_PHASE',
     ABORT = 'ABORT',
     RESET = 'RESET',
+    PAUSE = 'PAUSE',
 }
 
 /**
@@ -159,20 +197,26 @@ export const STATE_TRANSITIONS: Record<
     },
     [EngineState.PLANNING]: {
         [EngineEvent.PLAN_GENERATED]: EngineState.PLAN_REVIEW,
+        [EngineEvent.PLAN_REJECTED]: EngineState.PLANNING, // Self-loop for re-plan
         [EngineEvent.ABORT]: EngineState.IDLE,
+        [EngineEvent.RESET]: EngineState.IDLE,
     },
     [EngineState.PLAN_REVIEW]: {
         [EngineEvent.PLAN_APPROVED]: EngineState.PARSING,
         [EngineEvent.PLAN_REJECTED]: EngineState.PLANNING,
         [EngineEvent.ABORT]: EngineState.IDLE,
+        [EngineEvent.RESET]: EngineState.IDLE,
     },
     [EngineState.PARSING]: {
         [EngineEvent.PARSE_SUCCESS]: EngineState.READY,
         [EngineEvent.PARSE_FAILURE]: EngineState.IDLE,
+        [EngineEvent.ABORT]: EngineState.IDLE,
+        [EngineEvent.RESET]: EngineState.IDLE,
     },
     [EngineState.READY]: {
         [EngineEvent.START]: EngineState.EXECUTING_WORKER,
         [EngineEvent.RESUME]: EngineState.EXECUTING_WORKER,
+        [EngineEvent.ABORT]: EngineState.IDLE,
         [EngineEvent.RESET]: EngineState.IDLE,
     },
     [EngineState.EXECUTING_WORKER]: {
@@ -180,11 +224,15 @@ export const STATE_TRANSITIONS: Record<
         [EngineEvent.WORKER_TIMEOUT]: EngineState.ERROR_PAUSED,
         [EngineEvent.WORKER_CRASH]: EngineState.ERROR_PAUSED,
         [EngineEvent.ABORT]: EngineState.IDLE,
+        [EngineEvent.RESET]: EngineState.IDLE,
     },
     [EngineState.EVALUATING]: {
         [EngineEvent.PHASE_PASS]: EngineState.EXECUTING_WORKER,
         [EngineEvent.ALL_PHASES_PASS]: EngineState.COMPLETED,
         [EngineEvent.PHASE_FAIL]: EngineState.ERROR_PAUSED,
+        [EngineEvent.ABORT]: EngineState.IDLE,
+        [EngineEvent.RESET]: EngineState.IDLE,
+        [EngineEvent.RETRY]: EngineState.EXECUTING_WORKER, // Self-healing retry from evaluating
     },
     [EngineState.ERROR_PAUSED]: {
         [EngineEvent.RETRY]: EngineState.EXECUTING_WORKER,
@@ -203,8 +251,8 @@ export const STATE_TRANSITIONS: Record<
 
 /** Token count breakdown per file. */
 export interface FileTokenEntry {
-    path: string;
-    tokens: number;
+    readonly path: string;
+    readonly tokens: number;
 }
 
 // ── Host → Webview (state projections) ──────────────────────────────────────
@@ -220,7 +268,7 @@ export interface StateSnapshotMessage {
 export interface PhaseStatusMessage {
     readonly type: 'PHASE_STATUS';
     readonly payload: {
-        phaseId: number;
+        phaseId: PhaseId;
         status: PhaseStatus;
         durationMs?: number;
     };
@@ -229,7 +277,7 @@ export interface PhaseStatusMessage {
 export interface WorkerOutputMessage {
     readonly type: 'WORKER_OUTPUT';
     readonly payload: {
-        phaseId: number;
+        phaseId: PhaseId;
         stream: 'stdout' | 'stderr';
         chunk: string;
     };
@@ -238,26 +286,42 @@ export interface WorkerOutputMessage {
 export interface TokenBudgetMessage {
     readonly type: 'TOKEN_BUDGET';
     readonly payload: {
-        phaseId: number;
+        phaseId: PhaseId;
         breakdown: readonly FileTokenEntry[];
         totalTokens: number;
         limit: number;
     };
 }
 
+/** Known error codes for typed error handling. */
+export type ErrorCode =
+    | 'RUNBOOK_NOT_FOUND'
+    | 'PARSE_ERROR'
+    | 'PHASE_FAILED'
+    | 'WORKER_TIMEOUT'
+    | 'WORKER_CRASH'
+    | 'CYCLE_DETECTED'
+    | 'VALIDATION_ERROR'
+    | 'CONTEXT_ERROR'
+    | 'PLAN_ERROR'
+    | 'TOKEN_OVER_BUDGET'
+    | 'COMMAND_ERROR'
+    | 'GIT_DIRTY'
+    | 'UNKNOWN';
+
 export interface ErrorMessage {
     readonly type: 'ERROR';
     readonly payload: {
-        code: string;
+        code: ErrorCode;
         message: string;
-        phaseId?: number;
+        phaseId?: PhaseId;
     };
 }
 
 export interface LogEntryMessage {
     readonly type: 'LOG_ENTRY';
     readonly payload: {
-        timestamp: number;
+        timestamp: UnixTimestampMs;
         level: 'info' | 'warn' | 'error';
         message: string;
     };
@@ -276,7 +340,7 @@ export interface PlanDraftMessage {
 export interface PlanStatusMessage {
     readonly type: 'PLAN_STATUS';
     readonly payload: {
-        status: 'generating' | 'parsing' | 'ready' | 'error';
+        status: 'generating' | 'parsing' | 'ready' | 'error' | 'timeout';
         message?: string;
     };
 }
@@ -307,7 +371,38 @@ export interface ConversationModeMessage {
     };
 }
 
-/** Discriminated union of all messages the Extension Host sends to the Webview. */
+/** Consolidation report message — final report after all phases pass. */
+export interface ConsolidationReportMessage {
+    readonly type: 'CONSOLIDATION_REPORT';
+    readonly payload: {
+        /** Markdown-formatted consolidation report. */
+        report: string;
+    };
+}
+
+/** Per-phase worker output — routes output to specific phase detail views. */
+export interface PhaseOutputMessage {
+    readonly type: 'PHASE_OUTPUT';
+    readonly payload: {
+        phaseId: PhaseId;
+        stream: 'stdout' | 'stderr';
+        chunk: string;
+    };
+}
+
+/** Planning summary message — delivers planning phase output for the review gate. */
+export interface PlanSummaryMessage {
+    readonly type: 'PLAN_SUMMARY';
+    readonly payload: {
+        summary: string;
+        implementationPlan: string;
+    };
+}
+
+/**
+ * Discriminated union of all messages the Extension Host sends to the Webview.
+ * Use `HostToWebviewMessageType` for the `type` string literal union.
+ */
 export type HostToWebviewMessage =
     | StateSnapshotMessage
     | PhaseStatusMessage
@@ -319,14 +414,27 @@ export type HostToWebviewMessage =
     | PlanStatusMessage
     | SessionListMessage
     | SessionSearchResultsMessage
-    | ConversationModeMessage;
+    | ConversationModeMessage
+    | ConsolidationReportMessage
+    | PhaseOutputMessage
+    | PlanSummaryMessage;
 
 // ── Webview → Host (user commands) ──────────────────────────────────────────
 
+/**
+ * Dual-purpose start/resume command.
+ * When the engine is in READY state, this starts execution.
+ * When the engine is paused (cooperative pause via flag), this resumes.
+ */
 export interface CmdStartMessage {
     readonly type: 'CMD_START';
 }
 
+/**
+ * @deprecated Use cooperative pause via CMD_START dual-purpose.
+ * The pause mechanism is flag-based (pauseRequested), not FSM-driven.
+ * Retained for backward compatibility but CMD_START handles resume.
+ */
 export interface CmdPauseMessage {
     readonly type: 'CMD_PAUSE';
 }
@@ -337,33 +445,33 @@ export interface CmdAbortMessage {
 
 export interface CmdRetryMessage {
     readonly type: 'CMD_RETRY';
-    readonly payload: { phaseId: number };
+    readonly payload: { phaseId: PhaseId };
 }
 
 export interface CmdSkipPhaseMessage {
     readonly type: 'CMD_SKIP_PHASE';
-    readonly payload: { phaseId: number };
+    readonly payload: { phaseId: PhaseId };
 }
 
 export interface CmdPausePhaseMessage {
     readonly type: 'CMD_PAUSE_PHASE';
-    readonly payload: { phaseId: number };
+    readonly payload: { phaseId: PhaseId };
 }
 
 export interface CmdStopPhaseMessage {
     readonly type: 'CMD_STOP_PHASE';
-    readonly payload: { phaseId: number };
+    readonly payload: { phaseId: PhaseId };
 }
 
 export interface CmdRestartPhaseMessage {
     readonly type: 'CMD_RESTART_PHASE';
-    readonly payload: { phaseId: number };
+    readonly payload: { phaseId: PhaseId };
 }
 
 export interface CmdEditPhaseMessage {
     readonly type: 'CMD_EDIT_PHASE';
     readonly payload: {
-        phaseId: number;
+        phaseId: PhaseId;
         patch: Partial<Pick<Phase, 'prompt' | 'context_files' | 'success_criteria'>>;
     };
 }
@@ -407,6 +515,11 @@ export interface CmdPlanEditDraftMessage {
     };
 }
 
+/** User requests re-parsing of cached timeout output (no full re-generation). */
+export interface CmdPlanRetryParseMessage {
+    readonly type: 'CMD_PLAN_RETRY_PARSE';
+}
+
 /** User requests a full reset (start new chat) from COMPLETED state. */
 export interface CmdResetMessage {
     readonly type: 'CMD_RESET';
@@ -441,7 +554,36 @@ export interface CmdSetConversationModeMessage {
     };
 }
 
-/** Discriminated union of all messages the Webview sends to the Extension Host. */
+/** User requests the consolidation report for the current session. */
+export interface CmdRequestReportMessage {
+    readonly type: 'CMD_REQUEST_REPORT';
+}
+
+/** User deletes a session from history. */
+export interface CmdDeleteSessionMessage {
+    readonly type: 'CMD_DELETE_SESSION';
+    readonly payload: {
+        sessionId: string;
+    };
+}
+
+/** User requests to review a diff for a specific phase. */
+export interface CmdReviewDiffMessage {
+    readonly type: 'CMD_REVIEW_DIFF';
+    readonly payload: {
+        phaseId: PhaseId;
+    };
+}
+
+/** User requests to resume all pending phases with satisfied dependencies. */
+export interface CmdResumePendingMessage {
+    readonly type: 'CMD_RESUME_PENDING';
+}
+
+/**
+ * Discriminated union of all messages the Webview sends to the Extension Host.
+ * Use `WebviewToHostMessageType` for the `type` string literal union.
+ */
 export type WebviewToHostMessage =
     | CmdStartMessage
     | CmdPauseMessage
@@ -459,10 +601,21 @@ export type WebviewToHostMessage =
     | CmdPlanApproveMessage
     | CmdPlanRejectMessage
     | CmdPlanEditDraftMessage
+    | CmdPlanRetryParseMessage
     | CmdListSessionsMessage
     | CmdSearchSessionsMessage
     | CmdLoadSessionMessage
-    | CmdSetConversationModeMessage;
+    | CmdSetConversationModeMessage
+    | CmdRequestReportMessage
+    | CmdDeleteSessionMessage
+    | CmdReviewDiffMessage
+    | CmdResumePendingMessage;
+
+/** Helper: union of all Host → Webview message type string literals (#95). */
+export type HostToWebviewMessageType = HostToWebviewMessage['type'];
+
+/** Helper: union of all Webview → Host message type string literals (#95). */
+export type WebviewToHostMessageType = WebviewToHostMessage['type'];
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  4. ADK Integration Contracts
@@ -500,10 +653,10 @@ export interface ADKWorkerHandle {
     readonly sessionId: string;
     /** OS process ID of the worker (for orphan cleanup). */
     readonly pid: number;
-    /** Register a callback for stdout/stderr output chunks. */
-    onOutput(callback: (stream: 'stdout' | 'stderr', chunk: string) => void): void;
-    /** Register a callback for process exit. */
-    onExit(callback: (exitCode: number) => void): void;
+    /** Register a callback for stdout/stderr output chunks. Returns an unsubscribe function. */
+    onOutput(callback: (stream: 'stdout' | 'stderr', chunk: string) => void): () => void;
+    /** Register a callback for process exit. Returns an unsubscribe function. */
+    onExit(callback: (exitCode: number) => void): () => void;
     /** Force-terminate the worker process. */
     terminate(): Promise<void>;
 }
@@ -538,7 +691,7 @@ export type ContextResult = ContextResultOk | ContextResultOverBudget;
 
 /** A WAL entry written before mutating the runbook file. */
 export interface WALEntry {
-    readonly timestamp: number;
+    readonly timestamp: UnixTimestampMs;
     readonly engineState: EngineState;
     readonly currentPhase: number;
     readonly snapshot: Runbook;
@@ -582,10 +735,10 @@ export interface SuccessEvaluator {
 /** Result of a self-healing attempt. */
 export interface HealingAttempt {
     readonly attemptNumber: number;
-    readonly phaseId: number;
+    readonly phaseId: PhaseId;
     readonly exitCode: number;
     readonly stderr: string;
-    readonly timestamp: number;
+    readonly timestamp: UnixTimestampMs;
 }
 
 /** Git operation result. */
@@ -593,4 +746,30 @@ export interface GitOperationResult {
     readonly success: boolean;
     readonly commitHash?: string;
     readonly message: string;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  9. Git Sandbox Manager Types
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Result of a Git sandbox branch operation (create / cleanup). */
+export interface GitSandboxResult {
+    success: boolean;
+    branchName?: string;
+    previousBranch?: string;
+    message: string;
+}
+
+/** Result of the pre-flight check before entering the sandbox. */
+export interface PreFlightCheckResult {
+    clean: boolean;
+    currentBranch: string;
+    message: string;
+}
+
+/** Options for creating a Git sandbox branch. */
+export interface SandboxOptions {
+    taskSlug: string;
+    /** Branch name prefix (default concept: 'coogent/'). */
+    branchPrefix?: string;
 }

@@ -62,7 +62,7 @@ export function appendOutput(text, stream) {
  * Clear all terminal output.
  */
 export function clearOutput() {
-    if ($output) $output.textContent = 'Waiting for execution...\n';
+    if ($output) $output.textContent = 'Consolidation report will appear here when all phases complete.\n';
 }
 
 /**

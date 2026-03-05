@@ -829,7 +829,7 @@ body {
 
 .plan-review-actions .plan-nav {
     padding-bottom: 8px;
-    border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.1));
+    border-bottom: 1px solid var(--vscode-widget-border, rgba(255, 255, 255, 0.1));
     margin-bottom: 4px;
 }
 
@@ -857,8 +857,9 @@ body {
 
 #btn-plan-approve.primary {
     background: var(--vscode-testing-iconPassed, #388a34);
-    color: #fff;
+    color: var(--vscode-button-foreground, #fff);
 }
+
 #btn-plan-approve.primary:hover {
     background: var(--vscode-testing-iconPassed, #2d6e2a);
     filter: brightness(1.15);
@@ -866,8 +867,9 @@ body {
 
 #btn-plan-reject.danger {
     background: var(--vscode-editorWarning-foreground, #cca700);
-    color: #000;
+    color: var(--vscode-button-foreground, #fff);
 }
+
 #btn-plan-reject.danger:hover {
     filter: brightness(1.15);
 }
@@ -939,6 +941,7 @@ body {
     flex: 1;
     overflow-y: auto;
     min-height: 0;
+    min-width: 0;
 }
 
 .phase-details h3 {
@@ -988,6 +991,132 @@ body {
     background: var(--success-bg);
     border-radius: var(--radius);
     border-left: 3px solid var(--success);
+}
+
+/* Phase action buttons (Retry / Restart / Skip) */
+
+.phase-actions-bar {
+    display: flex;
+    gap: 8px;
+    padding-top: 12px;
+    margin-top: 4px;
+    border-top: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+
+.phase-action-btn {
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--surface-2);
+    color: var(--text);
+    cursor: pointer;
+    transition: all var(--transition);
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.phase-action-btn:hover {
+    filter: brightness(1.15);
+}
+
+.phase-action-btn.retry {
+    background: var(--vscode-button-background, var(--accent));
+    color: var(--vscode-button-foreground, #fff);
+    border-color: transparent;
+}
+
+.phase-action-btn.retry:hover {
+    background: var(--vscode-button-hoverBackground, color-mix(in srgb, var(--accent) 85%, white));
+}
+
+.phase-action-btn.restart {
+    background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 15%, transparent);
+    color: var(--vscode-editorWarning-foreground, #cca700);
+    border-color: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 30%, transparent);
+}
+
+.phase-action-btn.restart:hover {
+    background: color-mix(in srgb, var(--vscode-editorWarning-foreground, #cca700) 25%, transparent);
+}
+
+.phase-action-btn.skip {
+    background: transparent;
+    color: var(--text-muted);
+    border-color: var(--border);
+}
+
+.phase-action-btn.skip:hover {
+    background: var(--surface-2);
+    color: var(--text);
+}
+
+/* Sub-components: header, body, and detail sections within .phase-details */
+
+.phase-details-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.phase-details-header h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.phase-details-body {
+    padding: 12px 16px;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.phase-detail-section {
+    margin-bottom: 16px;
+}
+
+.phase-detail-section h4 {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-dim);
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.phase-detail-prompt {
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    background: var(--surface-2);
+    padding: 10px 12px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+}
+
+.phase-detail-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.phase-detail-files code {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    background: var(--purple-bg);
+    border-radius: var(--radius);
+    color: var(--purple);
+}
+
+.phase-detail-criteria code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -1262,7 +1391,7 @@ button:focus-visible {
     right: 0;
     width: 300px;
     height: 100vh;
-    display: flex;
+    display: none;
     flex-direction: column;
     background: var(--surface);
     border-left: 1px solid var(--border);
@@ -1446,13 +1575,29 @@ button:focus-visible {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
-/*  Mission Overview Zone                                                     */
+/*  Mission Overview Zone + Global Execution Controls                         */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 .mission-overview {
-    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 16px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
+    flex-shrink: 0;
+}
+
+.mission-overview-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.mission-overview .controls {
+    border-bottom: none;
+    padding: 0;
+    position: static;
+    z-index: auto;
     flex-shrink: 0;
 }
 
@@ -1460,13 +1605,124 @@ button:focus-visible {
     font-size: 14px;
     font-weight: 600;
     color: var(--text);
-    margin-bottom: 4px;
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.mission-progress {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
 }
 
 .mission-subtitle {
     font-size: 11px;
     color: var(--text-muted);
     font-family: var(--mono);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Master Task Hero Section                                                  */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.master-task-section {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--accent-bg);
+    flex-shrink: 0;
+}
+
+.master-task-summary {
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text);
+    font-weight: 500;
+}
+
+.master-task-plan {
+    margin-top: 8px;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border-radius: var(--radius);
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    white-space: pre-wrap;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+#btn-toggle-plan {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    margin-top: 6px;
+    padding: 3px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--vscode-button-secondaryBackground, var(--surface-2));
+    color: var(--vscode-button-secondaryForeground, var(--text-muted));
+    cursor: pointer;
+    transition: all var(--transition);
+}
+
+#btn-toggle-plan:hover {
+    background: var(--vscode-button-secondaryHoverBackground, var(--surface-3));
+    color: var(--text);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Git Error Banner                                                          */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+#git-error-banner {
+    display: none;
+    background: var(--error-bg);
+    border: 1px solid var(--error);
+    color: var(--error);
+    padding: 8px 16px;
+    border-radius: var(--radius);
+    margin: 8px 16px;
+    font-size: 12px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Per-Phase Terminal Output (inside Phase Details)                           */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.phase-output-section {
+    max-height: 200px;
+    overflow-y: auto;
+    font-family: var(--mono);
+    font-size: var(--editor-font-size);
+    line-height: 1.6;
+    color: var(--vscode-terminal-foreground, var(--text-muted));
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: var(--vscode-terminal-background, var(--bg));
+    border-radius: var(--radius);
+    padding: 8px;
+    margin-top: 6px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Phase Context Summary (previous-context handoff)                          */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.phase-context-summary {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    background: var(--surface-2);
+    border-radius: var(--radius);
+    padding: 8px 10px;
+    margin-top: 4px;
+    white-space: pre-wrap;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -1573,79 +1829,7 @@ button:focus-visible {
     display: block;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════════ */
-/*  Phase Details Area                                                        */
-/* ═══════════════════════════════════════════════════════════════════════════ */
 
-.phase-details {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    overflow-y: auto;
-}
-
-.phase-details-header {
-    padding: 12px 16px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-}
-
-.phase-details-header h3 {
-    font-size: 13px;
-    font-weight: 600;
-    margin-bottom: 6px;
-}
-
-.phase-details-body {
-    padding: 12px 16px;
-    flex: 1;
-    overflow-y: auto;
-}
-
-.phase-detail-section {
-    margin-bottom: 16px;
-}
-
-.phase-detail-section h4 {
-    font-size: 10px;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: var(--text-dim);
-    font-weight: 700;
-    margin-bottom: 6px;
-}
-
-.phase-detail-prompt {
-    font-size: 12px;
-    line-height: 1.6;
-    white-space: pre-wrap;
-    background: var(--surface-2);
-    padding: 10px 12px;
-    border-radius: var(--radius-lg);
-    border: 1px solid var(--border);
-}
-
-.phase-detail-files {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-}
-
-.phase-detail-files code {
-    font-family: var(--mono);
-    font-size: 10px;
-    padding: 2px 6px;
-    background: var(--purple-bg);
-    border-radius: var(--radius);
-    color: var(--purple);
-}
-
-.phase-detail-criteria code {
-    font-family: var(--mono);
-    font-size: 11px;
-    color: var(--text-muted);
-}
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
 /*  Resizable Bottom Panel (Terminal Resizer)                                 */
@@ -1661,4 +1845,241 @@ button:focus-visible {
 
 .terminal-resizer:hover {
     background: var(--accent);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Terminal Panel — Reporting Mode Accent                                    */
+/*  Applied when the consolidation report is displayed in place of live       */
+/*  streaming output, giving the panel a distinct visual treatment.           */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.terminal-panel.reporting {
+    border-left: 3px solid var(--success);
+    background: color-mix(in srgb, var(--success) 4%, var(--vscode-terminal-background, var(--bg)));
+}
+
+.terminal-panel.reporting .terminal-header h2 {
+    color: var(--success);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Report Modal Overlay                                                      */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.report-overlay {
+    position: fixed;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(4px);
+    z-index: 200;
+}
+
+.report-overlay.visible {
+    display: flex;
+    animation: fade-in 0.15s ease-out;
+}
+
+.report-modal {
+    width: min(90vw, 700px);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--vscode-editor-background, var(--surface));
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+    overflow: hidden;
+}
+
+.report-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.report-header h2 {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+}
+
+.report-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text);
+}
+
+.report-content h1,
+.report-content h2,
+.report-content h3,
+.report-content h4 {
+    color: var(--text);
+    margin: 16px 0 8px;
+}
+
+.report-content h1 {
+    font-size: 18px;
+}
+
+.report-content h2 {
+    font-size: 15px;
+}
+
+.report-content h3 {
+    font-size: 13px;
+}
+
+.report-content h4 {
+    font-size: 12px;
+}
+
+.report-content pre {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    overflow-x: auto;
+}
+
+.report-content code {
+    font-family: var(--mono);
+    font-size: 12px;
+}
+
+.report-content ul {
+    padding-left: 20px;
+    margin: 8px 0;
+}
+
+.report-content li {
+    margin-bottom: 4px;
+}
+
+.report-content strong {
+    font-weight: 600;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Session Delete Button                                                     */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.session-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.btn-delete-session {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 2px 4px;
+    font-size: 12px;
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    transition: all var(--transition);
+    opacity: 0;
+    line-height: 1;
+}
+
+.session-item:hover .btn-delete-session {
+    opacity: 1;
+}
+
+.btn-delete-session:hover {
+    color: var(--error);
+    background: var(--error-bg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  DAG Dependency Badges                                                     */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.dep-badge {
+    display: inline-flex;
+    align-items: center;
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: var(--radius);
+    background: var(--vscode-badge-background, var(--surface-2));
+    color: var(--vscode-badge-foreground, var(--text-muted));
+    white-space: nowrap;
+    line-height: 1.4;
+    letter-spacing: 0.3px;
+}
+
+.dep-badge.dependent {
+    background: var(--info-bg);
+    color: var(--info);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Phase Item Content Wrapper (prompt + dep badges)                          */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.phase-item-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    overflow: hidden;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Phase Dependency / Dependent Rows                                         */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.phase-deps-row,
+.phase-dependents-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    align-items: center;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Visual Connectors between Phase Items                                     */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.phase-connector {
+    width: 2px;
+    height: 8px;
+    margin: 0 auto;
+    background: var(--border);
+    border-radius: 1px;
+    flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Ready Phase Highlighting                                                  */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.phase-item.ready {
+    border-left: 3px solid var(--info);
+    background: var(--info-bg);
+}
+
+.phase-item.ready .phase-number {
+    background: var(--info-bg);
+    color: var(--info);
+}
+
+.status-pill.ready {
+    color: var(--info);
+    background: var(--info-bg);
+    animation: badge-pulse 2s ease-in-out infinite;
 }

@@ -6,12 +6,6 @@ module.exports = {
         '^(\\.{1,2}/.*)\\.js$': '$1',
     },
     transform: {
-        '^.+\\.ts$': [
-            'ts-jest',
-            {
-                useESM: true,
-            },
-        ],
+        '^.+\\.ts$': 'ts-jest',
     },
-    extensionsToTreatAsEsm: ['.ts'],
 };

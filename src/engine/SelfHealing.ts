@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Phase, HealingAttempt } from '../types/index.js';
+import { asPhaseId, asTimestamp } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Self-Healing Controller
@@ -22,13 +23,21 @@ import type { Phase, HealingAttempt } from '../types/index.js';
  * it produces healing plans that the Engine executes.
  */
 export class SelfHealingController {
-    private readonly maxRetries: number;
+    private maxRetries: number;
     private readonly baseDelayMs: number;
     private readonly attempts = new Map<number, HealingAttempt[]>();
 
     constructor(options?: { maxRetries?: number; baseDelayMs?: number }) {
-        this.maxRetries = options?.maxRetries ?? 3;
+        this.maxRetries = options?.maxRetries ?? 2;
         this.baseDelayMs = options?.baseDelayMs ?? 2_000;
+    }
+
+    /**
+     * Update the global max retries at runtime (called when VS Code settings change).
+     * Per-phase overrides (`phase.max_retries`) still take precedence.
+     */
+    setMaxRetries(maxRetries: number): void {
+        this.maxRetries = maxRetries;
     }
 
     /**
@@ -38,10 +47,27 @@ export class SelfHealingController {
         const existing = this.attempts.get(phaseId) ?? [];
         existing.push({
             attemptNumber: existing.length + 1,
-            phaseId,
+            phaseId: asPhaseId(phaseId),
             exitCode,
             stderr,
-            timestamp: Date.now(),
+            timestamp: asTimestamp(),
+        });
+        this.attempts.set(phaseId, existing);
+    }
+
+    /**
+     * Lightweight retry attempt recorder.
+     * Increments the retry counter for a phase without requiring
+     * exit code or stderr (used when only tracking attempt count).
+     */
+    recordAttempt(phaseId: number): void {
+        const existing = this.attempts.get(phaseId) ?? [];
+        existing.push({
+            attemptNumber: existing.length + 1,
+            phaseId: asPhaseId(phaseId),
+            exitCode: -1,
+            stderr: '',
+            timestamp: asTimestamp(),
         });
         this.attempts.set(phaseId, existing);
     }
@@ -53,6 +79,14 @@ export class SelfHealingController {
         const phaseMaxRetries = this.maxRetries;
         const attempts = this.attempts.get(phaseId) ?? [];
         return attempts.length < phaseMaxRetries;
+    }
+
+    /**
+     * Returns true if the phase has not yet exhausted its retry budget.
+     * Alias for `canRetry` — satisfies the `shouldRetry` contract.
+     */
+    shouldRetry(phaseId: number): boolean {
+        return this.canRetry(phaseId);
     }
 
     /**
@@ -69,6 +103,13 @@ export class SelfHealingController {
      */
     getAttemptCount(phaseId: number): number {
         return (this.attempts.get(phaseId) ?? []).length;
+    }
+
+    /**
+     * Get the retry count for a phase (diagnostic alias for getAttemptCount).
+     */
+    getRetryCount(phaseId: number): number {
+        return this.getAttemptCount(phaseId);
     }
 
     /**

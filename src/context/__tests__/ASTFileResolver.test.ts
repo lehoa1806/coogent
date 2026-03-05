@@ -1,6 +1,5 @@
 import { ASTFileResolver } from '../FileResolver.js';
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
+import { asPhaseId } from '../../types/index.js';
 
 // Mock fs/promises
 jest.mock('node:fs/promises', () => ({
@@ -26,7 +25,7 @@ describe('ASTFileResolver', () => {
         readFile.mockResolvedValue('const a = 1;');
 
         const phase = {
-            id: 1, status: 'pending' as const, prompt: '', context_files: ['index.ts'], success_criteria: ''
+            id: asPhaseId(1), status: 'pending' as const, prompt: '', context_files: ['index.ts'], success_criteria: ''
         };
 
         const result = await resolver.resolve(phase, '/workspace');
@@ -48,7 +47,7 @@ describe('ASTFileResolver', () => {
         });
 
         const phase = {
-            id: 1, status: 'pending' as const, prompt: '', context_files: ['index.ts'], success_criteria: ''
+            id: asPhaseId(1), status: 'pending' as const, prompt: '', context_files: ['index.ts'], success_criteria: ''
         };
 
         const result = await resolver.resolve(phase, '/workspace');
@@ -75,7 +74,7 @@ describe('ASTFileResolver', () => {
         });
 
         const phase = {
-            id: 1, status: 'pending' as const, prompt: '', context_files: ['a.ts'], success_criteria: ''
+            id: asPhaseId(1), status: 'pending' as const, prompt: '', context_files: ['a.ts'], success_criteria: ''
         };
 
         const result = await resolver.resolve(phase, '/workspace');

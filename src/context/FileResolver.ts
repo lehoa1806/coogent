@@ -3,6 +3,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Phase, FileResolver } from '../types/index.js';
+import { resolve as pathResolve, dirname, relative, extname } from 'node:path';
+import { access, readFile } from 'node:fs/promises';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Explicit File Resolver (V1 — default)
@@ -45,15 +47,23 @@ export class ASTFileResolver implements FileResolver {
     }
 
     async resolve(phase: Phase, workspaceRoot: string): Promise<string[]> {
-        const { resolve: pathResolve, dirname, relative, extname } = await import('node:path');
-        const { access } = await import('node:fs/promises');
-        const { readFile } = await import('node:fs/promises');
+        // Use top-level imports (node:path, node:fs/promises)
 
         const visited = new Set<string>();
         const result: string[] = [];
 
         const enqueue = async (relativePath: string, depth: number): Promise<void> => {
             if (depth > this.maxDepth) return;
+
+            // Gitignore-aware filtering — skip common non-source directories (#15)
+            const IGNORED_DIRS = new Set([
+                'node_modules', '.git', 'dist', 'build', 'out', 'coverage',
+                '.next', '__pycache__', '.coogent', '.cache', '.DS_Store',
+            ]);
+            const parts = relativePath.split(/[/\\]/);
+            if (parts.some(p => IGNORED_DIRS.has(p))) {
+                return;
+            }
 
             // Normalize to prevent duplicates
             const absPath = pathResolve(workspaceRoot, relativePath);
@@ -163,8 +173,7 @@ export class ASTFileResolver implements FileResolver {
         _workspaceRoot: string,
         _ext: string
     ): Promise<string | null> {
-        const { resolve: pathResolve } = await import('node:path');
-        const { access } = await import('node:fs/promises');
+        // Use top-level imports (node:path, node:fs/promises)
 
         // Only resolve relative imports
         if (!importPath.startsWith('.') && !importPath.startsWith('/')) {

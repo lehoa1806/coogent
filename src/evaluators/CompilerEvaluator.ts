@@ -3,6 +3,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { SuccessEvaluator, EvaluatorType } from '../types/index.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Exit Code Evaluator (V1 — default)
@@ -51,17 +53,30 @@ export class RegexOutputEvaluator implements SuccessEvaluator {
     ): Promise<boolean> {
         const combined = stdout + '\n' + stderr;
 
-        if (criteria.startsWith('regex:')) {
-            const pattern = criteria.slice('regex:'.length);
-            return new RegExp(pattern, 'm').test(combined);
-        }
-
+        // regex_fail:pattern — fail if found
         if (criteria.startsWith('regex_fail:')) {
             const pattern = criteria.slice('regex_fail:'.length);
-            return !new RegExp(pattern, 'm').test(combined);
+            try {
+                return !new RegExp(pattern).test(combined);
+            } catch (err) {
+                console.warn(`[RegexOutputEvaluator] Invalid regex pattern "${pattern}":`, err);
+                return false; // Treat invalid regex as failure
+            }
         }
 
-        return false;
+        // regex:pattern — pass if found
+        if (criteria.startsWith('regex:')) {
+            const pattern = criteria.slice('regex:'.length);
+            try {
+                return new RegExp(pattern).test(combined);
+            } catch (err) {
+                console.warn(`[RegexOutputEvaluator] Invalid regex pattern "${pattern}":`, err);
+                return false; // Treat invalid regex as failure
+            }
+        }
+
+        // Unknown criteria — fall back to exit code
+        return _exitCode === 0;
     }
 }
 
@@ -118,8 +133,6 @@ export class ToolchainEvaluator implements SuccessEvaluator {
             return false;
         }
 
-        const { execFile } = await import('node:child_process');
-        const { promisify } = await import('node:util');
         const execFileAsync = promisify(execFile);
 
         try {
@@ -173,8 +186,6 @@ export class TestSuiteEvaluator implements SuccessEvaluator {
             return false;
         }
 
-        const { execFile } = await import('node:child_process');
-        const { promisify } = await import('node:util');
         const execFileAsync = promisify(execFile);
 
         try {
@@ -222,5 +233,35 @@ export class EvaluatorRegistry {
      */
     get(type?: EvaluatorType): SuccessEvaluator {
         return this.evaluators.get(type ?? 'exit_code') ?? this.evaluators.get('exit_code')!;
+    }
+}
+
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Factory Function
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Instantiate the correct evaluator based on the evaluator type.
+ * Convenience wrapper around EvaluatorRegistry for standalone use.
+ *
+ * @param type - The evaluator type discriminant (defaults to 'exit_code').
+ * @param workspaceRoot - Workspace root path (required for toolchain/test_suite evaluators).
+ */
+export function createEvaluator(
+    type: EvaluatorType = 'exit_code',
+    workspaceRoot: string = process.cwd(),
+): SuccessEvaluator {
+    switch (type) {
+        case 'exit_code':
+            return new ExitCodeEvaluator();
+        case 'regex':
+            return new RegexOutputEvaluator();
+        case 'toolchain':
+            return new ToolchainEvaluator(workspaceRoot);
+        case 'test_suite':
+            return new TestSuiteEvaluator(workspaceRoot);
+        default:
+            return new ExitCodeEvaluator();
     }
 }

@@ -7,13 +7,15 @@ import {
     EngineState,
     EngineEvent,
     STATE_TRANSITIONS,
+    RUNBOOK_FILENAME,
+    asPhaseId,
+    asTimestamp,
 } from '../types/index.js';
 import type {
     Runbook,
     Phase,
-    PhaseStatus,
+    PhaseId,
     HostToWebviewMessage,
-    SuccessEvaluator,
 } from '../types/index.js';
 import { StateManager } from '../state/StateManager.js';
 import { Scheduler } from './Scheduler.js';
@@ -33,6 +35,8 @@ export interface EngineEvents {
     'phase:execute': (phase: Phase) => void;
     /** Fired when execution is complete. */
     'run:completed': (runbook: Runbook) => void;
+    /** Fired when all phases are done — triggers consolidation report generation. */
+    'run:consolidate': (sessionDir: string) => void;
     /** Fired on any error. */
     'error': (error: Error) => void;
     /** Fired when a phase should be auto-retried (self-healing). */
@@ -45,6 +49,10 @@ export interface EngineEvents {
     'plan:request': (prompt: string, feedback?: string) => void;
     /** Fired when the user rejects a plan and wants re-generation. */
     'plan:rejected': (prompt: string, feedback: string) => void;
+    /** Fired when the user wants to retry parsing cached timeout output. */
+    'plan:retryParse': () => void;
+    /** Fired when the user requests a diff review for a specific phase. */
+    'phase:review-diff': (phaseId: number) => void;
 }
 
 // Typed EventEmitter helper
@@ -83,6 +91,13 @@ export class Engine extends EventEmitter {
      */
     private activeWorkerCount = 0;
 
+    /** Tracked self-healing timer handles for cancellation on abort/reset. */
+    private healingTimers: Set<ReturnType<typeof setTimeout>> = new Set();
+
+    /** Lifecycle watchdog — detects stalled pipelines where all workers are dead. */
+    private stallWatchdog: ReturnType<typeof setInterval> | null = null;
+    private readonly STALL_CHECK_INTERVAL_MS = 30_000;
+
     // ── Pillar 2+3 subsystems ────────────────────────────────────────────
     private readonly scheduler: Scheduler;
     private readonly healer: SelfHealingController;
@@ -118,6 +133,11 @@ export class Engine extends EventEmitter {
         return this.runbook;
     }
 
+    /** Update the global max retries at runtime (delegates to SelfHealingController). */
+    public setMaxRetries(maxRetries: number): void {
+        this.healer.setMaxRetries(maxRetries);
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  State Machine Core
     // ═══════════════════════════════════════════════════════════════════════════
@@ -137,7 +157,7 @@ export class Engine extends EventEmitter {
             this.emitUIMessage({
                 type: 'LOG_ENTRY',
                 payload: {
-                    timestamp: Date.now(),
+                    timestamp: asTimestamp(),
                     level: 'warn',
                     message: `Invalid command "${event}" in state "${this.state}".`,
                 },
@@ -161,7 +181,7 @@ export class Engine extends EventEmitter {
     /**
      * Load and validate a runbook from disk.
      */
-    public async loadRunbook(filePath?: string): Promise<void> {
+    public async loadRunbook(_filePath?: string): Promise<void> {
         this.transition(EngineEvent.LOAD_RUNBOOK);
 
         try {
@@ -174,7 +194,22 @@ export class Engine extends EventEmitter {
                     type: 'ERROR',
                     payload: {
                         code: 'RUNBOOK_NOT_FOUND',
-                        message: 'No .task-runbook.json found in the session directory (.coogent/ipc/).',
+                        message: `No ${RUNBOOK_FILENAME} found in the session directory (.coogent/ipc/).`,
+                    },
+                });
+                return;
+            }
+
+            // Detect cycles in DAG before accepting the runbook (#31)
+            const cycleMembers = this.scheduler.detectCycles(runbook.phases);
+            if (cycleMembers.length > 0) {
+                this.transition(EngineEvent.PARSE_FAILURE);
+                this.emitUIMessage({
+                    type: 'ERROR',
+                    payload: {
+                        code: 'CYCLE_DETECTED',
+                        message: `Cyclic dependency detected in phases: [${cycleMembers.join(', ')}]. ` +
+                            `Fix the depends_on fields in your runbook.`,
                     },
                 });
                 return;
@@ -204,7 +239,8 @@ export class Engine extends EventEmitter {
     }
 
     /**
-     * Begin (or resume) sequential execution from `current_phase`.
+     * Begin (or resume) execution.
+     * Uses DAG-aware dispatch when phases have `depends_on`, otherwise V1 sequential.
      */
     public async start(): Promise<void> {
         if (!this.runbook) {
@@ -221,8 +257,11 @@ export class Engine extends EventEmitter {
         this.runbook.status = 'running';
         await this.persist();
 
-        // Dispatch the current phase
-        this.dispatchCurrentPhase();
+        // Start the stall watchdog
+        this.startStallWatchdog();
+
+        // Dispatch ready phases (DAG-aware; falls back to sequential internally)
+        this.dispatchReadyPhases();
     }
 
     /**
@@ -234,7 +273,7 @@ export class Engine extends EventEmitter {
         this.emitUIMessage({
             type: 'LOG_ENTRY',
             payload: {
-                timestamp: Date.now(),
+                timestamp: asTimestamp(),
                 level: 'info',
                 message: 'Pause requested — will halt after current phase completes.',
             },
@@ -243,15 +282,33 @@ export class Engine extends EventEmitter {
 
     /**
      * Abort execution and transition to IDLE.
+     * Cleans up all active workers, cancels healing timers, and resets running phases.
      */
     public async abort(): Promise<void> {
         const result = this.transition(EngineEvent.ABORT);
         if (result === null) return;
 
+        // Cancel any pending self-healing timers
+        for (const timer of this.healingTimers) {
+            clearTimeout(timer);
+        }
+        this.healingTimers.clear();
+        this.stopStallWatchdog();
+
         if (this.runbook) {
+            // Mark all running phases as pending so they can be re-run later
+            for (const phase of this.runbook.phases) {
+                if (phase.status === 'running') {
+                    phase.status = 'pending';
+                    this.emit('phase:stop', phase.id);
+                }
+            }
             this.runbook.status = 'idle';
             await this.persist();
         }
+
+        // Reset worker count — all workers should be terminated by phase:stop listeners
+        this.activeWorkerCount = 0;
 
         this.emitUIMessage({
             type: 'STATE_SNAPSHOT',
@@ -272,11 +329,20 @@ export class Engine extends EventEmitter {
         const result = this.transition(EngineEvent.RESET);
         if (result === null) return;
 
+        // Cancel any pending self-healing timers
+        for (const timer of this.healingTimers) {
+            clearTimeout(timer);
+        }
+        this.healingTimers.clear();
+        this.stopStallWatchdog();
+
         // Clear ALL internal state for a fresh start
         this.runbook = null;
         this.planDraft = null;
         this.planPrompt = '';
         this.activeWorkerCount = 0;
+        this.pauseRequested = false;
+        this.healer.reset();
 
         // Switch to a fresh session directory so loadRunbook() starts clean
         if (newStateManager) {
@@ -286,7 +352,7 @@ export class Engine extends EventEmitter {
         this.emitUIMessage({
             type: 'LOG_ENTRY',
             payload: {
-                timestamp: Date.now(),
+                timestamp: asTimestamp(),
                 level: 'info',
                 message: 'Session reset. Ready for a new chat.',
             },
@@ -312,7 +378,7 @@ export class Engine extends EventEmitter {
             this.emitUIMessage({
                 type: 'LOG_ENTRY',
                 payload: {
-                    timestamp: Date.now(),
+                    timestamp: asTimestamp(),
                     level: 'warn',
                     message: 'Cannot switch session: engine is currently executing. Abort first.',
                 },
@@ -320,9 +386,10 @@ export class Engine extends EventEmitter {
             return;
         }
 
-        // Auto-reset to IDLE if not already there
+        // Auto-reset to IDLE if not already there — use proper FSM transition
+        // to ensure state:changed events are emitted and listeners stay in sync.
         if (this.state !== EngineState.IDLE) {
-            this.state = EngineState.IDLE;
+            this.transition(EngineEvent.RESET);
         }
 
         this.stateManager = newStateManager;
@@ -344,21 +411,26 @@ export class Engine extends EventEmitter {
         const phase = this.runbook.phases.find(p => p.id === phaseId);
         if (!phase || phase.status !== 'failed') return;
 
-        // Reset the phase
-        phase.status = 'pending';
-        this.runbook.current_phase = phaseId;
-
+        // Transition FIRST — avoid stale mutations if the transition is invalid
         const result = this.transition(EngineEvent.RETRY);
         if (result === null) return;
 
+        // Only mutate after confirming the transition succeeded
+        phase.status = 'pending';
+        this.runbook.current_phase = phaseId;
         this.runbook.status = 'running';
         await this.persist();
 
-        this.dispatchCurrentPhase();
+        // Restart stall watchdog
+        this.startStallWatchdog();
+
+        // Use DAG-aware dispatch (handles both sequential and parallel modes)
+        this.dispatchReadyPhases();
     }
 
     /**
      * Skip a failed phase and move to the next one.
+     * Advances the schedule so dependent phases can be unblocked.
      */
     public async skipPhase(phaseId: number): Promise<void> {
         if (!this.runbook) return;
@@ -366,16 +438,51 @@ export class Engine extends EventEmitter {
         const phase = this.runbook.phases.find(p => p.id === phaseId);
         if (!phase) return;
 
+        // Transition FIRST — avoid stale mutations if the transition is invalid
+        const result = this.transition(EngineEvent.SKIP_PHASE);
+        if (result === null) return;
+
         phase.status = 'completed'; // Mark as skipped (completed)
         this.runbook.current_phase = phaseId + 1;
-
-        this.transition(EngineEvent.SKIP_PHASE);
         await this.persist();
 
         this.emitUIMessage({
             type: 'PHASE_STATUS',
-            payload: { phaseId, status: 'completed' },
+            payload: { phaseId: phaseId as PhaseId, status: 'completed' },
         });
+
+        // Advance schedule to unblock dependent phases
+        // SKIP_PHASE transitions to READY — need START to dispatch workers
+        const allDone = this.scheduler.isAllDone(this.runbook.phases);
+        if (allDone) {
+            const hasFailed = this.runbook.phases.some(p => p.status === 'failed');
+            if (hasFailed) {
+                this.runbook.status = 'paused_error';
+                await this.persist();
+            } else {
+                this.runbook.status = 'completed';
+                this.transition(EngineEvent.START); // READY → EXECUTING_WORKER
+                this.transition(EngineEvent.WORKER_EXITED); // → EVALUATING
+                this.transition(EngineEvent.ALL_PHASES_PASS); // → COMPLETED
+                await this.persist();
+                this.emit('run:completed', this.runbook);
+                this.emit('run:consolidate', this.stateManager.getSessionDir());
+            }
+            this.emitUIMessage({
+                type: 'STATE_SNAPSHOT',
+                payload: { runbook: this.runbook, engineState: this.state },
+            });
+            return;
+        }
+
+        // More phases to do — transition to EXECUTING_WORKER and dispatch
+        const startResult = this.transition(EngineEvent.START);
+        if (startResult !== null) {
+            this.runbook.status = 'running';
+            await this.persist();
+            this.startStallWatchdog();
+            this.dispatchReadyPhases();
+        }
     }
 
     /**
@@ -411,7 +518,7 @@ export class Engine extends EventEmitter {
         this.emitUIMessage({
             type: 'LOG_ENTRY',
             payload: {
-                timestamp: Date.now(),
+                timestamp: asTimestamp(),
                 level: 'info',
                 message: `Pause requested for phase #${phaseId} — will halt after current worker completes.`,
             },
@@ -434,7 +541,7 @@ export class Engine extends EventEmitter {
         this.emitUIMessage({
             type: 'LOG_ENTRY',
             payload: {
-                timestamp: Date.now(),
+                timestamp: asTimestamp(),
                 level: 'warn',
                 message: `Stop requested for phase #${phaseId} — terminating worker.`,
             },
@@ -454,29 +561,66 @@ export class Engine extends EventEmitter {
         // Only restart if not currently running
         if (phase.status === 'running') return;
 
-        phase.status = 'pending';
-        this.runbook.current_phase = phaseId;
-        this.healer.clearAttempts(phaseId);
-
-        // If we're in ERROR_PAUSED, transition via RETRY to get back to EXECUTING_WORKER
+        // Ensure the FSM is in a state that allows dispatching workers.
+        // ERROR_PAUSED → use RETRY. READY/COMPLETED → use START.
+        // Other states are not safe to restart from.
         if (this.state === EngineState.ERROR_PAUSED) {
             const result = this.transition(EngineEvent.RETRY);
             if (result === null) return;
+        } else if (this.state === EngineState.READY || this.state === EngineState.COMPLETED) {
+            const result = this.transition(EngineEvent.START);
+            if (result === null) return;
+        } else if (this.state !== EngineState.EXECUTING_WORKER) {
+            // Cannot restart from PLANNING, PARSING, PLAN_REVIEW, EVALUATING, or IDLE
+            this.emitUIMessage({
+                type: 'LOG_ENTRY',
+                payload: {
+                    timestamp: asTimestamp(),
+                    level: 'warn',
+                    message: `Cannot restart phase #${phaseId}: engine is in state "${this.state}".`,
+                },
+            });
+            return;
         }
 
+        phase.status = 'pending';
+        this.runbook.current_phase = phaseId;
+        this.healer.clearAttempts(phaseId);
         this.runbook.status = 'running';
         await this.persist();
 
         this.emitUIMessage({
             type: 'LOG_ENTRY',
             payload: {
-                timestamp: Date.now(),
+                timestamp: asTimestamp(),
                 level: 'info',
                 message: `Restarting phase #${phaseId} from scratch.`,
             },
         });
 
         this.dispatchCurrentPhase();
+    }
+
+    /**
+     * Request a diff review for a specific phase.
+     * Emits 'phase:review-diff' for the extension host to open a diff view.
+     */
+    public async reviewDiff(phaseId: number): Promise<void> {
+        if (!this.runbook) return;
+
+        const phase = this.runbook.phases.find(p => p.id === phaseId);
+        if (!phase) return;
+
+        this.emit('phase:review-diff', phaseId);
+
+        this.emitUIMessage({
+            type: 'LOG_ENTRY',
+            payload: {
+                timestamp: asTimestamp(),
+                level: 'info',
+                message: `Diff review requested for phase #${phaseId}.`,
+            },
+        });
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -592,6 +736,20 @@ export class Engine extends EventEmitter {
     }
 
     /**
+     * User wants to retry parsing cached timeout output.
+     * Only valid while in PLANNING state (engine stays in PLANNING after timeout).
+     * Emits 'plan:retryParse' — extension.ts listens and calls plannerAgent.retryParse().
+     */
+    public planRetryParse(): void {
+        if (this.state !== EngineState.PLANNING && this.state !== EngineState.IDLE) {
+            console.warn(`[Engine] planRetryParse() rejected: engine is in state "${this.state}"`);
+            return;
+        }
+
+        this.emit('plan:retryParse');
+    }
+
+    /**
      * User edited the draft directly in the review panel.
      */
     public updatePlanDraft(draft: Runbook): void {
@@ -624,14 +782,21 @@ export class Engine extends EventEmitter {
     ): Promise<void> {
         if (!this.runbook) return;
 
+        // Guard: skip if phase is no longer running (e.g., already handled by
+        // onWorkerFailed due to a timeout/crash race)
+        const phase = this.runbook.phases.find(p => p.id === phaseId);
+        if (!phase || phase.status !== 'running') return;
+
         this.activeWorkerCount = Math.max(0, this.activeWorkerCount - 1);
 
-        const phase = this.runbook.phases.find(p => p.id === phaseId);
-        if (!phase) return;
+        // CRITICAL: Capture isLastWorker BEFORE the async evaluation to prevent
+        // race condition where two workers both see activeWorkerCount === 0
+        // after their respective await calls.
+        const isLastWorker = this.activeWorkerCount === 0;
 
         const passed = await this.evaluatePhaseResult(phase, exitCode, stdout, stderr);
 
-        if (this.activeWorkerCount === 0) {
+        if (isLastWorker) {
             // Last worker exited — do full FSM transition
             this.transition(EngineEvent.WORKER_EXITED);
             await this.applyVerdict(phase, passed, exitCode, stderr);
@@ -702,6 +867,7 @@ export class Engine extends EventEmitter {
                 this.transition(EngineEvent.ALL_PHASES_PASS);
                 await this.persist();
                 this.emit('run:completed', this.runbook);
+                this.emit('run:consolidate', this.stateManager.getSessionDir());
                 this.emitUIMessage({
                     type: 'STATE_SNAPSHOT',
                     payload: { runbook: this.runbook, engineState: this.state },
@@ -726,7 +892,7 @@ export class Engine extends EventEmitter {
                 this.emitUIMessage({
                     type: 'LOG_ENTRY',
                     payload: {
-                        timestamp: Date.now(),
+                        timestamp: asTimestamp(),
                         level: 'warn',
                         message: `Phase ${phase.id} failed — auto-retrying (attempt ${attempt}, delay ${delay}ms)…`,
                     },
@@ -736,9 +902,11 @@ export class Engine extends EventEmitter {
                 phase.status = 'pending';
                 await this.persist();
 
-                setTimeout(() => {
+                const timer = setTimeout(() => {
+                    this.healingTimers.delete(timer);
                     this.emit('phase:heal', phase, augmentedPrompt);
                 }, delay);
+                this.healingTimers.add(timer);
                 return;
             }
 
@@ -796,9 +964,11 @@ export class Engine extends EventEmitter {
                 const delay = this.healer.getRetryDelay(phase.id);
                 phase.status = 'pending';
                 await this.persist();
-                setTimeout(() => {
+                const inPlaceTimer = setTimeout(() => {
+                    this.healingTimers.delete(inPlaceTimer);
                     this.emit('phase:heal', phase, augmentedPrompt);
                 }, delay);
+                this.healingTimers.add(inPlaceTimer);
                 return;
             }
 
@@ -833,7 +1003,7 @@ export class Engine extends EventEmitter {
             this.emitUIMessage({
                 type: 'LOG_ENTRY',
                 payload: {
-                    timestamp: Date.now(),
+                    timestamp: asTimestamp(),
                     level: 'info',
                     message: 'Execution paused after phase completion.',
                 },
@@ -852,10 +1022,18 @@ export class Engine extends EventEmitter {
     public async onWorkerFailed(phaseId: number, reason: 'timeout' | 'crash'): Promise<void> {
         if (!this.runbook) return;
 
-        this.activeWorkerCount = Math.max(0, this.activeWorkerCount - 1);
-
         const phase = this.runbook.phases.find(p => p.id === phaseId);
-        if (phase) phase.status = 'failed';
+        // Guard: skip if phase is no longer running (race with onWorkerExited)
+        if (!phase || phase.status !== 'running') return;
+
+        this.activeWorkerCount = Math.max(0, this.activeWorkerCount - 1);
+        phase.status = 'failed';
+
+        // Emit PHASE_STATUS so UI reflects the failure immediately
+        this.emitUIMessage({
+            type: 'PHASE_STATUS',
+            payload: { phaseId: asPhaseId(phaseId), status: 'failed' },
+        });
 
         if (this.activeWorkerCount === 0) {
             // Last worker — transition FSM
@@ -864,10 +1042,14 @@ export class Engine extends EventEmitter {
                 : EngineEvent.WORKER_CRASH;
             this.transition(event);
             this.runbook.status = 'paused_error';
+            this.stopStallWatchdog();
             await this.persist();
         } else {
             // Other workers still running — record failure but don't transition FSM yet
             await this.persist();
+
+            // Dispatch any phases that are ready and don't depend on the failed phase
+            this.dispatchReadyPhases();
         }
 
         this.emitUIMessage({
@@ -875,7 +1057,7 @@ export class Engine extends EventEmitter {
             payload: {
                 code: reason === 'timeout' ? 'WORKER_TIMEOUT' : 'WORKER_CRASH',
                 message: `Worker for phase ${phaseId} ${reason === 'timeout' ? 'timed out' : 'crashed'}.`,
-                phaseId,
+                phaseId: asPhaseId(phaseId),
             },
         });
     }
@@ -908,6 +1090,9 @@ export class Engine extends EventEmitter {
             payload: { phaseId: phase.id, status: 'running' },
         });
 
+        // Persist the running status so crash recovery knows the phase was in-flight
+        this.persist().catch(console.error);
+
         // Delegate execution to ADKController
         this.emit('phase:execute', phase);
     }
@@ -935,6 +1120,23 @@ export class Engine extends EventEmitter {
             });
             this.emit('phase:execute', phase);
         }
+
+        // Persist all status changes in one write
+        this.persist().catch(console.error);
+
+        // Emit a STATE_SNAPSHOT *after* phases are set to 'running' so the
+        // webview gets a full snapshot with the updated statuses.  The earlier
+        // snapshot fired by `state:changed` on the START transition still
+        // has phases in 'pending' because dispatchReadyPhases runs after
+        // transition().  Without this, fast workers can cause the UI to show
+        // pending → completed, skipping the 'running' state entirely.
+        this.emitUIMessage({
+            type: 'STATE_SNAPSHOT',
+            payload: {
+                runbook: this.runbook,
+                engineState: this.state,
+            },
+        });
     }
 
     /**
@@ -950,7 +1152,13 @@ export class Engine extends EventEmitter {
         return exitCode === 0;
     }
 
-    /** Persist the current runbook state to disk. */
+    /**
+     * Persist the current runbook state to disk.
+     * StateManager.saveRunbook() uses WAL internally: writes WAL → temp file → atomic
+     * rename → clears WAL. A crash between in-memory mutation and this call would
+     * lose the mutation, but recovery via WAL replay ensures at-least-once delivery
+     * of the *previous* persisted state.
+     */
     private async persist(): Promise<void> {
         if (!this.runbook) return;
         await this.stateManager.saveRunbook(this.runbook, this.state);
@@ -959,5 +1167,163 @@ export class Engine extends EventEmitter {
     /** Convenience: send a message to the UI. */
     private emitUIMessage(message: HostToWebviewMessage): void {
         this.emit('ui:message', message);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Lifecycle Watchdog — detects and recovers stalled pipelines
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Start the stall watchdog timer.
+     * Checks periodically for a stall condition: engine is in EXECUTING_WORKER
+     * but no workers are actually running (activeWorkerCount === 0 and no
+     * phases have status 'running'). This can happen if a worker exit event
+     * is lost or activeWorkerCount drifts.
+     */
+    private startStallWatchdog(): void {
+        this.stopStallWatchdog();
+        this.stallWatchdog = setInterval(() => {
+            if (this.state !== EngineState.EXECUTING_WORKER) return;
+            if (!this.runbook) return;
+
+            const runningPhases = this.runbook.phases.filter(p => p.status === 'running');
+            if (runningPhases.length > 0) return; // Workers are live, no stall
+
+            // Stall detected: no running phases but FSM thinks workers are active
+            console.warn(
+                `[Engine] Stall watchdog: FSM in EXECUTING_WORKER but no running phases. ` +
+                `activeWorkerCount=${this.activeWorkerCount}. Attempting recovery.`
+            );
+
+            // Fix the counter
+            this.activeWorkerCount = 0;
+
+            // Try to dispatch ready phases
+            const readyPhases = this.scheduler.getReadyPhases(this.runbook.phases);
+            if (readyPhases.length > 0) {
+                this.emitUIMessage({
+                    type: 'LOG_ENTRY',
+                    payload: {
+                        timestamp: asTimestamp(),
+                        level: 'warn',
+                        message: `Stall detected — auto-dispatching ${readyPhases.length} ready phase(s).`,
+                    },
+                });
+                this.dispatchReadyPhases();
+                return;
+            }
+
+            // No ready phases — check if all done
+            const allDone = this.scheduler.isAllDone(this.runbook.phases);
+            if (allDone) {
+                const hasFailed = this.runbook.phases.some(p => p.status === 'failed');
+                if (hasFailed) {
+                    this.transition(EngineEvent.WORKER_EXITED);
+                    this.transition(EngineEvent.PHASE_FAIL);
+                    this.runbook.status = 'paused_error';
+                } else {
+                    this.transition(EngineEvent.WORKER_EXITED);
+                    this.transition(EngineEvent.ALL_PHASES_PASS);
+                    this.runbook.status = 'completed';
+                    this.emit('run:completed', this.runbook);
+                    this.emit('run:consolidate', this.stateManager.getSessionDir());
+                }
+                this.persist().catch(console.error);
+                this.emitUIMessage({
+                    type: 'STATE_SNAPSHOT',
+                    payload: { runbook: this.runbook, engineState: this.state },
+                });
+                this.stopStallWatchdog();
+                return;
+            }
+
+            // Stuck: pending phases exist but can't be dispatched (deps not met)
+            this.emitUIMessage({
+                type: 'LOG_ENTRY',
+                payload: {
+                    timestamp: asTimestamp(),
+                    level: 'error',
+                    message: 'Pipeline stalled: pending phases exist but dependencies are unmet. ' +
+                        'Use "Resume Pending" to attempt recovery or retry/skip failed phases.',
+                },
+            });
+            // Transition to ERROR_PAUSED so user can interact
+            this.transition(EngineEvent.WORKER_EXITED);
+            this.transition(EngineEvent.PHASE_FAIL);
+            this.runbook.status = 'paused_error';
+            this.persist().catch(console.error);
+            this.emitUIMessage({
+                type: 'STATE_SNAPSHOT',
+                payload: { runbook: this.runbook, engineState: this.state },
+            });
+            this.stopStallWatchdog();
+        }, this.STALL_CHECK_INTERVAL_MS);
+    }
+
+    /** Stop the stall watchdog timer. */
+    private stopStallWatchdog(): void {
+        if (this.stallWatchdog) {
+            clearInterval(this.stallWatchdog);
+            this.stallWatchdog = null;
+        }
+    }
+
+    /**
+     * Resume all pending phases whose dependencies are satisfied.
+     * Use this to recover a stalled pipeline — e.g., when a worker exit event
+     * was lost or the pipeline was interrupted mid-flight.
+     *
+     * Valid from EXECUTING_WORKER (counter drift) or ERROR_PAUSED (manual recovery).
+     */
+    public async resumePending(): Promise<void> {
+        if (!this.runbook) return;
+
+        // Allow from ERROR_PAUSED (user recovery) or EXECUTING_WORKER (counter drift)
+        if (this.state === EngineState.ERROR_PAUSED) {
+            const result = this.transition(EngineEvent.RETRY);
+            if (result === null) return;
+        } else if (this.state !== EngineState.EXECUTING_WORKER) {
+            this.emitUIMessage({
+                type: 'LOG_ENTRY',
+                payload: {
+                    timestamp: asTimestamp(),
+                    level: 'warn',
+                    message: `Cannot resume pending: engine is in state "${this.state}".`,
+                },
+            });
+            return;
+        }
+
+        this.runbook.status = 'running';
+
+        // Fix activeWorkerCount to match reality
+        const actualRunning = this.runbook.phases.filter(p => p.status === 'running').length;
+        this.activeWorkerCount = actualRunning;
+
+        const readyPhases = this.scheduler.getReadyPhases(this.runbook.phases);
+        if (readyPhases.length === 0) {
+            this.emitUIMessage({
+                type: 'LOG_ENTRY',
+                payload: {
+                    timestamp: asTimestamp(),
+                    level: 'info',
+                    message: 'No pending phases with satisfied dependencies found.',
+                },
+            });
+            return;
+        }
+
+        this.emitUIMessage({
+            type: 'LOG_ENTRY',
+            payload: {
+                timestamp: asTimestamp(),
+                level: 'info',
+                message: `Resuming ${readyPhases.length} pending phase(s): ${readyPhases.map(p => `#${p.id}`).join(', ')}.`,
+            },
+        });
+
+        await this.persist();
+        this.startStallWatchdog();
+        this.dispatchReadyPhases();
     }
 }

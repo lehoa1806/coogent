@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { RUNBOOK_FILENAME, asPhaseId, asTimestamp } from './types/index.js';
 import type { Phase, HostToWebviewMessage } from './types/index.js';
 import { StateManager } from './state/StateManager.js';
 import { Engine } from './engine/Engine.js';
@@ -15,9 +16,12 @@ import { ContextScoper, CharRatioEncoder } from './context/ContextScoper.js';
 import { ASTFileResolver } from './context/FileResolver.js';
 import { TelemetryLogger } from './logger/TelemetryLogger.js';
 import { GitManager } from './git/GitManager.js';
+import { GitSandboxManager } from './git/GitSandboxManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
 import { PlannerAgent } from './planner/PlannerAgent.js';
 import { SessionManager } from './session/SessionManager.js';
+import { HandoffExtractor } from './context/HandoffExtractor.js';
+import { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  UUIDv7 — time-ordered session ID
@@ -46,32 +50,154 @@ let adkController: ADKController | undefined;
 let contextScoper: ContextScoper | undefined;
 let logger: TelemetryLogger | undefined;
 let gitManager: GitManager | undefined;
+let gitSandbox: GitSandboxManager | undefined;
 let outputRegistry: OutputBufferRegistry | undefined;
 let plannerAgent: PlannerAgent | undefined;
 let sessionManager: SessionManager | undefined;
+let handoffExtractor: HandoffExtractor | undefined;
+let consolidationAgent: ConsolidationAgent | undefined;
+let currentSessionDir: string | undefined;
+const workerOutputAccumulator = new Map<number, string>();
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Pre-flight Git Check — reusable helper (exported for MissionControlPanel)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Check whether the working tree is clean before starting execution.
+ * Uses the native VS Code Git API via GitSandboxManager (no destructive stash).
+ *
+ * @param sandbox - The GitSandboxManager instance, or undefined if Git is not available.
+ * @returns `{ blocked: true, message }` if dirty, `{ blocked: false }` if clean or unavailable.
+ */
+export async function preFlightGitCheck(
+  sandbox: GitSandboxManager | undefined
+): Promise<{ blocked: true; message: string } | { blocked: false }> {
+  if (!sandbox) {
+    return { blocked: false };
+  }
+  try {
+    const result = await sandbox.preFlightCheck();
+    if (result.clean === false) {
+      return { blocked: true, message: result.message };
+    }
+    return { blocked: false };
+  } catch (err) {
+    console.warn('[Coogent] Git pre-flight check failed (non-blocking):', err);
+    return { blocked: false };
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Extension Lifecycle
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function activate(context: vscode.ExtensionContext): void {
-  vscode.window.showInformationMessage('[Coogent DEBUG] activate() called!');
+  // Extension lifecycle starts
   console.log('[Coogent] Extension activating...');
 
   // ─── Register commands FIRST — must always be available ──────────────
   context.subscriptions.push(
     vscode.commands.registerCommand('coogent.openMissionControl', () => {
-      console.log('[Coogent DEBUG] openMissionControl command invoked!');
       if (!engine) {
         vscode.window.showWarningMessage(
           'Coogent: Open a workspace folder first to use Mission Control.'
         );
         return;
       }
-      MissionControlPanel.createOrShow(context.extensionUri, engine, sessionManager, adkController);
+      MissionControlPanel.createOrShow(
+        context.extensionUri, engine, sessionManager, adkController,
+        () => preFlightGitCheck(gitSandbox)
+      );
     })
   );
-  console.log('[Coogent DEBUG] ✅ Command registered (before workspace check)');
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('coogent.loadRunbook', async () => {
+      if (!engine) {
+        vscode.window.showWarningMessage('Coogent: No workspace — cannot load runbook.');
+        return;
+      }
+      try {
+        await engine.loadRunbook();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Coogent: Failed to load runbook — ${err?.message ?? err}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('coogent.start', async () => {
+      if (!engine) {
+        vscode.window.showWarningMessage('Coogent: No workspace — cannot start.');
+        return;
+      }
+      // Git pre-flight: check for dirty working tree (Req §7)
+      const check = await preFlightGitCheck(gitSandbox);
+      if (check.blocked) {
+        const proceed = await vscode.window.showWarningMessage(
+          `Coogent: ${check.message}`,
+          'Continue Anyway',
+          'Cancel'
+        );
+        if (proceed !== 'Continue Anyway') return;
+      }
+      try {
+        await engine.start();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Coogent: Start failed — ${err?.message ?? err}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('coogent.pause', () => {
+      if (!engine) {
+        vscode.window.showWarningMessage('Coogent: No workspace — cannot pause.');
+        return;
+      }
+      engine.pause();
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('coogent.reset', async () => {
+      if (!engine) {
+        vscode.window.showWarningMessage('Coogent: No workspace — cannot reset.');
+        return;
+      }
+      try {
+        // Create a fresh session for the reset
+        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (workspaceRoot) {
+          const newId = uuidv7();
+          const newDir = path.join(workspaceRoot, '.coogent', 'ipc', newId);
+          currentSessionDir = newDir;
+          const newSM = new StateManager(newDir);
+          await engine.reset(newSM);
+          sessionManager = new SessionManager(workspaceRoot, newId);
+        } else {
+          await engine.reset();
+        }
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Coogent: Reset failed — ${err?.message ?? err}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('coogent.resumePending', async () => {
+      if (!engine) {
+        vscode.window.showWarningMessage('Coogent: No workspace — cannot resume.');
+        return;
+      }
+      try {
+        await engine.resumePending();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Coogent: Resume failed — ${err?.message ?? err}`);
+      }
+    })
+  );
 
   try {
 
@@ -80,53 +206,56 @@ export function activate(context: vscode.ExtensionContext): void {
       console.warn('[Coogent] No workspace folder open — engine not initialized.');
       return;
     }
-    console.log('[Coogent DEBUG] Step 1/10 — workspaceRoot:', workspaceRoot);
+
 
     // Read extension configuration
     const config = vscode.workspace.getConfiguration('coogent');
     const tokenLimit = config.get<number>('tokenLimit', 100_000);
     const workerTimeoutMs = config.get<number>('workerTimeoutMs', 300_000);
-    console.log('[Coogent DEBUG] Step 2/10 — config loaded (tokenLimit=%d, timeout=%d)', tokenLimit, workerTimeoutMs);
+
 
     // ─── Initialize services ───────────────────────────────────────────
     const sessionId = uuidv7();
     const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', sessionId);
-    console.log('[Coogent DEBUG] Session ID:', sessionId);
+    currentSessionDir = sessionDir;
+
 
     stateManager = new StateManager(sessionDir);
-    console.log('[Coogent DEBUG] Step 3/10 — StateManager created (sessionDir: %s)', sessionDir);
+
 
     engine = new Engine(stateManager, { workspaceRoot });
-    console.log('[Coogent DEBUG] Step 4/10 — Engine created');
+
 
     gitManager = new GitManager(workspaceRoot);
-    console.log('[Coogent DEBUG] Step 5/10 — GitManager created');
+
+    gitSandbox = new GitSandboxManager(workspaceRoot);
+
 
     sessionManager = new SessionManager(workspaceRoot, sessionId);
-    console.log('[Coogent DEBUG] Step 5.1/10 — SessionManager created');
+
 
     const adkAdapter = new AntigravityADKAdapter(workspaceRoot);
     adkController = new ADKController(adkAdapter, workspaceRoot);
-    console.log('[Coogent DEBUG] Step 6/10 — ADKController created');
+
 
     contextScoper = new ContextScoper({
       encoder: new CharRatioEncoder(),
       tokenLimit,
       resolver: new ASTFileResolver(),
     });
-    console.log('[Coogent DEBUG] Step 7/10 — ContextScoper created');
+
 
     logger = new TelemetryLogger(workspaceRoot, '.coogent/logs');
-    console.log('[Coogent DEBUG] Step 8/10 — TelemetryLogger created');
+
 
     // Output buffer registry — replaces module-level Map (02-review.md § R11)
     outputRegistry = new OutputBufferRegistry((phaseId, stream, chunk) => {
       MissionControlPanel.broadcast({
         type: 'WORKER_OUTPUT',
-        payload: { phaseId, stream, chunk },
+        payload: { phaseId: asPhaseId(phaseId), stream, chunk },
       });
     });
-    console.log('[Coogent DEBUG] Step 9/10 — OutputBufferRegistry created');
+
 
     // ─── Initialize Planner Agent ────────────────────────────────────
     plannerAgent = new PlannerAgent(adkAdapter, {
@@ -134,16 +263,48 @@ export function activate(context: vscode.ExtensionContext): void {
       maxTreeDepth: 4,
       maxTreeChars: 8000,
     });
-    console.log('[Coogent DEBUG] Step 9.1/10 — PlannerAgent created');
+
+    // ─── Initialize HandoffExtractor & ConsolidationAgent ────────────
+    handoffExtractor = new HandoffExtractor();
+    consolidationAgent = new ConsolidationAgent();
+
 
     // ─── Wire Engine → Webview ─────────────────────────────────────────
     engine.on('ui:message', (message: HostToWebviewMessage) => {
       MissionControlPanel.broadcast(message);
     });
 
-    // ─── Wire Engine → Logger ──────────────────────────────────────────
+    // ─── Wire Engine → Logger + Webview (state:changed) ────────────────
     engine.on('state:changed', (from, to, event) => {
       logger?.logStateTransition(from, to, event).catch(console.error);
+
+      // Broadcast STATE_SNAPSHOT to webview on every state transition (Req §3)
+      const rb = engine?.getRunbook();
+      MissionControlPanel.broadcast({
+        type: 'STATE_SNAPSHOT',
+        payload: {
+          runbook: rb ?? { project_id: '', status: 'idle', current_phase: 0, phases: [] },
+          engineState: to,
+        },
+      });
+    });
+
+    // ─── Wire Engine → run:completed (log completion) ──────────────────
+    engine.on('run:completed', (runbook) => {
+      const phaseCount = runbook.phases.length;
+      const completedCount = runbook.phases.filter(p => p.status === 'completed').length;
+      console.log(
+        `[Coogent] Run completed: ${completedCount}/${phaseCount} phases completed ` +
+        `for project "${runbook.project_id}".`
+      );
+      MissionControlPanel.broadcast({
+        type: 'LOG_ENTRY',
+        payload: {
+          timestamp: asTimestamp(),
+          level: 'info',
+          message: `✅ Run completed: ${completedCount}/${phaseCount} phases for "${runbook.project_id}".`,
+        },
+      });
     });
 
     // ─── Wire Engine → ADK (phase execution) ───────────────────────────
@@ -168,7 +329,7 @@ export function activate(context: vscode.ExtensionContext): void {
         if (res.success) {
           MissionControlPanel.broadcast({
             type: 'LOG_ENTRY',
-            payload: { timestamp: Date.now(), level: 'info', message: res.message }
+            payload: { timestamp: asTimestamp(), level: 'info', message: res.message }
           });
         }
       }).catch(console.error);
@@ -177,6 +338,18 @@ export function activate(context: vscode.ExtensionContext): void {
     // ─── Wire ADK → Engine (worker lifecycle) ──────────────────────────
     adkController.on('worker:exited', (phaseId, exitCode) => {
       outputRegistry?.flushAndRemove(phaseId);
+
+      // Extract and save handoff report on successful exit
+      if (exitCode === 0 && handoffExtractor && currentSessionDir) {
+        const accumulatedOutput = workerOutputAccumulator.get(phaseId) ?? '';
+        workerOutputAccumulator.delete(phaseId);
+        handoffExtractor.extractHandoff(phaseId, accumulatedOutput, workspaceRoot)
+          .then(report => handoffExtractor!.saveHandoff(phaseId, report, currentSessionDir!))
+          .catch(err => console.error('[Coogent] Handoff extraction error:', err));
+      } else {
+        workerOutputAccumulator.delete(phaseId);
+      }
+
       engine?.onWorkerExited(phaseId, exitCode).catch(console.error);
     });
 
@@ -194,6 +367,18 @@ export function activate(context: vscode.ExtensionContext): void {
     adkController.on('worker:output', (phaseId, stream, chunk) => {
       outputRegistry?.getOrCreate(phaseId, stream).append(chunk);
       logger?.logPhaseOutput(phaseId, stream, chunk).catch(console.error);
+
+      // Route output to per-phase detail views
+      MissionControlPanel.broadcast({
+        type: 'PHASE_OUTPUT',
+        payload: { phaseId: asPhaseId(phaseId), stream, chunk },
+      });
+
+      // Accumulate stdout for handoff extraction
+      if (stream === 'stdout') {
+        const existing = workerOutputAccumulator.get(phaseId) ?? '';
+        workerOutputAccumulator.set(phaseId, existing + chunk);
+      }
     });
 
     // ─── Wire Engine → PlannerAgent ─────────────────────────────────
@@ -205,9 +390,22 @@ export function activate(context: vscode.ExtensionContext): void {
       plannerAgent?.plan(prompt, feedback).catch(console.error);
     });
 
+    engine.on('plan:retryParse', () => {
+      plannerAgent?.retryParse().catch(console.error);
+    });
+
     // ─── Wire PlannerAgent → Engine ─────────────────────────────────
     plannerAgent.on('plan:generated', (draft, fileTree) => {
       engine?.planGenerated(draft, fileTree);
+
+      // Broadcast planning summary to webview for the Master Task hero section
+      MissionControlPanel.broadcast({
+        type: 'PLAN_SUMMARY',
+        payload: {
+          summary: draft.summary || draft.project_id,
+          implementationPlan: draft.implementation_plan || '',
+        },
+      });
     });
 
     plannerAgent.on('plan:error', (error) => {
@@ -223,32 +421,159 @@ export function activate(context: vscode.ExtensionContext): void {
       engine?.abort().catch(console.error);
     });
 
+    plannerAgent.on('plan:timeout', (hasOutput) => {
+      // Check if retry is possible: either cached streaming output OR file-IPC session dir
+      const canRetry = hasOutput || plannerAgent?.hasTimeoutOutput();
+
+      MissionControlPanel.broadcast({
+        type: 'PLAN_STATUS',
+        payload: {
+          status: 'timeout',
+          message: canRetry
+            ? 'Planner timed out — click "Retry Parse" to check for the response file on disk.'
+            : 'Planner timed out with no output. Please regenerate the plan.',
+        },
+      });
+      // Only abort to IDLE if there's truly nothing to retry from
+      if (!canRetry) {
+        engine?.abort().catch(console.error);
+      }
+      // Otherwise engine stays in PLANNING — user can send CMD_PLAN_RETRY_PARSE
+    });
+
     plannerAgent.on('plan:status', (status, message) => {
       MissionControlPanel.broadcast({
         type: 'PLAN_STATUS',
-        payload: { status, message },
+        payload: { status, ...(message !== undefined && { message }) },
       });
     });
 
-    console.log('[Coogent DEBUG] Step 9.5/10 — All event wiring complete');
+    // ─── Wire Engine → ConsolidationAgent ──────────────────────────────
+    engine.on('run:consolidate', (evtSessionDir: string) => {
+      const runbook = engine?.getRunbook();
+      if (!consolidationAgent || !runbook) return;
 
-    console.log('[Coogent DEBUG] Step 10/10 — All services initialized');
+      consolidationAgent.generateReport(evtSessionDir, runbook)
+        .then(report => {
+          return consolidationAgent!.saveReport(evtSessionDir, report)
+            .then(reportPath => ({ reportPath, report }));
+        })
+        .then(({ reportPath, report }) => {
+          MissionControlPanel.broadcast({
+            type: 'LOG_ENTRY',
+            payload: {
+              timestamp: asTimestamp(),
+              level: 'info',
+              message: `Consolidation report saved: ${reportPath}`,
+            },
+          });
 
-    // ─── List all registered commands for debugging ────────────────────
-    vscode.commands.getCommands(true).then((cmds) => {
-      const coogentCmds = cmds.filter(c => c.startsWith('coogent'));
-      console.log('[Coogent DEBUG] Registered coogent commands:', JSON.stringify(coogentCmds));
+          // Auto-broadcast the report to the webview (#BUG-5)
+          const markdown = consolidationAgent!.formatAsMarkdown(report);
+          MissionControlPanel.broadcast({
+            type: 'CONSOLIDATION_REPORT',
+            payload: { report: markdown },
+          });
+        })
+        .catch(err => {
+          console.error('[Coogent] Consolidation error:', err);
+          MissionControlPanel.broadcast({
+            type: 'LOG_ENTRY',
+            payload: {
+              timestamp: asTimestamp(),
+              level: 'error',
+              message: `Consolidation report generation failed: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          });
+        });
     });
+
+    // ─── Git Sandbox commands ──────────────────────────────────────────
+    context.subscriptions.push(
+      vscode.commands.registerCommand('coogent.preFlightCheck', async () => {
+        try {
+          const result = await gitSandbox!.preFlightCheck();
+          if (result.clean) {
+            vscode.window.showInformationMessage(`Coogent: ${result.message}`);
+          } else {
+            vscode.window.showWarningMessage(`Coogent: ${result.message}`);
+          }
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Coogent: Pre-flight check failed — ${err?.message ?? err}`);
+        }
+      })
+    );
+
+    context.subscriptions.push(
+      vscode.commands.registerCommand('coogent.createSandbox', async () => {
+        const slug = await vscode.window.showInputBox({ prompt: 'Enter a task slug (e.g., feat-auth-flow)' });
+        if (!slug) return;
+        try {
+          const result = await gitSandbox!.createSandboxBranch({ taskSlug: slug });
+          if (result.success) {
+            vscode.window.showInformationMessage(`Coogent: ${result.message}`);
+          } else {
+            vscode.window.showErrorMessage(`Coogent: ${result.message}`);
+          }
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Coogent: Failed to create sandbox — ${err?.message ?? err}`);
+        }
+      })
+    );
+
+    context.subscriptions.push(
+      vscode.commands.registerCommand('coogent.openDiffReview', async () => {
+        try {
+          const result = await gitSandbox!.openDiffReview();
+          if (result.success) {
+            vscode.window.showInformationMessage(`Coogent: ${result.message}`);
+          } else {
+            vscode.window.showErrorMessage(`Coogent: ${result.message}`);
+          }
+        } catch (err: any) {
+          vscode.window.showErrorMessage(`Coogent: Failed to open diff review — ${err?.message ?? err}`);
+        }
+      })
+    );
+
+
+
+    // ─── Reactive configuration — propagate setting changes (#97) ────
+    context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (!e.affectsConfiguration('coogent')) return;
+
+        const updated = vscode.workspace.getConfiguration('coogent');
+        const newTokenLimit = updated.get<number>('tokenLimit', 100_000);
+        const newWorkerTimeoutMs = updated.get<number>('workerTimeoutMs', 300_000);
+        const newMaxRetries = updated.get<number>('maxRetries', 3);
+
+        // Propagate to ContextScoper
+        if (contextScoper) {
+          contextScoper.setTokenLimit(newTokenLimit);
+        }
+
+        // Propagate to Engine
+        if (engine) {
+          engine.setMaxRetries(newMaxRetries);
+        }
+
+        console.log(
+          `[Coogent] Configuration updated: tokenLimit=${newTokenLimit}, ` +
+          `workerTimeoutMs=${newWorkerTimeoutMs}, maxRetries=${newMaxRetries}`
+        );
+      })
+    );
 
     // ─── File system watcher — auto-reload on external runbook edit ───
     const watcher = vscode.workspace.createFileSystemWatcher(
-      '**/.coogent/ipc/**/.task-runbook.json',
+      `**/.coogent/ipc/**/${RUNBOOK_FILENAME}`,
       true,   // ignoreCreateEvents
       false,  // ignoreChangeEvents
       true    // ignoreDeleteEvents
     );
     watcher.onDidChange(() => {
-      console.log('[Coogent] .task-runbook.json changed externally');
+      console.log(`[Coogent] ${RUNBOOK_FILENAME} changed externally`);
       // Only reload if the engine is in a state that accepts LOAD_RUNBOOK
       if (engine?.getState() === 'IDLE') {
         engine.loadRunbook().catch(console.error);
@@ -274,31 +599,44 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }).catch(console.error);
 
-    vscode.window.showInformationMessage('[Coogent DEBUG] Extension activated successfully — command should be available now');
+
     console.log('[Coogent] Extension activated.');
 
   } catch (err: any) {
     const msg = err?.message || String(err);
-    vscode.window.showErrorMessage(`[Coogent DEBUG] activate() FAILED: ${msg}`);
+    vscode.window.showErrorMessage(`[Coogent] Activation failed: ${msg}`);
     console.error('[Coogent] Activation error:', err);
   }
 }
 
-export function deactivate(): void {
+export async function deactivate(): Promise<void> {
   console.log('[Coogent] Extension deactivating...');
-  plannerAgent?.abort().catch(console.error);
-  adkController?.terminateAll('IDE_SHUTDOWN').catch(console.error);
+
+  // Graceful shutdown: abort engine + kill all workers in parallel (Req §6)
+  await Promise.allSettled([
+    engine?.abort().catch(console.error),
+    adkController?.killAllWorkers().catch(console.error),
+    plannerAgent?.abort().catch(console.error),
+  ]);
+
+  // Flush any remaining output buffers
   outputRegistry?.dispose();
-  // StateManager singleton removed (02-review.md § R10) — GC'd via reference clear
+
+  // Release all references for GC
   stateManager = undefined;
   engine = undefined;
   adkController = undefined;
   contextScoper = undefined;
   logger = undefined;
   gitManager = undefined;
+  gitSandbox = undefined;
   outputRegistry = undefined;
   plannerAgent = undefined;
   sessionManager = undefined;
+  handoffExtractor = undefined;
+  consolidationAgent = undefined;
+  currentSessionDir = undefined;
+  workerOutputAccumulator.clear();
   console.log('[Coogent] Extension deactivated.');
 }
 
@@ -312,7 +650,13 @@ async function executePhase(
   timeoutMs: number,
   masterTaskId: string
 ): Promise<void> {
-  if (!contextScoper || !adkController || !logger) return;
+  if (!contextScoper || !adkController || !logger) {
+    engine?.onWorkerFailed(phase.id, 'crash').catch(console.error);
+    return;
+  }
+
+  // Step 0: Log phase start (Req §5)
+  await logger.logPhaseStart(phase.id);
 
   // Step 1: Assemble context
   const result = await contextScoper.assemble(phase, workspaceRoot);
@@ -364,6 +708,29 @@ async function executePhase(
     await logger.initRun(runbook.project_id);
   }
 
+  // Step 5.5: Build handoff context from dependent phases
+  let handoffContext = '';
+  if (handoffExtractor && currentSessionDir) {
+    try {
+      handoffContext = await handoffExtractor.buildNextContext(phase, currentSessionDir, workspaceRoot);
+    } catch (err) {
+      console.error('[Coogent] Failed to build handoff context:', err);
+    }
+  }
+
   // Step 6: Spawn the worker
-  await adkController.spawnWorker(phase, result.payload, timeoutMs, masterTaskId);
+  // Build the full effective prompt:
+  //   1. Handoff context from dependency phases (if any)
+  //   2. The original phase prompt
+  //   3. Distillation instructions (tells worker to produce JSON handoff block)
+  const distillationPrompt = handoffExtractor?.generateDistillationPrompt(phase.id as number) ?? '';
+  let effectivePrompt = phase.prompt;
+  if (handoffContext) {
+    effectivePrompt = `# Context from Previous Phases\n\n${handoffContext}\n---\n\n${effectivePrompt}`;
+  }
+  if (distillationPrompt) {
+    effectivePrompt = `${effectivePrompt}\n\n---\n\n${distillationPrompt}`;
+  }
+  const effectivePhase = { ...phase, prompt: effectivePrompt };
+  await adkController.spawnWorker(effectivePhase, result.payload, timeoutMs, masterTaskId);
 }

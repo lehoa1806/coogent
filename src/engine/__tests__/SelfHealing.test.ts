@@ -1,5 +1,6 @@
 import { SelfHealingController } from '../SelfHealing.js';
 import type { Phase } from '../../types/index.js';
+import { asPhaseId } from '../../types/index.js';
 
 describe('SelfHealingController', () => {
     let healer: SelfHealingController;
@@ -26,7 +27,7 @@ describe('SelfHealingController', () => {
 
     test('canRetryWithPhase respects phase level overrides', () => {
         const phase: Phase = {
-            id: 1, status: 'failed', prompt: 'Fix it', context_files: [], success_criteria: '', max_retries: 5
+            id: asPhaseId(1), status: 'failed', prompt: 'Fix it', context_files: [], success_criteria: '', max_retries: 5
         };
 
         healer.recordFailure(1, 1, 'Error 1');
@@ -48,7 +49,7 @@ describe('SelfHealingController', () => {
 
     test('buildHealingPrompt injects failure context', () => {
         const phase: Phase = {
-            id: 1, status: 'failed', prompt: 'Do math', context_files: [], success_criteria: ''
+            id: asPhaseId(1), status: 'failed', prompt: 'Do math', context_files: [], success_criteria: ''
         };
 
         healer.recordFailure(1, 127, 'ReferenceError: x is not defined');

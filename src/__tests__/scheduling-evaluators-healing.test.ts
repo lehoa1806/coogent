@@ -1,5 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Tests for Phase 5 & 6 modules
+// scheduling-evaluators-healing.test.ts — Unit tests for DAG Scheduler,
+// Phase Evaluators, SelfHealingController, TokenPruner, and FileResolver
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Scheduler } from '../engine/Scheduler';
@@ -12,21 +13,26 @@ import {
 import { TokenPruner, PrunableEntry } from '../context/TokenPruner';
 import { ExplicitFileResolver } from '../context/FileResolver';
 import type { Phase } from '../types/index';
+import { asPhaseId } from '../types/index';
 import { CharRatioEncoder } from '../context/ContextScoper';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Scheduler Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('Scheduler', () => {
+type PhaseOverrides = Omit<Partial<Phase>, 'id' | 'depends_on'> & { id: number; depends_on?: number[] };
+
+describe('Scheduler — DAG-aware phase scheduling', () => {
     const scheduler = new Scheduler({ maxConcurrent: 2 });
 
-    const makePhase = (overrides: Partial<Phase> & { id: number }): Phase => ({
+    const makePhase = (overrides: PhaseOverrides): Phase => ({
         status: 'pending',
         prompt: 'test prompt',
         context_files: [],
         success_criteria: 'exit_code:0',
         ...overrides,
+        id: asPhaseId(overrides.id),
+        depends_on: overrides.depends_on?.map(d => asPhaseId(d)) ?? [],
     });
 
     describe('isDAGMode', () => {
@@ -136,7 +142,7 @@ describe('Scheduler', () => {
 //  Evaluator Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('ExitCodeEvaluator', () => {
+describe('ExitCodeEvaluator — exit code matching', () => {
     const evaluator = new ExitCodeEvaluator();
 
     it('passes when exit code matches criteria', async () => {
@@ -153,7 +159,7 @@ describe('ExitCodeEvaluator', () => {
     });
 });
 
-describe('RegexOutputEvaluator', () => {
+describe('RegexOutputEvaluator — stdout/stderr pattern matching', () => {
     const evaluator = new RegexOutputEvaluator();
 
     it('passes when regex matches output', async () => {
@@ -175,7 +181,7 @@ describe('RegexOutputEvaluator', () => {
     });
 });
 
-describe('EvaluatorRegistry', () => {
+describe('EvaluatorRegistry — evaluator type resolution', () => {
     const registry = new EvaluatorRegistry('/tmp');
 
     it('returns exit_code evaluator by default', () => {
@@ -197,14 +203,14 @@ describe('EvaluatorRegistry', () => {
 //  SelfHealingController Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('SelfHealingController', () => {
+describe('SelfHealingController — retry logic and exponential backoff', () => {
     let healer: SelfHealingController;
 
     beforeEach(() => {
         healer = new SelfHealingController({ maxRetries: 3, baseDelayMs: 1000 });
     });
 
-    it('allows retries up to maxRetries', () => {
+    it('allows retries up to the configured maxRetries limit', () => {
         healer.recordFailure(1, 1, 'error 1');
         expect(healer.canRetry(1)).toBe(true);
 
@@ -217,7 +223,7 @@ describe('SelfHealingController', () => {
 
     it('respects per-phase max_retries override', () => {
         const phase: Phase = {
-            id: 1, status: 'failed', prompt: 'test',
+            id: asPhaseId(1), status: 'failed', prompt: 'test',
             context_files: [], success_criteria: 'exit_code:0',
             max_retries: 1,
         };
@@ -225,7 +231,7 @@ describe('SelfHealingController', () => {
         expect(healer.canRetryWithPhase(phase)).toBe(false);
     });
 
-    it('applies exponential backoff', () => {
+    it('calculates exponential backoff delay based on attempt count', () => {
         expect(healer.getRetryDelay(1)).toBe(1000); // 0 attempts → base
         healer.recordFailure(1, 1, 'err');
         expect(healer.getRetryDelay(1)).toBe(2000); // 1 attempt → 2x
@@ -233,9 +239,9 @@ describe('SelfHealingController', () => {
         expect(healer.getRetryDelay(1)).toBe(4000); // 2 attempts → 4x
     });
 
-    it('builds augmented healing prompt', () => {
+    it('builds an augmented healing prompt with retry count and error history', () => {
         const phase: Phase = {
-            id: 1, status: 'failed', prompt: 'Build the module',
+            id: asPhaseId(1), status: 'failed', prompt: 'Build the module',
             context_files: [], success_criteria: 'exit_code:0',
         };
         healer.recordFailure(1, 1, 'TypeError: x is not defined');
@@ -246,7 +252,7 @@ describe('SelfHealingController', () => {
         expect(prompt).toContain('Build the module');
     });
 
-    it('clears attempts for a phase', () => {
+    it('clears all recorded attempts for a given phase', () => {
         healer.recordFailure(1, 1, 'err');
         expect(healer.getAttemptCount(1)).toBe(1);
         healer.clearAttempts(1);
@@ -258,7 +264,7 @@ describe('SelfHealingController', () => {
 //  TokenPruner Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('TokenPruner', () => {
+describe('TokenPruner — context budget enforcement', () => {
     const encoder = new CharRatioEncoder(4);
     const pruner = new TokenPruner(encoder, 100); // 100 token limit
 
@@ -291,12 +297,12 @@ describe('TokenPruner', () => {
 //  FileResolver Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('ExplicitFileResolver', () => {
+describe('ExplicitFileResolver — context_files passthrough', () => {
     const resolver = new ExplicitFileResolver();
 
-    it('returns context_files as-is', async () => {
+    it('returns the phase context_files list unmodified', async () => {
         const phase: Phase = {
-            id: 0, status: 'pending', prompt: 'test',
+            id: asPhaseId(0), status: 'pending', prompt: 'test',
             context_files: ['src/a.ts', 'src/b.ts'],
             success_criteria: 'exit_code:0',
         };

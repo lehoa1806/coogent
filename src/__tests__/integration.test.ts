@@ -7,6 +7,7 @@ import { ContextScoper, CharRatioEncoder } from '../context/ContextScoper.js';
 import { ADKController, MockADKAdapter } from '../adk/ADKController.js';
 import { TelemetryLogger } from '../logger/TelemetryLogger.js';
 import type { Runbook, Phase } from '../types/index.js';
+import { asPhaseId } from '../types/index.js';
 
 describe('Coogent Integration: End-to-End Pillar 1', () => {
     let tmpDir: string;
@@ -25,7 +26,7 @@ describe('Coogent Integration: End-to-End Pillar 1', () => {
         current_phase: 0,
         phases: [
             {
-                id: 0,
+                id: asPhaseId(0),
                 status: 'pending',
                 prompt: 'Phase 1',
                 context_files: [],

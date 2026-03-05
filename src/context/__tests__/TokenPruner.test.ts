@@ -47,4 +47,43 @@ describe('TokenPruner', () => {
         // It's a best-effort pruner. So we only check that the truncation occurred.
         expect(result.entries[0].content).toContain('truncated by Coogent');
     });
+
+    test('strips function bodies from discovered .ts files (Strategy 2)', () => {
+        const pruner = new TokenPruner(mockEncoder, 15);
+        const tsContent = [
+            'function hello() {',
+            '  console.log("hello");',
+            '  console.log("world");',
+            '}',
+            'function bye() {',
+            '  return 42;',
+            '}',
+        ].join('\n');
+
+        const entries: PrunableEntry[] = [
+            { path: 'main.ts', content: 'keep me', tokenCount: 2, isExplicit: true },
+            { path: 'utils.ts', content: tsContent, tokenCount: 20, isExplicit: false },
+        ];
+
+        const result = pruner.prune(entries);
+        // After stripping bodies, the discovered file should have less content
+        const utilsEntry = result.entries.find(e => e.path === 'utils.ts');
+        if (utilsEntry) {
+            expect(utilsEntry.content.length).toBeLessThan(tsContent.length);
+        }
+    });
+
+    test('truncates explicit-only files when all strategies exhausted (Strategy 3)', () => {
+        const pruner = new TokenPruner(mockEncoder, 3);
+        // Use a long content string so truncation actually reduces length
+        // (the truncation suffix is ~67 chars, so the original must be much longer)
+        const longContent = 'word '.repeat(40).trim(); // 199 chars, ~50 tokens
+        const entries: PrunableEntry[] = [
+            { path: 'big.ts', content: longContent, tokenCount: 50, isExplicit: true },
+        ];
+
+        const result = pruner.prune(entries);
+        expect(result.entries[0].content).toContain('truncated by Coogent');
+        expect(result.entries[0].content.length).toBeLessThan(entries[0].content.length);
+    });
 });

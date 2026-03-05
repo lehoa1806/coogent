@@ -14,6 +14,10 @@
  * @property {any} planDraft
  * @property {number} elapsedSeconds
  * @property {number} planSlideIndex
+ * @property {Record<number, string>} phaseOutputs
+ * @property {string} masterSummary
+ * @property {string} implementationPlan
+ * @property {Record<number, { totalTokens: number, limit: number, fileCount: number }>} phaseTokenBudgets
  */
 
 /** @type {ReturnType<typeof acquireVsCodeApi>} */
@@ -28,6 +32,10 @@ let _state = {
     planDraft: null,
     elapsedSeconds: 0,
     planSlideIndex: 0,
+    phaseOutputs: {},
+    masterSummary: '',
+    implementationPlan: '',
+    phaseTokenBudgets: {},
 };
 
 /** @type {Array<(state: AppState) => void>} */
@@ -86,4 +94,16 @@ export function subscribe(listener) {
  */
 export function postMessage(msg) {
     _vscode.postMessage(msg);
+}
+
+/**
+ * Append text to a phase's accumulated output and persist.
+ * @param {number} phaseId
+ * @param {string} text
+ */
+export function appendPhaseOutput(phaseId, text) {
+    const current = _state.phaseOutputs[phaseId] || '';
+    setAppState({
+        phaseOutputs: { ..._state.phaseOutputs, [phaseId]: current + text },
+    });
 }

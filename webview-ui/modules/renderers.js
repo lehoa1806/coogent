@@ -12,12 +12,8 @@
 import { getAppState, setAppState, postMessage } from './store.js';
 import { startTimer, stopTimer, resetTimer } from './timer.js';
 import { renderPhaseList, updatePhaseItemStatus } from './phaseNavigator.js';
+import { renderPhaseDetails } from './phaseDetails.js';
 import { escapeHtml } from './utils.js';
-
-// Re-export extracted modules for backward compatibility
-export { renderPlanDraft, showPlanSlide, getPlanSlideCount, renderPlanStatus } from './planReview.js';
-export { renderSessionList } from './sessionList.js';
-export { escapeHtml } from './utils.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Helpers
@@ -126,6 +122,29 @@ function updatePanelVisibility(state) {
     // Plan status spinner — visible only during PLANNING
     const $planStatus = document.getElementById('plan-status');
     if ($planStatus) $planStatus.style.display = state === 'PLANNING' ? 'flex' : 'none';
+
+    // Terminal panel — hidden by default; only shown in COMPLETED state
+    // (where the consolidation report fills it) or IDLE (for raw debug).
+    // During execution, per-phase output is shown in the phase details panel.
+    const $terminalPanel = document.querySelector('.terminal-panel');
+    if ($terminalPanel) {
+        const isCompleted = state === 'COMPLETED';
+        const isIdle = state === 'IDLE';
+        /** @type {HTMLElement} */ ($terminalPanel).style.display = (isCompleted || isIdle) ? '' : 'none';
+        // Add/remove the reporting accent when the report is available
+        if (isCompleted) {
+            $terminalPanel.classList.add('reporting');
+        } else {
+            $terminalPanel.classList.remove('reporting');
+        }
+    }
+
+    // App body (phase navigator + details) — ensure it stays visible during
+    // COMPLETED state so users can review phase details after execution (#BUG-1).
+    const $appBody = document.querySelector('.app-body');
+    if ($appBody) {
+        /** @type {HTMLElement} */ ($appBody).style.display = 'flex';
+    }
 }
 
 /**
@@ -160,6 +179,9 @@ function updateControlState(s) {
     }
     if ($btnNewChat) $btnNewChat.style.display = canNewChat ? 'inline-block' : 'none';
     if ($btnReset) $btnReset.style.display = isCompleted ? 'inline-block' : 'none';
+
+    const $btnViewReport = document.getElementById('btn-view-report');
+    if ($btnViewReport) $btnViewReport.style.display = isCompleted ? 'inline-block' : 'none';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -349,41 +371,9 @@ export function renderMissionOverview(projectId, phases) {
     $overview.style.display = 'block';
 }
 
-/**
- * Render the phase details panel (Zone 5).
- * Reads the current state to find the phase with matching id and populates
- * `#phase-details` with prompt, context files, and success criteria.
- * @param {number} phaseId
- */
-export function renderPhaseDetails(phaseId) {
-    const $details = document.getElementById('phase-details');
-    if (!$details) return;
-
-    const phases = getAppState().phases;
-    const phase = phases.find(p => p.id === phaseId);
-
-    if (!phase) {
-        $details.innerHTML = `<div class="phase-details-placeholder">Select a phase from the navigator.</div>`;
-        $details.style.display = 'flex';
-        return;
-    }
-
-    const promptPreview = phase.prompt
-        ? (phase.prompt.length > 80 ? phase.prompt.slice(0, 80) + '…' : phase.prompt)
-        : '';
-
-    $details.innerHTML = `
-        <h3>Phase ${phase.id + 1}: ${escapeHtml(promptPreview)}</h3>
-        <div class="phase-prompt-full">${escapeHtml(phase.prompt || '')}</div>
-        <div class="phase-context-files">
-            ${(phase.context_files || []).map(
-        (/** @type {string} */ f) => `<span class="file-chip">${escapeHtml(f)}</span>`
-    ).join('')}
-        </div>
-        <div class="phase-success-criteria">${escapeHtml(phase.success_criteria || 'exit_code:0')}</div>
-    `;
-    $details.style.display = 'flex';
-}
+// renderPhaseDetails is imported from ./phaseDetails.js (extracted to break
+// the circular dependency with phaseNavigator.js — see #82).
+export { renderPhaseDetails } from './phaseDetails.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Full UI Reset (New Chat)
@@ -479,4 +469,79 @@ export function resetUI() {
 
     // ── Control buttons — reset to IDLE state ────────────────────────────────
     updateControlState('IDLE');
+
+    // ── Report modal — close if open ─────────────────────────────────────────
+    hideReportModal();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Report Modal
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Convert a subset of Markdown to safe HTML.
+ * Handles headings, bold, italic, code blocks, inline code, and lists.
+ * @param {string} md
+ * @returns {string}
+ */
+export function markdownToHtml(md) {
+    return md
+        // Code blocks (fenced)
+        .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
+        // Headings
+        .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
+        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+        // Bold + italic
+        .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*(.+?)\*/g, '<em>$1</em>')
+        // Inline code
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        // Unordered list items
+        .replace(/^[\-\*] (.+)$/gm, '<li>$1</li>')
+        // Wrap consecutive <li> in <ul>
+        .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
+        // Line breaks for remaining lines
+        .replace(/\n/g, '<br>');
+}
+
+/**
+ * Show the consolidation report modal with rendered Markdown.
+ * @param {string} markdown
+ */
+export function showReportModal(markdown) {
+    const $overlay = document.getElementById('report-overlay');
+    const $content = document.getElementById('report-content');
+    if (!$overlay || !$content) return;
+
+    $content.innerHTML = markdownToHtml(markdown);
+    $overlay.classList.add('visible');
+
+    // Close on overlay click (outside the modal)
+    $overlay.onclick = (e) => {
+        if (e.target === $overlay) hideReportModal();
+    };
+
+    // Close on Escape key
+    const onEscape = (e) => {
+        if (e.key === 'Escape') {
+            hideReportModal();
+            document.removeEventListener('keydown', onEscape);
+        }
+    };
+    document.addEventListener('keydown', onEscape);
+
+    // Close button
+    const $close = document.getElementById('btn-close-report');
+    if ($close) $close.onclick = () => hideReportModal();
+}
+
+/**
+ * Hide the consolidation report modal.
+ */
+export function hideReportModal() {
+    const $overlay = document.getElementById('report-overlay');
+    if ($overlay) $overlay.classList.remove('visible');
 }

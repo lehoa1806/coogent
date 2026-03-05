@@ -44,7 +44,7 @@ export function initControls() {
 
     $('btn-reset')?.addEventListener('click', () => {
         clearOutput();
-        hidTokenBar();
+        hideTokenBar();
         resetTimer();
         postMessage({ type: 'CMD_RESET' });
     });
@@ -76,17 +76,49 @@ export function initControls() {
             if (appBody) /** @type {HTMLElement} */ (appBody).style.display = isOpen ? 'flex' : 'none';
             if (!isOpen) {
                 postMessage({ type: 'CMD_LIST_SESSIONS' });
+                // #88: Focus trap — move focus into drawer
+                const searchInput = $('history-search');
+                if (searchInput) searchInput.focus();
             }
         }
     });
 
     $('btn-close-history')?.addEventListener('click', () => {
-        const drawer = $('history-drawer');
-        const controls = $('controls');
-        const appBody = document.querySelector('.app-body');
-        if (drawer) drawer.style.display = 'none';
-        if (controls) controls.style.display = 'flex';
-        if (appBody) /** @type {HTMLElement} */ (appBody).style.display = 'flex';
+        closeHistoryDrawer();
+    });
+
+    // #88: Escape key closes history drawer
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            const drawer = $('history-drawer');
+            if (drawer && drawer.style.display !== 'none') {
+                e.preventDefault();
+                closeHistoryDrawer();
+            }
+        }
+        // #88: Tab key focus trap — keep focus within the drawer
+        if (e.key === 'Tab') {
+            const drawer = $('history-drawer');
+            if (!drawer || drawer.style.display === 'none') return;
+
+            const focusable = /** @type {HTMLElement[]} */ (
+                Array.from(drawer.querySelectorAll(
+                    'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+                ))
+            ).filter(el => !el.hidden && el.offsetParent !== null);
+            if (focusable.length === 0) return;
+
+            const first = focusable[0];
+            const last = focusable[focusable.length - 1];
+
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        }
     });
 
     // ── Session Search (debounced) ──────────────────────────────────────────
@@ -192,6 +224,12 @@ export function initControls() {
         clearOutput();
     });
 
+    // ── View Report ──────────────────────────────────────────────────────────
+
+    $('btn-view-report')?.addEventListener('click', () => {
+        postMessage({ type: 'CMD_REQUEST_REPORT' });
+    });
+
     // ── Terminal Resizer ─────────────────────────────────────────────────────
     initResizer();
 }
@@ -245,17 +283,29 @@ function submitPlan() {
     const $planPrompt = /** @type {HTMLTextAreaElement} */ (document.getElementById('plan-prompt'));
     const prompt = $planPrompt?.value?.trim();
     if (!prompt) return;
+    // Hide any previous GIT_DIRTY error banner
+    const $banner = document.getElementById('git-error-banner');
+    if ($banner) $banner.style.display = 'none';
     postMessage({ type: 'CMD_PLAN_REQUEST', payload: { prompt } });
 }
 
+/** #88: Close the history drawer and return focus to trigger. */
+function closeHistoryDrawer() {
+    const $ = (/** @type {string} */ id) => document.getElementById(id);
+    const drawer = $('history-drawer');
+    const controls = $('controls');
+    const appBody = document.querySelector('.app-body');
+    if (drawer) drawer.style.display = 'none';
+    if (controls) controls.style.display = 'flex';
+    if (appBody) /** @type {HTMLElement} */ (appBody).style.display = 'flex';
+    // Return focus to the trigger button
+    const historyBtn = $('btn-history');
+    if (historyBtn) historyBtn.focus();
+}
+
 /** Hide the token budget bar. */
-function hidTokenBar() {
+function hideTokenBar() {
     const $tokenBar = document.getElementById('token-bar');
     if ($tokenBar) $tokenBar.style.display = 'none';
 }
 
-/** Clear the plan prompt textarea. */
-function clearPlanPrompt() {
-    const $planPrompt = /** @type {HTMLTextAreaElement} */ (document.getElementById('plan-prompt'));
-    if ($planPrompt) $planPrompt.value = '';
-}

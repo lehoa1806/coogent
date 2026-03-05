@@ -7,7 +7,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { StateManager } from '../StateManager.js';
-import { Runbook, EngineState } from '../../types/index.js';
+import { Runbook, EngineState, asPhaseId } from '../../types/index.js';
 
 describe('StateManager — P0 Verification Tests', () => {
     let tmpDir: string;
@@ -17,7 +17,7 @@ describe('StateManager — P0 Verification Tests', () => {
         status: status as Runbook['status'],
         current_phase: 0,
         phases: [{
-            id: 0,
+            id: asPhaseId(0),
             status: 'pending',
             prompt: 'Test',
             context_files: [],

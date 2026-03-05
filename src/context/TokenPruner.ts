@@ -59,16 +59,18 @@ export class TokenPruner {
      * Attempt to prune entries to fit within the token limit.
      */
     prune(entries: PrunableEntry[]): PruneResult {
-        let totalTokens = entries.reduce((sum, e) => sum + e.tokenCount, 0);
+        // #40: Clone entries to prevent mutation of caller's array
+        const cloned = entries.map(e => ({ ...e }));
+        let totalTokens = cloned.reduce((sum, e) => sum + e.tokenCount, 0);
         let prunedCount = 0;
 
         // Already within budget — no pruning needed
         if (totalTokens <= this.tokenLimit) {
-            return this.buildResult(entries, totalTokens, prunedCount);
+            return this.buildResult(cloned, totalTokens, prunedCount);
         }
 
         // ── Strategy 1: Drop discovered (non-explicit) files, largest first ──
-        const discoveredIndices = entries
+        const discoveredIndices = cloned
             .map((e, i) => ({ index: i, tokens: e.tokenCount, isExplicit: e.isExplicit }))
             .filter(e => !e.isExplicit)
             .sort((a, b) => b.tokens - a.tokens);
@@ -82,7 +84,7 @@ export class TokenPruner {
             prunedCount++;
         }
 
-        const remaining = entries.filter((_, i) => !droppedIndices.has(i));
+        const remaining = cloned.filter((_, i) => !droppedIndices.has(i));
 
         if (totalTokens <= this.tokenLimit) {
             return this.buildResult(remaining, totalTokens, prunedCount);
@@ -110,8 +112,11 @@ export class TokenPruner {
 
         for (const entry of remaining) {
             if (entry.tokenCount > maxPerFile) {
-                // Truncate content to rough character estimate
-                const targetChars = maxPerFile * 4; // inverse of CharRatioEncoder
+                // #39: Derive chars-per-token from the encoder instead of hardcoded 4:1
+                const charsPerToken = entry.tokenCount > 0
+                    ? Math.ceil(entry.content.length / entry.tokenCount)
+                    : 4; // fallback
+                const targetChars = maxPerFile * charsPerToken;
                 entry.content = entry.content.slice(0, targetChars) +
                     '\n\n// ... [truncated by Coogent — exceeds per-file token budget] ...';
                 entry.tokenCount = this.encoder.countTokens(entry.content);

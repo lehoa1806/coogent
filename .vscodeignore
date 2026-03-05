@@ -34,3 +34,7 @@ CONTRIBUTING.md
 **/*.test.js
 **/*.spec.ts
 **/*.spec.js
+
+# ── Build artifacts ────────────────────────────────────────────────────────
+**/*.d.ts
+**/*.tsbuildinfo

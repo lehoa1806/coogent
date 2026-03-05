@@ -61,4 +61,41 @@ describe('TelemetryLogger', () => {
         await expect(logger.initRun('test-project')).resolves.not.toThrow();
         await expect(logger.logStateTransition(EngineState.IDLE, EngineState.READY, 'TEST')).resolves.not.toThrow();
     });
+
+    it('should log phase prompt (#71)', async () => {
+        await logger.initRun('test-project');
+        await logger.logPhasePrompt(0, 'Build the login page');
+
+        const runs = await fs.readdir(path.join(tmpDir, '.coogent/logs'));
+        const phaseLogPath = path.join(tmpDir, '.coogent/logs', runs[0], 'phase-0.jsonl');
+
+        const content = await fs.readFile(phaseLogPath, 'utf8');
+        expect(content).toContain('"category":"phase"');
+        expect(content).toContain('Build the login page');
+    });
+
+    it('should log phase result (#71)', async () => {
+        await logger.initRun('test-project');
+        await logger.logPhaseResult(1, 0, true, 12345);
+
+        const runs = await fs.readdir(path.join(tmpDir, '.coogent/logs'));
+        const phaseLogPath = path.join(tmpDir, '.coogent/logs', runs[0], 'phase-1.jsonl');
+
+        const content = await fs.readFile(phaseLogPath, 'utf8');
+        expect(content).toContain('"category":"phase"');
+        expect(content).toContain('"exitCode":0');
+        expect(content).toContain('"passed":true');
+    });
+
+    it('should log context assembly (#71)', async () => {
+        await logger.initRun('test-project');
+        await logger.logContextAssembly(0, 5000, 10000, 3);
+
+        const runs = await fs.readdir(path.join(tmpDir, '.coogent/logs'));
+        const phaseLogPath = path.join(tmpDir, '.coogent/logs', runs[0], 'phase-0.jsonl');
+
+        const content = await fs.readFile(phaseLogPath, 'utf8');
+        expect(content).toContain('"category":"context"');
+        expect(content).toContain('"totalTokens":5000');
+    });
 });

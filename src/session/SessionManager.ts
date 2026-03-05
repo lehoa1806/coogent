@@ -2,9 +2,12 @@
 // src/session/SessionManager.ts — Discovers, searches, and loads past sessions
 // ─────────────────────────────────────────────────────────────────────────────
 
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import { RUNBOOK_FILENAME } from '../types/index.js';
 import type { Runbook, RunbookStatus } from '../types/index.js';
+import { StateManager } from '../state/StateManager.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Types
@@ -48,7 +51,7 @@ export function extractUUIDv7Timestamp(uuid: string): number {
 //  SessionManager
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const RUNBOOK_FILENAME = '.task-runbook.json';
+const MAX_SESSIONS = 50;
 const MAX_PROMPT_LENGTH = 120;
 
 /**
@@ -80,6 +83,44 @@ export class SessionManager {
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
+     * Create a new session.
+     * Generates a UUIDv7 session ID, creates the session directory under
+     * `.coogent/ipc/{id}/`, and writes a metadata JSON with prompt and timestamp.
+     * @returns The new session ID.
+     */
+    public async createSession(prompt: string): Promise<string> {
+        const sessionId = generateUUIDv7();
+        const sessionDir = path.join(this.ipcDir, sessionId);
+
+        // Create session directory (recursively creates .coogent/ipc/ if needed)
+        await fs.mkdir(sessionDir, { recursive: true });
+
+        // Write metadata JSON with prompt and timestamp
+        const metadata = {
+            sessionId,
+            prompt: prompt.trim(),
+            createdAt: Date.now(),
+            createdAtISO: new Date().toISOString(),
+        };
+        await fs.writeFile(
+            path.join(sessionDir, 'metadata.json'),
+            JSON.stringify(metadata, null, 2),
+            'utf-8'
+        );
+
+        return sessionId;
+    }
+
+    /**
+     * Load a StateManager for the specified session.
+     * Use this to access the runbook and state for replay/inspection.
+     */
+    public loadSession(sessionId: string): StateManager {
+        const sessionDir = path.join(this.ipcDir, sessionId);
+        return new StateManager(sessionDir);
+    }
+
+    /**
      * List all past sessions, sorted by most recent first.
      * Excludes the currently active session.
      */
@@ -94,7 +135,38 @@ export class SessionManager {
 
         // Sort by createdAt descending (most recent first)
         summaries.sort((a, b) => b.createdAt - a.createdAt);
+
+        // Prune excess sessions asynchronously (non-blocking)
+        this.pruneSessions(MAX_SESSIONS).catch(() => { /* best-effort */ });
+
         return summaries;
+    }
+
+    /**
+     * Delete the oldest sessions that exceed `maxCount`.
+     * Keeps the most recent `maxCount` sessions.
+     */
+    public async pruneSessions(maxCount: number): Promise<void> {
+        const dirs = await this.discoverSessionDirs();
+        if (dirs.length <= maxCount) return;
+
+        // Extract timestamps and sort oldest-first
+        const withTimestamp = dirs.map(dir => ({
+            dir,
+            ts: extractUUIDv7Timestamp(path.basename(dir)),
+        }));
+        withTimestamp.sort((a, b) => a.ts - b.ts);
+
+        // Delete oldest (beyond maxCount)
+        const toDelete = withTimestamp.slice(0, withTimestamp.length - maxCount);
+        for (const { dir } of toDelete) {
+            try {
+                await fs.rm(dir, { recursive: true, force: true });
+                console.log(`[SessionManager] Pruned old session: ${path.basename(dir)}`);
+            } catch {
+                // Best-effort: skip if deletion fails
+            }
+        }
     }
 
     /**
@@ -159,16 +231,32 @@ export class SessionManager {
         return path.join(this.ipcDir, sessionId);
     }
 
+    /**
+     * Delete a session directory and all its contents.
+     * No-op if the directory doesn't exist.
+     */
+    public async deleteSession(sessionId: string): Promise<void> {
+        const dir = path.join(this.ipcDir, sessionId);
+        try {
+            await fs.rm(dir, { recursive: true, force: true });
+            console.log(`[SessionManager] Deleted session: ${sessionId}`);
+        } catch {
+            // Best-effort: skip if deletion fails
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     //  Internals
     // ─────────────────────────────────────────────────────────────────────────
 
     /** Discover session directories, excluding the current active one. */
     private async discoverSessionDirs(): Promise<string[]> {
+        // #46: UUID regex to filter non-session directories
+        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
         try {
             const entries = await fs.readdir(this.ipcDir, { withFileTypes: true });
             return entries
-                .filter(e => e.isDirectory() && e.name !== this.currentSessionId)
+                .filter(e => e.isDirectory() && e.name !== this.currentSessionId && UUID_REGEX.test(e.name))
                 .map(e => path.join(this.ipcDir, e.name));
         } catch {
             // ipc directory may not exist yet
@@ -181,7 +269,15 @@ export class SessionManager {
         const runbookPath = path.join(sessionDir, RUNBOOK_FILENAME);
         try {
             const raw = await fs.readFile(runbookPath, 'utf-8');
-            return JSON.parse(raw) as Runbook;
+            const parsed = JSON.parse(raw);
+
+            // #45: Validate JSON shape instead of blind `as Runbook` cast
+            if (!parsed || typeof parsed !== 'object') return null;
+            if (typeof parsed.project_id !== 'string') return null;
+            if (typeof parsed.status !== 'string') return null;
+            if (!Array.isArray(parsed.phases)) return null;
+
+            return parsed as Runbook;
         } catch {
             return null;
         }
@@ -211,4 +307,33 @@ export class SessionManager {
                 : firstPrompt,
         };
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  UUIDv7 Generation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Generate a UUIDv7-like identifier.
+ * Embeds the current Unix timestamp (ms) in the first 48 bits,
+ * sets version nibble to 7, and fills the rest with random bytes.
+ */
+function generateUUIDv7(): string {
+    const now = Date.now();
+    const msHex = now.toString(16).padStart(12, '0');
+
+    // Random bytes for the rest (10 bytes = 20 hex chars)
+    const randomBytes = crypto.randomBytes(10);
+    const randomHex = randomBytes.toString('hex');
+
+    // UUIDv7 format: TTTTTTTT-TTTT-7xxx-yxxx-xxxxxxxxxxxx
+    // T = timestamp, 7 = version, y = variant (8/9/a/b)
+    const timeLow = msHex.slice(0, 8);     // 8 hex chars
+    const timeMid = msHex.slice(8, 12);    // 4 hex chars
+    const randA = '7' + randomHex.slice(0, 3); // version 7 + 3 random
+    const variantNibble = (0x8 | (parseInt(randomHex[3], 16) & 0x3)).toString(16);
+    const randB = variantNibble + randomHex.slice(4, 7);  // variant + 3 random
+    const randC = randomHex.slice(7, 19);  // 12 random hex chars
+
+    return `${timeLow}-${timeMid}-${randA}-${randB}-${randC}`;
 }

@@ -4,7 +4,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { ContextResult, FileTokenEntry, Phase } from '../types/index.js';
+import type { ContextResult, Phase } from '../types/index.js';
 import { ExplicitFileResolver } from './FileResolver.js';
 import type { FileResolver } from '../types/index.js';
 import { TokenPruner, type PrunableEntry } from './TokenPruner.js';
@@ -50,13 +50,21 @@ export class CharRatioEncoder implements TokenEncoder {
  */
 export class ContextScoper {
     private readonly encoder: TokenEncoder;
-    private readonly tokenLimit: number;
+    private tokenLimit: number;
     private readonly resolver: FileResolver;
 
     constructor(options?: { encoder?: TokenEncoder; tokenLimit?: number; resolver?: FileResolver }) {
         this.encoder = options?.encoder ?? new CharRatioEncoder();
         this.tokenLimit = options?.tokenLimit ?? 100_000;
         this.resolver = options?.resolver ?? new ExplicitFileResolver();
+    }
+
+    /**
+     * Update the token limit at runtime (called when VS Code settings change).
+     * Takes effect on the next `assemble()` call.
+     */
+    setTokenLimit(limit: number): void {
+        this.tokenLimit = limit;
     }
 
     /**
@@ -74,11 +82,42 @@ export class ContextScoper {
         // Resolve files dynamically
         const resolvedFiles = await this.resolver.resolve(phase, workspaceRoot);
 
+        const realWorkspaceRoot = await fs.realpath(workspaceRoot).catch(() => workspaceRoot);
+
         for (const relativePath of resolvedFiles) {
-            const absPath = path.resolve(workspaceRoot, relativePath);
+            // Use realWorkspaceRoot as base to avoid symlink mismatches (e.g. /var → /private/var on macOS)
+            const absPath = path.resolve(realWorkspaceRoot, relativePath);
+
+            // Path traversal and symlink boundary guard
+            let realPath: string;
+            try {
+                realPath = await fs.realpath(absPath);
+            } catch {
+                realPath = absPath; // fallback for missing files, handled by fileExists
+            }
+
+            if (!realPath.startsWith(realWorkspaceRoot)) {
+                throw new ContextError(
+                    `Path traversal or symlink escape detected: ${relativePath}`,
+                    'PATH_TRAVERSAL',
+                    relativePath
+                );
+            }
+
+            // #41: Skip files > 10 MB to prevent memory issues
+            const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+            try {
+                const stat = await fs.stat(realPath);
+                if (stat.size > MAX_FILE_SIZE) {
+                    console.warn(`[ContextScoper] Skipping file > 10 MB: ${relativePath} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
+                    continue;
+                }
+            } catch {
+                // stat failure handled by fileExists below
+            }
 
             // Guard: file exists
-            const exists = await fileExists(absPath);
+            const exists = await fileExists(realPath);
             if (!exists) {
                 throw new ContextError(
                     `File not found: ${relativePath}`,
@@ -88,7 +127,7 @@ export class ContextScoper {
             }
 
             // Guard: not binary
-            if (await isBinary(absPath)) {
+            if (await isBinary(realPath)) {
                 throw new ContextError(
                     `Binary file rejected: ${relativePath}`,
                     'BINARY_FILE',
@@ -96,8 +135,9 @@ export class ContextScoper {
                 );
             }
 
-            const content = await fs.readFile(absPath, 'utf-8');
-            const tokenCount = this.encoder.countTokens(content);
+            const content = await fs.readFile(realPath, 'utf-8');
+            const wrapperTokens = this.encoder.countTokens(`<<<FILE: ${relativePath}>>>\n\n<<<END FILE>>>`);
+            const tokenCount = this.encoder.countTokens(content) + wrapperTokens;
 
             entries.push({
                 path: relativePath,
@@ -140,7 +180,7 @@ export class ContextScoper {
 //  Context Error
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export type ContextErrorCode = 'FILE_NOT_FOUND' | 'BINARY_FILE';
+export type ContextErrorCode = 'FILE_NOT_FOUND' | 'BINARY_FILE' | 'PATH_TRAVERSAL';
 
 export class ContextError extends Error {
     constructor(

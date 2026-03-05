@@ -2,7 +2,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { StateManager, RunbookValidationError } from '../StateManager.js';
-import { Runbook, EngineState } from '../../types/index.js';
+import { Runbook, EngineState, asPhaseId } from '../../types/index.js';
 
 describe('StateManager', () => {
     let tmpDir: string;
@@ -14,7 +14,7 @@ describe('StateManager', () => {
         current_phase: 0,
         phases: [
             {
-                id: 0,
+                id: asPhaseId(0),
                 status: 'pending',
                 prompt: 'Test prompt',
                 context_files: [],
@@ -71,5 +71,59 @@ describe('StateManager', () => {
         const sm1 = new StateManager(tmpDir);
         const sm2 = new StateManager(tmpDir);
         expect(sm1).not.toBe(sm2);
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  #62: Corrupt WAL Recovery
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('should handle corrupt WAL gracefully (non-JSON)', async () => {
+        const walPath = path.join(tmpDir, '.wal.json');
+        await fs.writeFile(walPath, '<<<CORRUPTED DATA>>>');
+
+        const sm = new StateManager(tmpDir);
+        const recovered = await sm.recoverFromCrash();
+
+        expect(recovered).toBe(false);
+
+        // WAL file should have been deleted
+        await expect(fs.access(walPath)).rejects.toThrow();
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  #63: WAL Schema Validation Rejection
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('should reject WAL snapshot with missing required fields', async () => {
+        const walPath = path.join(tmpDir, '.wal.json');
+        // Valid JSON, but snapshot is missing required `project_id`
+        const invalidWal = {
+            timestamp: Date.now(),
+            engineState: 'IDLE',
+            currentPhase: 0,
+            snapshot: {
+                // project_id is MISSING
+                status: 'idle',
+                current_phase: 0,
+                phases: [
+                    {
+                        id: 0,
+                        status: 'pending',
+                        prompt: 'Test',
+                        context_files: [],
+                        success_criteria: 'exit_code:0',
+                    },
+                ],
+            },
+        };
+        await fs.writeFile(walPath, JSON.stringify(invalidWal));
+
+        const sm = new StateManager(tmpDir);
+        const recovered = await sm.recoverFromCrash();
+
+        expect(recovered).toBe(false);
+
+        // WAL file should have been deleted
+        await expect(fs.access(walPath)).rejects.toThrow();
     });
 });

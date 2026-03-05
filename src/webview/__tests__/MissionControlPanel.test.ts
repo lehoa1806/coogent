@@ -101,4 +101,55 @@ describe('isValidWebviewMessage — IPC Runtime Validation (P1-3)', () => {
     it('rejects CMD_LOAD_RUNBOOK with missing filePath', () => {
         expect(isValidWebviewMessage({ type: 'CMD_LOAD_RUNBOOK', payload: {} })).toBe(false);
     });
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  Missing message types (#69)
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    it('accepts CMD_PLAN_REQUEST with prompt', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_PLAN_REQUEST',
+            payload: { prompt: 'build a CLI tool' }
+        })).toBe(true);
+    });
+
+    it('accepts CMD_PLAN_APPROVE (no payload)', () => {
+        expect(isValidWebviewMessage({ type: 'CMD_PLAN_APPROVE' })).toBe(true);
+    });
+
+    it('accepts CMD_PLAN_REJECT with feedback', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_PLAN_REJECT',
+            payload: { feedback: 'needs more phases' }
+        })).toBe(true);
+    });
+
+    it('accepts CMD_RESET (no payload)', () => {
+        expect(isValidWebviewMessage({ type: 'CMD_RESET' })).toBe(true);
+    });
+
+    it('accepts CMD_LIST_SESSIONS (no payload)', () => {
+        expect(isValidWebviewMessage({ type: 'CMD_LIST_SESSIONS' })).toBe(true);
+    });
+
+    it('accepts CMD_SEARCH_SESSIONS with query', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_SEARCH_SESSIONS',
+            payload: { query: 'auth' }
+        })).toBe(true);
+    });
+
+    it('accepts CMD_LOAD_SESSION with sessionId', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_LOAD_SESSION',
+            payload: { sessionId: 'abc-123' }
+        })).toBe(true);
+    });
+
+    it('accepts CMD_SET_CONVERSATION_MODE with mode', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_SET_CONVERSATION_MODE',
+            payload: { mode: 'isolated' }
+        })).toBe(true);
+    });
 });

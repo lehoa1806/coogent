@@ -5,6 +5,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import Ajv from 'ajv';
+import { RUNBOOK_FILENAME, asTimestamp } from '../types/index.js';
 import type { Runbook, WALEntry, EngineState } from '../types/index.js';
 
 // Inline JSON Schema — no external file dependency (esbuild-safe)
@@ -87,7 +88,7 @@ export class StateManager {
      */
     constructor(sessionDir: string) {
         this.sessionDir = sessionDir;
-        this.runbookPath = path.join(sessionDir, '.task-runbook.json');
+        this.runbookPath = path.join(sessionDir, RUNBOOK_FILENAME);
         this.walPath = path.join(sessionDir, '.wal.json');
         this.lockPath = path.join(sessionDir, '.lock');
     }
@@ -129,6 +130,11 @@ export class StateManager {
         return this.cachedRunbook;
     }
 
+    /** Get the absolute path to the session directory. */
+    public getSessionDir(): string {
+        return this.sessionDir;
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  Write Operations (WAL + Atomic Rename)
     // ═══════════════════════════════════════════════════════════════════════════
@@ -161,12 +167,15 @@ export class StateManager {
         runbook: Runbook,
         engineState: EngineState
     ): Promise<void> {
+        // Enforce schema validation on the write path (P0-3)
+        this.validateSchema(runbook);
+
         await this.ensureDir();
         await this.acquireLock();
         try {
             // WAL entry — crash recovery point
             const walEntry: WALEntry = {
-                timestamp: Date.now(),
+                timestamp: asTimestamp(),
                 engineState,
                 currentPhase: runbook.current_phase,
                 snapshot: runbook,
@@ -210,20 +219,52 @@ export class StateManager {
 
         try {
             const walRaw = await fs.readFile(this.walPath, 'utf-8');
-            const walEntry = JSON.parse(walRaw) as WALEntry;
+            let walEntry: WALEntry;
+            try {
+                walEntry = JSON.parse(walRaw) as WALEntry;
+            } catch (parseErr) {
+                // Corrupt WAL — delete it and log warning (#33)
+                console.warn('[StateManager] Corrupt WAL file (invalid JSON). Deleting...');
+                await fs.unlink(this.walPath).catch(() => { });
+                await this.cleanOrphanedTmpFiles();
+                return false;
+            }
+
+            // Validate schema before restoring from WAL (prevents restoring corrupted data)
+            try {
+                this.validateSchema(walEntry.snapshot);
+            } catch (validationErr) {
+                console.warn('[StateManager] WAL snapshot failed schema validation. Deleting WAL...', validationErr);
+                await fs.unlink(this.walPath).catch(() => { });
+                await this.cleanOrphanedTmpFiles();
+                return false;
+            }
 
             console.log(`[StateManager] WAL found (ts=${walEntry.timestamp}). Recovering...`);
 
-            await fs.writeFile(
-                this.runbookPath,
-                JSON.stringify(walEntry.snapshot, null, 2),
-                'utf-8'
-            );
-            await fs.unlink(this.walPath).catch(() => { });
+            // MUST acquire lock to avoid race conditions with other writers during recovery
+            await this.acquireLock();
+            try {
+                // Atomic write: temp → rename
+                const tmpPath = this.runbookPath + '.tmp';
+                await fs.writeFile(
+                    tmpPath,
+                    JSON.stringify(walEntry.snapshot, null, 2),
+                    'utf-8'
+                );
+                await fs.rename(tmpPath, this.runbookPath);
 
-            this.cachedRunbook = walEntry.snapshot;
-            console.log('[StateManager] Recovery complete.');
-            return true;
+                await fs.unlink(this.walPath).catch(() => { });
+
+                this.cachedRunbook = walEntry.snapshot;
+                console.log('[StateManager] Recovery complete.');
+
+                // Clean orphaned .tmp files after successful recovery (#34)
+                await this.cleanOrphanedTmpFiles();
+                return true;
+            } finally {
+                await this.releaseLock();
+            }
         } catch (err: unknown) {
             console.error('[StateManager] Recovery failed:', err);
             throw err;
@@ -275,6 +316,7 @@ export class StateManager {
      */
     private async acquireLock(timeoutMs = 5000): Promise<void> {
         const deadline = Date.now() + timeoutMs;
+        let staleLockCleaned = false;
 
         while (Date.now() < deadline) {
             try {
@@ -283,7 +325,13 @@ export class StateManager {
                 return;
             } catch (err: unknown) {
                 if (isNodeError(err) && err.code === 'EEXIST') {
-                    await sleep(100);
+                    // On first EEXIST, try cleaning stale lock (#32)
+                    if (!staleLockCleaned) {
+                        await this.cleanStaleLock();
+                        staleLockCleaned = true;
+                    } else {
+                        await sleep(100);
+                    }
                     continue;
                 }
                 throw err;
@@ -301,6 +349,24 @@ export class StateManager {
         if (!this.isLocked) return;
         try { await fs.unlink(this.lockPath); } catch { /* best-effort */ }
         this.isLocked = false;
+    }
+
+    /**
+     * Remove orphaned .tmp files left by interrupted atomic writes (#34).
+     * Best-effort cleanup — never throws.
+     */
+    private async cleanOrphanedTmpFiles(): Promise<void> {
+        try {
+            const entries = await fs.readdir(this.sessionDir);
+            for (const entry of entries) {
+                if (entry.endsWith('.tmp')) {
+                    await fs.unlink(path.join(this.sessionDir, entry)).catch(() => { });
+                    console.log(`[StateManager] Cleaned orphaned temp file: ${entry}`);
+                }
+            }
+        } catch {
+            // Session dir may not exist — nothing to clean
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

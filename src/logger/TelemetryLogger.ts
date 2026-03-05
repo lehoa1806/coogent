@@ -60,8 +60,32 @@ export class TelemetryLogger {
             await fs.mkdir(this.runDir, { recursive: true });
             this.initialized = true;
             await this.logEngine('info', `Run initialized: ${runId}`);
+
+            // #48: Enforce rotation — keep max 20 run directories
+            await this.enforceRotation(20);
         } catch (err) {
             console.error('[TelemetryLogger] Failed to initialize log directory', err);
+        }
+    }
+
+    /**
+     * Delete oldest run directories if count exceeds maxDirs (#48).
+     */
+    private async enforceRotation(maxDirs: number): Promise<void> {
+        try {
+            const entries = await fs.readdir(this.logDir, { withFileTypes: true });
+            const dirs = entries.filter(e => e.isDirectory()).map(e => e.name);
+            if (dirs.length <= maxDirs) return;
+
+            // Sort by name (timestamp-based names sort chronologically)
+            dirs.sort();
+            const toDelete = dirs.slice(0, dirs.length - maxDirs);
+            for (const dir of toDelete) {
+                await fs.rm(path.join(this.logDir, dir), { recursive: true, force: true });
+                console.log(`[TelemetryLogger] Rotated old log dir: ${dir}`);
+            }
+        } catch {
+            // Best-effort — rotation failures are non-fatal
         }
     }
 
@@ -93,7 +117,7 @@ export class TelemetryLogger {
             level,
             category: 'state',
             message,
-            data,
+            ...(data !== undefined && { data }),
         });
     }
 
@@ -101,14 +125,29 @@ export class TelemetryLogger {
     //  Phase Logging
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /** Log the prompt injected into a worker. */
-    async logPhasePrompt(phaseId: number, prompt: string): Promise<void> {
+    /** Log the start of a phase execution. */
+    async logPhaseStart(phaseId: number): Promise<void> {
         await this.appendPhaseEntry(phaseId, {
             timestamp: new Date().toISOString(),
             level: 'info',
             category: 'phase',
+            message: `Phase ${phaseId} started`,
+            data: { phaseId },
+        });
+    }
+
+    /** Log the prompt injected into a worker. */
+    async logPhasePrompt(phaseId: number, prompt: string): Promise<void> {
+        // #49: Truncate prompt at info level to prevent log bloat
+        const truncatedPrompt = prompt.length > 500
+            ? prompt.slice(0, 500) + `... [truncated, ${prompt.length} chars total]`
+            : prompt;
+        await this.appendPhaseEntry(phaseId, {
+            timestamp: new Date().toISOString(),
+            level: 'debug',
+            category: 'phase',
             message: 'Prompt injected',
-            data: { prompt },
+            data: { prompt: truncatedPrompt },
         });
     }
 

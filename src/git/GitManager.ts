@@ -64,6 +64,12 @@ export class GitManager {
     async rollback(): Promise<GitOperationResult> {
         try {
             await this.gitExec('reset', '--hard', 'HEAD');
+
+            // #51: Dry-run to log what would be cleaned
+            const dryRun = await this.gitExec('clean', '-fdn');
+            if (dryRun.trim()) {
+                console.warn(`[GitManager] git clean will remove:\n${dryRun}`);
+            }
             await this.gitExec('clean', '-fd');
 
             return {
@@ -84,6 +90,12 @@ export class GitManager {
     async rollbackToCommit(commitHash: string): Promise<GitOperationResult> {
         try {
             await this.gitExec('reset', '--hard', commitHash);
+
+            // #51: Dry-run to log what would be cleaned
+            const dryRun = await this.gitExec('clean', '-fdn');
+            if (dryRun.trim()) {
+                console.warn(`[GitManager] git clean will remove:\n${dryRun}`);
+            }
             await this.gitExec('clean', '-fd');
 
             return {
@@ -105,6 +117,15 @@ export class GitManager {
      */
     async stash(label: string): Promise<GitOperationResult> {
         try {
+            // #52: Check if there are changes to stash
+            const status = await this.gitExec('status', '--porcelain');
+            if (!status.trim()) {
+                return {
+                    success: true,
+                    message: 'Nothing to stash — working tree is clean',
+                };
+            }
+
             await this.gitExec('stash', 'push', '-m', `coogent: ${label}`);
             return {
                 success: true,

@@ -56,6 +56,7 @@ export interface WorkerHandle {
     phaseId: number;
     startedAt: number;
     timeoutTimer: ReturnType<typeof setTimeout>;
+    watchdogTimer: ReturnType<typeof setTimeout>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -95,8 +96,13 @@ export declare interface ADKController {
  */
 export class ADKController extends EventEmitter {
     private readonly activeWorkers = new Map<number, WorkerHandle>();
+    private readonly activePids = new Set<number>();
     private readonly pidDir: string;
     private _conversationSettings: ConversationSettings = { ...DEFAULT_CONVERSATION_SETTINGS };
+
+    /** Configurable idle timeout for the watchdog (ms). Default: 5 minutes. */
+    private watchdogTimeoutMs = 300_000;
+    private _disposed = false;
 
     constructor(
         private readonly adapter: IADKAdapter,
@@ -118,6 +124,16 @@ export class ADKController extends EventEmitter {
         console.log(`[ADKController] Conversation mode: ${this._conversationSettings.mode} (threshold: ${this._conversationSettings.smartSwitchTokenThreshold})`);
     }
 
+    /** Set the watchdog idle timeout (ms). 0 disables the watchdog. */
+    setWatchdogTimeout(ms: number): void {
+        this.watchdogTimeoutMs = ms;
+    }
+
+    /** Get all currently tracked worker PIDs. */
+    getActivePids(): ReadonlySet<number> {
+        return this.activePids;
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  Spawn & Terminate
     // ═══════════════════════════════════════════════════════════════════════════
@@ -129,7 +145,7 @@ export class ADKController extends EventEmitter {
     async spawnWorker(
         phase: Phase,
         contextPayload: string,
-        timeoutMs = 300_000,
+        timeoutMs = 900_000,
         masterTaskId?: string
     ): Promise<WorkerHandle | null> {
         // Limit check
@@ -156,16 +172,24 @@ export class ADKController extends EventEmitter {
             );
         }
 
-        const handle = await this.adapter.createSession({
-            zeroContext: true,
-            workingDirectory: this.workspaceRoot,
-            initialPrompt: prompt,
-            newConversation,
-            masterTaskId,
-        });
+        let handle;
+        try {
+            handle = await this.adapter.createSession({
+                zeroContext: true,
+                workingDirectory: this.workspaceRoot,
+                initialPrompt: prompt,
+                newConversation,
+                ...(masterTaskId !== undefined && { masterTaskId }),
+            });
+        } catch (err) {
+            console.error(`[ADKController] Failed to create session for phase ${phase.id}:`, err);
+            this.emit('worker:crash', phase.id, err instanceof Error ? err : new Error(String(err)));
+            return null;
+        }
 
         // Register PID for orphan recovery
         await this.registerPID(phase.id, handle.pid);
+        this.activePids.add(handle.pid);
 
         // Set up timeout
         const timeoutTimer = setTimeout(
@@ -173,11 +197,15 @@ export class ADKController extends EventEmitter {
             timeoutMs
         );
 
+        // Set up watchdog timer (idle detection)
+        const watchdogTimer = this.createWatchdogTimer(phase.id);
+
         const worker: WorkerHandle = {
             handle,
             phaseId: phase.id,
             startedAt: Date.now(),
             timeoutTimer,
+            watchdogTimer,
         };
 
         this.activeWorkers.set(phase.id, worker);
@@ -185,6 +213,8 @@ export class ADKController extends EventEmitter {
         // Wire output streams
         handle.onOutput((stream, chunk) => {
             this.emit('worker:output', phase.id, stream, chunk);
+            // Reset the watchdog timer on each output — process is still alive
+            this.resetWatchdog(phase.id);
         });
 
         // Wire exit handler
@@ -206,12 +236,16 @@ export class ADKController extends EventEmitter {
         // This prevents the timeout/exit double-fire race (P1-1 fix).
         this.activeWorkers.delete(phaseId);
         clearTimeout(worker.timeoutTimer);
+        clearTimeout(worker.watchdogTimer);
 
         try {
             await this.adapter.terminateSession(worker.handle);
         } catch (err) {
             console.error(`[ADKController] Terminate failed for phase ${phaseId} (${reason}):`, err);
         }
+
+        // Remove PID from active set
+        this.activePids.delete(worker.handle.pid);
 
         // Clean up PID file
         await this.unregisterPID(phaseId);
@@ -225,14 +259,71 @@ export class ADKController extends EventEmitter {
      * Terminate all active workers.
      */
     async terminateAll(reason: string): Promise<void> {
-        for (const phaseId of Array.from(this.activeWorkers.keys())) {
-            await this.terminateWorker(phaseId, reason);
-        }
+        // #36: Parallelize termination for faster shutdown
+        await Promise.all(
+            Array.from(this.activeWorkers.keys()).map(phaseId =>
+                this.terminateWorker(phaseId, reason)
+            )
+        );
     }
 
     /** Get the active worker for a given phase (if any). */
     getActiveWorker(phaseId: number): WorkerHandle | undefined {
         return this.activeWorkers.get(phaseId);
+    }
+
+    /**
+     * Kill ALL active worker processes using OS signals.
+     * Sends SIGTERM first, then escalates to SIGKILL after 5s if the process
+     * hasn't exited. This is the nuclear option — used on ABORT and extension shutdown.
+     */
+    async killAllWorkers(): Promise<void> {
+        const pids = Array.from(this.activePids);
+        if (pids.length === 0) return;
+
+        console.log(`[ADKController] killAllWorkers: sending SIGTERM to ${pids.length} PIDs: [${pids.join(', ')}]`);
+
+        // Phase 1: SIGTERM
+        for (const pid of pids) {
+            try {
+                process.kill(pid, 'SIGTERM');
+            } catch {
+                // Process already dead — clean up
+                this.activePids.delete(pid);
+            }
+        }
+
+        // Wait 5s for graceful shutdown
+        await new Promise<void>(resolve => setTimeout(resolve, 5000));
+
+        // Phase 2: SIGKILL any survivors
+        for (const pid of Array.from(this.activePids)) {
+            try {
+                process.kill(pid, 0); // Check if still alive
+                process.kill(pid, 'SIGKILL');
+                console.log(`[ADKController] Escalated to SIGKILL for PID ${pid}`);
+            } catch {
+                // Process already dead
+            }
+            this.activePids.delete(pid);
+        }
+
+        // Also terminate all tracked workers via the adapter (cleanup state)
+        await this.terminateAll('KILL_ALL');
+    }
+
+    /**
+     * Dispose the controller — called during extension deactivation.
+     * Kills all remaining worker processes and clears all state.
+     */
+    async dispose(): Promise<void> {
+        if (this._disposed) return;
+        this._disposed = true;
+
+        console.log('[ADKController] Disposing — killing all workers...');
+        await this.killAllWorkers();
+        this.removeAllListeners();
+        console.log('[ADKController] Disposed.');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -259,8 +350,19 @@ export class ADKController extends EventEmitter {
 
                 try {
                     process.kill(pid, 0); // Check if process exists
-                    process.kill(pid, 'SIGTERM'); // Kill orphan
-                    console.log(`[ADKController] Killed orphaned worker PID ${pid}`);
+                    // #35: SIGTERM first for graceful shutdown
+                    process.kill(pid, 'SIGTERM');
+                    console.log(`[ADKController] Sent SIGTERM to orphaned worker PID ${pid}`);
+
+                    // Wait 5s then escalate to SIGKILL if still alive
+                    await new Promise<void>(resolve => setTimeout(resolve, 5000));
+                    try {
+                        process.kill(pid, 0); // Still alive?
+                        process.kill(pid, 'SIGKILL');
+                        console.log(`[ADKController] Escalated to SIGKILL for PID ${pid}`);
+                    } catch {
+                        // Process died from SIGTERM — good
+                    }
                 } catch {
                     // Process already dead — just clean up
                 }
@@ -281,6 +383,8 @@ export class ADKController extends EventEmitter {
         if (!worker) return;
 
         clearTimeout(worker.timeoutTimer);
+        clearTimeout(worker.watchdogTimer);
+        this.activePids.delete(worker.handle.pid);
         this.unregisterPID(phaseId).catch(() => { });
         this.activeWorkers.delete(phaseId);
 
@@ -307,7 +411,8 @@ export class ADKController extends EventEmitter {
             await fs.mkdir(this.pidDir, { recursive: true });
             await fs.writeFile(
                 path.join(this.pidDir, `phase-${phaseId}.pid`),
-                String(pid)
+                String(pid),
+                { mode: 0o600 }
             );
         } catch (err) {
             console.error('[ADKController] PID registration failed:', err);
@@ -320,6 +425,53 @@ export class ADKController extends EventEmitter {
         } catch {
             // Best-effort
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Watchdog — idle process detection
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Create a watchdog timer for a worker. Fires if no output is received
+     * for `watchdogTimeoutMs`. Logs a warning and optionally kills the process.
+     */
+    private createWatchdogTimer(phaseId: number): ReturnType<typeof setTimeout> {
+        if (this.watchdogTimeoutMs <= 0) {
+            // Watchdog disabled
+            return setTimeout(() => { }, 0);
+        }
+        return setTimeout(
+            () => this.onWatchdogFired(phaseId),
+            this.watchdogTimeoutMs
+        );
+    }
+
+    /** Reset the watchdog timer for a worker (called on each output event). */
+    private resetWatchdog(phaseId: number): void {
+        const worker = this.activeWorkers.get(phaseId);
+        if (!worker || this.watchdogTimeoutMs <= 0) return;
+
+        clearTimeout(worker.watchdogTimer);
+        worker.watchdogTimer = setTimeout(
+            () => this.onWatchdogFired(phaseId),
+            this.watchdogTimeoutMs
+        );
+    }
+
+    /** Called when a worker has been idle for too long. */
+    private onWatchdogFired(phaseId: number): void {
+        const worker = this.activeWorkers.get(phaseId);
+        if (!worker) return;
+
+        const idleSec = Math.round(this.watchdogTimeoutMs / 1000);
+        console.warn(
+            `[ADKController] Watchdog: worker for phase ${phaseId} ` +
+            `(PID ${worker.handle.pid}) has been idle for ${idleSec}s. Killing.`
+        );
+
+        // Kill the idle process
+        this.terminateWorker(phaseId, 'WATCHDOG_IDLE').catch(console.error);
+        this.emit('worker:timeout', phaseId);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -349,6 +501,7 @@ export class ADKController extends EventEmitter {
  */
 export class MockADKAdapter implements IADKAdapter {
     private sessionCounter = 0;
+    private pidCounter = 90_000;
 
     constructor(
         private readonly exitDelay = 100,
@@ -403,7 +556,7 @@ export class MockADKAdapter implements IADKAdapter {
 
         return {
             sessionId,
-            pid: process.pid, // Use current process for mock
+            pid: ++this.pidCounter, // Counter-based fake PID (avoids colliding with real PIDs)
             onOutput(cb) { outputCallback = cb; },
             onExit(cb) { exitCallback = cb; },
         };

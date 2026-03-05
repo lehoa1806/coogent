@@ -42,7 +42,10 @@ export function renderSessionList(sessions) {
         item.innerHTML = `
             <div class="session-item-header">
                 <span class="session-project">${escapeHtml(s.projectId || 'Untitled')}</span>
-                <span class="session-status-pill ${statusClass}">${s.status}</span>
+                <div class="session-item-actions">
+                    <span class="session-status-pill ${statusClass}">${s.status}</span>
+                    <button class="btn-delete-session" data-tooltip="Delete session" aria-label="Delete session ${s.projectId || 'Untitled'}" title="Delete this session">🗑</button>
+                </div>
             </div>
             <div class="session-item-prompt">${escapeHtml(s.firstPrompt)}</div>
             <div class="session-item-meta">
@@ -50,6 +53,13 @@ export function renderSessionList(sessions) {
                 <span>${formatRelativeTime(s.createdAt)}</span>
             </div>
         `;
+
+        // Delete button handler
+        const btnDelete = item.querySelector('.btn-delete-session');
+        btnDelete?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            postMessage({ type: 'CMD_DELETE_SESSION', payload: { sessionId: s.sessionId } });
+        });
 
         item.addEventListener('click', () => {
             postMessage({ type: 'CMD_LOAD_SESSION', payload: { sessionId: s.sessionId } });
