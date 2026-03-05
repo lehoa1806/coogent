@@ -110,7 +110,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   // Extension lifecycle starts
-  console.log('[Coogent] Extension activating...');
+  logStream?.log('[Coogent] Extension activating...');
 
   // ─── Register commands FIRST — must always be available ──────────────
   context.subscriptions.push(
@@ -193,6 +193,7 @@ export function activate(context: vscode.ExtensionContext): void {
           const newSM = new StateManager(newDir);
           await engine.reset(newSM);
           sessionManager = new SessionManager(workspaceRoot, newId);
+          plannerAgent?.setMasterTaskId(newDirName);
         } else {
           await engine.reset();
         }
@@ -281,6 +282,7 @@ export function activate(context: vscode.ExtensionContext): void {
       maxTreeDepth: 4,
       maxTreeChars: 8000,
     });
+    plannerAgent.setMasterTaskId(sessionDirName);
 
     // ─── Initialize HandoffExtractor & ConsolidationAgent ────────────
     handoffExtractor = new HandoffExtractor();
@@ -644,7 +646,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }).catch(console.error);
 
 
-    console.log('[Coogent] Extension activated.');
+    logStream?.log('[Coogent] Extension activated.');
 
   } catch (err: any) {
     const msg = err?.message || String(err);
@@ -654,7 +656,7 @@ export function activate(context: vscode.ExtensionContext): void {
 }
 
 export async function deactivate(): Promise<void> {
-  console.log('[Coogent] Extension deactivating (closing log stream)...');
+  logStream?.log('[Coogent] Extension deactivating (closing log stream)...');
 
   // Graceful shutdown: abort engine + kill all workers in parallel (Req §6)
   await Promise.allSettled([

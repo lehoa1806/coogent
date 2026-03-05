@@ -88,6 +88,10 @@ export class LogStream {
     private readonly _origDebug: typeof console.debug;
     private readonly _origTrace: typeof console.trace;
 
+    // Re-patch timer — VS Code's Extension Host may overwrite our patches
+    private _repatchTimer: ReturnType<typeof setInterval> | null = null;
+    private _patched = false;
+
     constructor(workspaceRoot: string, options?: LogStreamOptions) {
         const logDir = path.join(workspaceRoot, '.coogent');
         this.logPath = path.join(logDir, LOG_FILENAME);
@@ -120,6 +124,10 @@ export class LogStream {
 
             // Patch console methods
             this.patch();
+
+            // Re-apply patches periodically — VS Code's Extension Host may
+            // overwrite our console patches after activate() returns.
+            this._repatchTimer = setInterval(() => this.ensurePatched(), 2000);
         } catch {
             // Best-effort — if we can't create the log file, don't break the extension
         }
@@ -131,6 +139,12 @@ export class LogStream {
 
     /** Flush the stream and restore original console methods. */
     dispose(): void {
+        // Stop re-patching timer
+        if (this._repatchTimer) {
+            clearInterval(this._repatchTimer);
+            this._repatchTimer = null;
+        }
+
         // Restore originals first so any further console calls go through
         console.log = this._origLog;
         console.info = this._origInfo;
@@ -138,6 +152,7 @@ export class LogStream {
         console.error = this._origError;
         console.debug = this._origDebug;
         console.trace = this._origTrace;
+        this._patched = false;
 
         if (this.stream) {
             this.writeLine(LogLevel.INFO, 'INFO', 'Log stream closed.');
@@ -163,41 +178,88 @@ export class LogStream {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    //  Explicit Logging API — use these for guaranteed file output
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /** Log at INFO level (guaranteed to write to file). */
+    log(...args: unknown[]): void {
+        this._origLog.apply(console, args);
+        this.writeLine(LogLevel.INFO, 'INFO', this.formatArgs(args));
+    }
+
+    /** Log at INFO level. */
+    info(...args: unknown[]): void {
+        this._origInfo.apply(console, args);
+        this.writeLine(LogLevel.INFO, 'INFO', this.formatArgs(args));
+    }
+
+    /** Log at WARN level. */
+    warn(...args: unknown[]): void {
+        this._origWarn.apply(console, args);
+        this.writeLine(LogLevel.WARN, 'WARN', this.formatArgs(args));
+    }
+
+    /** Log at ERROR level. */
+    error(...args: unknown[]): void {
+        this._origError.apply(console, args);
+        this.writeLine(LogLevel.ERROR, 'ERROR', this.formatArgs(args));
+    }
+
+    /** Log at DEBUG level. */
+    debug(...args: unknown[]): void {
+        this._origDebug.apply(console, args);
+        this.writeLine(LogLevel.DEBUG, 'DEBUG', this.formatArgs(args));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     //  Internal — Patching
     // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Re-check whether our patches are still in place. VS Code's Extension Host
+     * may overwrite console methods after activate() returns.
+     */
+    private ensurePatched(): void {
+        // Quick identity check: if console.log is NOT our wrapper, re-patch.
+        // We tag our wrappers with a `__coogentPatched` marker.
+        if (!(console.log as any).__coogentPatched) {
+            this.patch();
+        }
+    }
 
     private patch(): void {
         const self = this;
 
-        console.log = (...args: unknown[]) => {
-            self._origLog.apply(console, args);
-            self.writeLine(LogLevel.INFO, 'INFO', self.formatArgs(args));
+        // Capture current console methods as "upstream" — these may already be
+        // VS Code's patched versions, and we want to call through to them.
+        const upstreamLog = this._patched ? this._origLog : console.log;
+        const upstreamInfo = this._patched ? this._origInfo : console.info;
+        const upstreamWarn = this._patched ? this._origWarn : console.warn;
+        const upstreamError = this._patched ? this._origError : console.error;
+        const upstreamDebug = this._patched ? this._origDebug : console.debug;
+        const upstreamTrace = this._patched ? this._origTrace : console.trace;
+
+        const makeWrapper = (
+            upstream: (...args: unknown[]) => void,
+            level: LogLevel,
+            tag: string
+        ) => {
+            const wrapper = (...args: unknown[]) => {
+                upstream.apply(console, args);
+                self.writeLine(level, tag, self.formatArgs(args));
+            };
+            (wrapper as any).__coogentPatched = true;
+            return wrapper;
         };
 
-        console.info = (...args: unknown[]) => {
-            self._origInfo.apply(console, args);
-            self.writeLine(LogLevel.INFO, 'INFO', self.formatArgs(args));
-        };
+        console.log = makeWrapper(upstreamLog, LogLevel.INFO, 'INFO');
+        console.info = makeWrapper(upstreamInfo, LogLevel.INFO, 'INFO');
+        console.warn = makeWrapper(upstreamWarn, LogLevel.WARN, 'WARN');
+        console.error = makeWrapper(upstreamError, LogLevel.ERROR, 'ERROR');
+        console.debug = makeWrapper(upstreamDebug, LogLevel.DEBUG, 'DEBUG');
+        console.trace = makeWrapper(upstreamTrace, LogLevel.TRACE, 'TRACE');
 
-        console.warn = (...args: unknown[]) => {
-            self._origWarn.apply(console, args);
-            self.writeLine(LogLevel.WARN, 'WARN', self.formatArgs(args));
-        };
-
-        console.error = (...args: unknown[]) => {
-            self._origError.apply(console, args);
-            self.writeLine(LogLevel.ERROR, 'ERROR', self.formatArgs(args));
-        };
-
-        console.debug = (...args: unknown[]) => {
-            self._origDebug.apply(console, args);
-            self.writeLine(LogLevel.DEBUG, 'DEBUG', self.formatArgs(args));
-        };
-
-        console.trace = (...args: unknown[]) => {
-            self._origTrace.apply(console, args);
-            self.writeLine(LogLevel.TRACE, 'TRACE', self.formatArgs(args));
-        };
+        this._patched = true;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

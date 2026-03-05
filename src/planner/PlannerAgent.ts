@@ -77,6 +77,8 @@ export class PlannerAgent extends EventEmitter {
     private timedOut = false;
     /** Last IPC session directory — used by retryParse() to read response.md from disk. */
     private lastIpcSessionDir: string | null = null;
+    /** Master task ID (session dir name) for nesting IPC files under YYYYMMDD-HHMMSS-<uuid>. */
+    private masterTaskId: string | undefined;
 
     constructor(
         private readonly adapter: IADKAdapter,
@@ -84,6 +86,11 @@ export class PlannerAgent extends EventEmitter {
     ) {
         super();
         this.config = { ...DEFAULT_CONFIG, ...config };
+    }
+
+    /** Set the master task ID so planner IPC files nest under the session directory. */
+    setMasterTaskId(id: string): void {
+        this.masterTaskId = id;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -127,6 +134,8 @@ export class PlannerAgent extends EventEmitter {
                 zeroContext: true,
                 workingDirectory: this.config.workspaceRoot,
                 initialPrompt: systemPrompt,
+                ...(this.masterTaskId !== undefined && { masterTaskId: this.masterTaskId }),
+                phaseNumber: 0, // Planner is always "phase 0" in the IPC directory
             });
             console.log(`[PlannerAgent] ADK session created: ${this.activeSession.sessionId}`);
 
@@ -236,20 +245,19 @@ export class PlannerAgent extends EventEmitter {
         // Strategy 2: Read response.md from disk (file-based IPC path)
         if (this.lastIpcSessionDir) {
             const ipcBase = path.join(this.config.workspaceRoot, '.coogent', 'ipc');
-            // Try direct session dir first, then masterTaskId-nested path
-            const candidates = [
+            const candidates: string[] = [];
+
+            // Primary: use masterTaskId-nested path (YYYYMMDD-HHMMSS-<uuid>/phase-000-<sessionId>)
+            if (this.masterTaskId) {
+                candidates.push(
+                    path.join(ipcBase, this.masterTaskId, `phase-000-${this.lastIpcSessionDir}`, 'response.md')
+                );
+            }
+
+            // Fallback: direct session dir (legacy or no masterTaskId)
+            candidates.push(
                 path.join(ipcBase, this.lastIpcSessionDir, 'response.md'),
-            ];
-            // Also scan for nested sub-directories (masterTaskId/sessionId pattern)
-            try {
-                const entries = await fs.readdir(ipcBase, { withFileTypes: true });
-                for (const entry of entries) {
-                    if (entry.isDirectory()) {
-                        const nested = path.join(ipcBase, String(entry.name), this.lastIpcSessionDir, 'response.md');
-                        candidates.push(nested);
-                    }
-                }
-            } catch { /* ipc dir might not exist */ }
+            );
 
             for (const responseFile of candidates) {
                 try {
