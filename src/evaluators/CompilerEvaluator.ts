@@ -5,6 +5,7 @@
 import type { SuccessEvaluator, EvaluatorType } from '../types/index.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Exit Code Evaluator (V1 — default)
@@ -59,7 +60,7 @@ export class RegexOutputEvaluator implements SuccessEvaluator {
             try {
                 return !new RegExp(pattern).test(combined);
             } catch (err) {
-                console.warn(`[RegexOutputEvaluator] Invalid regex pattern "${pattern}":`, err);
+                log.warn(`[RegexOutputEvaluator] Invalid regex pattern "${pattern}":`, err);
                 return false; // Treat invalid regex as failure
             }
         }
@@ -70,7 +71,7 @@ export class RegexOutputEvaluator implements SuccessEvaluator {
             try {
                 return new RegExp(pattern).test(combined);
             } catch (err) {
-                console.warn(`[RegexOutputEvaluator] Invalid regex pattern "${pattern}":`, err);
+                log.warn(`[RegexOutputEvaluator] Invalid regex pattern "${pattern}":`, err);
                 return false; // Treat invalid regex as failure
             }
         }
@@ -129,7 +130,7 @@ export class ToolchainEvaluator implements SuccessEvaluator {
 
         // Whitelist check (P1-5 fix)
         if (!TOOLCHAIN_WHITELIST.has(binary)) {
-            console.error(`[ToolchainEvaluator] Blocked non-whitelisted binary: "${binary}"`);
+            log.error(`[ToolchainEvaluator] Blocked non-whitelisted binary: "${binary}"`);
             return false;
         }
 
@@ -182,7 +183,7 @@ export class TestSuiteEvaluator implements SuccessEvaluator {
 
         // Whitelist check (P1-5 fix)
         if (!TOOLCHAIN_WHITELIST.has(binary)) {
-            console.error(`[TestSuiteEvaluator] Blocked non-whitelisted binary: "${binary}"`);
+            log.error(`[TestSuiteEvaluator] Blocked non-whitelisted binary: "${binary}"`);
             return false;
         }
 

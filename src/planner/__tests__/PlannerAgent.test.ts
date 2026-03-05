@@ -28,10 +28,10 @@ describe('PlannerAgent', () => {
     const validRunbookJson = JSON.stringify({
         project_id: 'test-project',
         status: 'idle',
-        current_phase: 0,
+        current_phase: 1,
         phases: [
             {
-                id: 0,
+                id: 1,
                 status: 'pending',
                 prompt: 'Test phase 1',
                 context_files: ['src/index.ts'],

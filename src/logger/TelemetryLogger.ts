@@ -5,6 +5,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { EngineState } from '../types/index.js';
+import log from './log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Log Entry Types
@@ -64,7 +65,7 @@ export class TelemetryLogger {
             // #48: Enforce rotation — keep max 20 run directories
             await this.enforceRotation(20);
         } catch (err) {
-            console.error('[TelemetryLogger] Failed to initialize log directory', err);
+            log.error('[TelemetryLogger] Failed to initialize log directory', err);
         }
     }
 
@@ -82,7 +83,7 @@ export class TelemetryLogger {
             const toDelete = dirs.slice(0, dirs.length - maxDirs);
             for (const dir of toDelete) {
                 await fs.rm(path.join(this.logDir, dir), { recursive: true, force: true });
-                console.log(`[TelemetryLogger] Rotated old log dir: ${dir}`);
+                log.info(`[TelemetryLogger] Rotated old log dir: ${dir}`);
             }
         } catch {
             // Best-effort — rotation failures are non-fatal
@@ -210,7 +211,7 @@ export class TelemetryLogger {
             await fs.appendFile(filePath, JSON.stringify(entry) + '\n', 'utf-8');
         } catch (err) {
             // Logging failures are non-fatal — never block execution
-            console.error('[TelemetryLogger] Write failed:', err);
+            log.error('[TelemetryLogger] Write failed:', err);
         }
     }
 

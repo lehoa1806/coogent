@@ -27,9 +27,9 @@ describe('LogStream', () => {
         }, 100);
     });
 
-    it('should capture console.log with INFO level', (done) => {
+    it('should capture log() with INFO level', (done) => {
         const ls = new LogStream(tmpDir);
-        console.log('[Test] hello from test');
+        ls.log('[Test] hello from test');
         ls.dispose();
 
         // Read the file after stream is closed
@@ -44,9 +44,9 @@ describe('LogStream', () => {
         }, 100);
     });
 
-    it('should capture console.warn with WARN level', (done) => {
+    it('should capture warn() with WARN level', (done) => {
         const ls = new LogStream(tmpDir);
-        console.warn('[Test] a warning');
+        ls.warn('[Test] a warning');
         ls.dispose();
 
         setTimeout(() => {
@@ -60,9 +60,9 @@ describe('LogStream', () => {
         }, 100);
     });
 
-    it('should capture console.error with ERROR level', (done) => {
+    it('should capture error() with ERROR level', (done) => {
         const ls = new LogStream(tmpDir);
-        console.error('[Test] an error');
+        ls.error('[Test] an error');
         ls.dispose();
 
         setTimeout(() => {
@@ -76,9 +76,9 @@ describe('LogStream', () => {
         }, 100);
     });
 
-    it('should capture console.info with INFO level', (done) => {
+    it('should capture info() with INFO level', (done) => {
         const ls = new LogStream(tmpDir);
-        console.info('[Test] info message');
+        ls.info('[Test] info message');
         ls.dispose();
 
         setTimeout(() => {
@@ -92,9 +92,9 @@ describe('LogStream', () => {
         }, 100);
     });
 
-    it('should capture console.debug with DEBUG level', (done) => {
+    it('should capture debug() with DEBUG level', (done) => {
         const ls = new LogStream(tmpDir, { level: LogLevel.DEBUG });
-        console.debug('[Test] debug message');
+        ls.debug('[Test] debug message');
         ls.dispose();
 
         setTimeout(() => {
@@ -108,31 +108,33 @@ describe('LogStream', () => {
         }, 100);
     });
 
-    it('should restore original console methods on dispose', () => {
+    it('should not monkey-patch console methods', () => {
         const origLog = console.log;
         const origInfo = console.info;
         const origWarn = console.warn;
         const origError = console.error;
         const origDebug = console.debug;
-        const origTrace = console.trace;
 
         const ls = new LogStream(tmpDir);
-        // After construction, console.log should be patched (different reference)
-        expect(console.log).not.toBe(origLog);
-
-        ls.dispose();
-        // After dispose, originals should be restored
+        // After construction, console methods should remain untouched
         expect(console.log).toBe(origLog);
         expect(console.info).toBe(origInfo);
         expect(console.warn).toBe(origWarn);
         expect(console.error).toBe(origError);
         expect(console.debug).toBe(origDebug);
-        expect(console.trace).toBe(origTrace);
+
+        ls.dispose();
+        // After dispose, console methods should still be the same
+        expect(console.log).toBe(origLog);
+        expect(console.info).toBe(origInfo);
+        expect(console.warn).toBe(origWarn);
+        expect(console.error).toBe(origError);
+        expect(console.debug).toBe(origDebug);
     });
 
     it('should include ISO timestamp in each line', (done) => {
         const ls = new LogStream(tmpDir);
-        console.log('timestamp-check');
+        ls.log('timestamp-check');
         ls.dispose();
 
         setTimeout(() => {
@@ -175,7 +177,7 @@ describe('LogStream', () => {
 
     it('should stringify non-string arguments', (done) => {
         const ls = new LogStream(tmpDir);
-        console.log('object test:', { key: 'value' }, 42);
+        ls.log('object test:', { key: 'value' }, 42);
         ls.dispose();
 
         setTimeout(() => {
@@ -194,11 +196,11 @@ describe('LogStream', () => {
 
     it('should filter messages below the configured level', (done) => {
         const ls = new LogStream(tmpDir, { level: LogLevel.WARN });
-        console.log('[Test] should NOT appear');
-        console.info('[Test] should NOT appear either');
-        console.debug('[Test] also hidden');
-        console.warn('[Test] warning visible');
-        console.error('[Test] error visible');
+        ls.log('[Test] should NOT appear');
+        ls.info('[Test] should NOT appear either');
+        ls.debug('[Test] also hidden');
+        ls.warn('[Test] warning visible');
+        ls.error('[Test] error visible');
         ls.dispose();
 
         setTimeout(() => {
@@ -217,8 +219,8 @@ describe('LogStream', () => {
 
     it('should suppress all file output when level is OFF', (done) => {
         const ls = new LogStream(tmpDir, { level: LogLevel.OFF });
-        console.log('[Test] should NOT appear');
-        console.error('[Test] should NOT appear');
+        ls.log('[Test] should NOT appear');
+        ls.error('[Test] should NOT appear');
         ls.dispose();
 
         setTimeout(() => {
@@ -232,10 +234,10 @@ describe('LogStream', () => {
 
     it('setLevel() should change filtering at runtime', (done) => {
         const ls = new LogStream(tmpDir, { level: LogLevel.INFO });
-        console.log('[Test] info visible');
+        ls.log('[Test] info visible');
         ls.setLevel(LogLevel.ERROR);
-        console.log('[Test] info now hidden');
-        console.error('[Test] error still visible');
+        ls.log('[Test] info now hidden');
+        ls.error('[Test] error still visible');
         ls.dispose();
 
         setTimeout(() => {

@@ -12,6 +12,7 @@ import type { SessionManager } from '../session/SessionManager.js';
 import type { ADKController } from '../adk/ADKController.js';
 import { StateManager } from '../state/StateManager.js';
 import { isValidWebviewMessage } from './ipcValidator.js';
+import log from '../logger/log.js';
 
 /** Signature for the injected pre-flight Git check function. */
 type PreFlightGitCheckFn = () => Promise<{ blocked: true; message: string } | { blocked: false }>;
@@ -146,7 +147,7 @@ export class MissionControlPanel {
       (raw as Record<string, unknown>).type === 'PLAN_SUMMARY'
     ) {
       const msg = raw as { type: 'PLAN_SUMMARY'; payload: { summary: string; implementationPlan: string } };
-      console.log('[MissionControl] Host → Webview (pass-through): PLAN_SUMMARY');
+      log.info('[MissionControl] Host → Webview (pass-through): PLAN_SUMMARY');
       this.sendToWebview({
         type: 'PLAN_SUMMARY',
         payload: msg.payload,
@@ -155,12 +156,12 @@ export class MissionControlPanel {
     }
 
     if (!isValidWebviewMessage(raw)) {
-      console.warn('[MissionControl] Invalid or malformed message:', raw);
+      log.warn('[MissionControl] Invalid or malformed message:', raw);
       return;
     }
 
     const message = raw as WebviewToHostMessage;
-    console.log(`[MissionControl] Webview → Host: ${message.type}`);
+    log.info(`[MissionControl] Webview → Host: ${message.type}`);
 
     switch (message.type) {
       case 'CMD_START': {
@@ -284,7 +285,7 @@ export class MissionControlPanel {
         break;
       default: {
         const _exhaustive: never = message;
-        console.warn('[MissionControl] Unknown message:', _exhaustive);
+        log.warn('[MissionControl] Unknown message:', _exhaustive);
       }
     }
   }
@@ -300,7 +301,7 @@ export class MissionControlPanel {
         type: 'SESSION_LIST',
         payload: { sessions },
       });
-    }).catch(console.error);
+    }).catch(log.onError);
   }
 
   private handleSearchSessions(query: string): void {
@@ -310,7 +311,7 @@ export class MissionControlPanel {
         type: 'SESSION_SEARCH_RESULTS',
         payload: { query, sessions },
       });
-    }).catch(console.error);
+    }).catch(log.onError);
   }
 
   private handleLoadSession(sessionId: string): void {
@@ -330,7 +331,7 @@ export class MissionControlPanel {
    */
   private handleError(err: unknown): void {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('[MissionControl] Error:', message);
+    log.error('[MissionControl] Error:', message);
     this.sendToWebview({
       type: 'ERROR',
       payload: {
@@ -438,7 +439,9 @@ export class MissionControlPanel {
     </div>
 
     <!-- Zone 2: Mission Overview + Global Execution Controls -->
-    <section class="mission-overview" id="mission-overview">
+    <section class="mission-overview panel" id="mission-overview">
+      <div class="panel-header">Mission Overview</div>
+      <div class="panel-body">
       <div class="mission-overview-info">
         <div class="mission-title" id="mission-title">No mission loaded</div>
         <div class="mission-progress" id="mission-progress"></div>
@@ -452,17 +455,22 @@ export class MissionControlPanel {
         <button id="btn-view-report" class="btn-icon" data-tooltip="View consolidation report" aria-label="View consolidation report" style="display:none;">📊</button>
         <span class="elapsed-time" id="elapsed-time" data-tooltip="Elapsed time" aria-label="Elapsed time">00:00</span>
       </div>
+      </div>
     </section>
 
     <!-- Master Task Summary (shown when planner summary is available) -->
-    <section class="master-task-section" id="master-task-section" style="display:none;">
+    <section class="master-task-section panel" id="master-task-section" style="display:none;">
+      <div class="panel-header">Master Task Overview</div>
+      <div class="panel-body">
       <div class="master-task-summary" id="master-task-summary"></div>
       <button id="btn-toggle-plan" class="btn-icon" data-tooltip="Toggle implementation plan" aria-label="Toggle implementation plan">📋</button>
       <div class="master-task-plan" id="master-task-plan" style="display:none;"></div>
+      </div>
     </section>
 
     <!-- Zone 5: Plan Review Panel (shown during PLAN_REVIEW state) -->
-    <section class="plan-review-panel" id="plan-review-panel" style="display:none;">
+    <section class="plan-review-panel panel" id="plan-review-panel" style="display:none;">
+      <div class="panel-header">Plan Review</div>
       <div class="plan-status" id="plan-status"></div>
       <div id="plan-review-area">
         <div class="plan-carousel" id="plan-carousel"></div>
@@ -486,30 +494,34 @@ export class MissionControlPanel {
     <!-- Main Body: Navigator + Details -->
     <div class="app-body">
       <!-- Zone 3: Phase Navigator -->
-      <nav class="phase-navigator" id="phase-navigator" aria-label="Phase list" role="list">
-        <div class="nav-header">Phases</div>
+      <nav class="phase-navigator panel" id="phase-navigator" aria-label="Phase list" role="list">
+        <div class="nav-header panel-header">Phase Navigator</div>
         <!-- Phase items rendered dynamically -->
       </nav>
 
       <main class="main-center" aria-label="Phase details">
         <!-- Plan Prompt Input (shown in IDLE state) -->
-        <section class="plan-prompt-section" id="plan-prompt-section">
+        <section class="plan-prompt-section panel" id="plan-prompt-section">
+          <div class="panel-header">New Task</div>
           <textarea id="plan-prompt" rows="3" placeholder="Describe your goal and Coogent will generate a plan..." aria-label="Plan prompt"></textarea>
           <button id="btn-plan" data-tooltip="Generate a multi-phase runbook" aria-label="Generate a multi-phase runbook">🚀 Generate Plan</button>
         </section>
 
         <div id="git-error-banner" style="display:none;"></div>
 
-        <div class="phase-details" id="phase-details">
-          <p class="placeholder-text">Select a phase from the navigator.</p>
+        <div class="phase-details-wrapper panel">
+          <div class="panel-header">Phase Details</div>
+          <div class="phase-details" id="phase-details">
+            <p class="placeholder-text">Select a phase from the navigator.</p>
+          </div>
         </div>
       </main>
     </div>
 
     <!-- Zone 6: Worker Output Terminal -->
     <div class="terminal-resizer" id="terminal-resizer"></div>
-    <section class="terminal-panel" role="log" aria-label="Worker output">
-      <div class="terminal-header">
+    <section class="terminal-panel panel" role="log" aria-label="Worker output">
+      <div class="terminal-header panel-header">
         <span>Worker Output</span>
         <button class="btn-icon" id="btn-clear-output" data-tooltip="Clear output" aria-label="Clear output">🗑</button>
       </div>

@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { EventEmitter } from 'node:events';
+import log from '../logger/log.js';
 import {
     EngineState,
     EngineEvent,
@@ -151,7 +152,7 @@ export class Engine extends EventEmitter {
         const nextState = allowed[event];
 
         if (nextState === undefined) {
-            console.warn(
+            log.warn(
                 `[Engine] Invalid transition: ${this.state} + ${event} → rejected`
             );
             this.emitUIMessage({
@@ -168,7 +169,7 @@ export class Engine extends EventEmitter {
         const prev = this.state;
         this.state = nextState;
 
-        console.log(`[Engine] ${prev} → ${nextState} (${event})`);
+        log.info(`[Engine] ${prev} → ${nextState} (${event})`);
         this.emit('state:changed', prev, nextState, event);
 
         return nextState;
@@ -742,7 +743,7 @@ export class Engine extends EventEmitter {
      */
     public planRetryParse(): void {
         if (this.state !== EngineState.PLANNING && this.state !== EngineState.IDLE) {
-            console.warn(`[Engine] planRetryParse() rejected: engine is in state "${this.state}"`);
+            log.warn(`[Engine] planRetryParse() rejected: engine is in state "${this.state}"`);
             return;
         }
 
@@ -999,7 +1000,7 @@ export class Engine extends EventEmitter {
         if (this.pauseRequested) {
             this.pauseRequested = false;
             this.runbook.status = 'idle';
-            this.persist().catch(console.error);
+            this.persist().catch(log.onError);
             this.emitUIMessage({
                 type: 'LOG_ENTRY',
                 payload: {
@@ -1078,7 +1079,7 @@ export class Engine extends EventEmitter {
         );
 
         if (!phase) {
-            console.warn(`[Engine] Phase ${this.runbook.current_phase} not found.`);
+            log.warn(`[Engine] Phase ${this.runbook.current_phase} not found.`);
             return;
         }
 
@@ -1091,7 +1092,7 @@ export class Engine extends EventEmitter {
         });
 
         // Persist the running status so crash recovery knows the phase was in-flight
-        this.persist().catch(console.error);
+        this.persist().catch(log.onError);
 
         // Delegate execution to ADKController
         this.emit('phase:execute', phase);
@@ -1122,7 +1123,7 @@ export class Engine extends EventEmitter {
         }
 
         // Persist all status changes in one write
-        this.persist().catch(console.error);
+        this.persist().catch(log.onError);
 
         // Emit a STATE_SNAPSHOT *after* phases are set to 'running' so the
         // webview gets a full snapshot with the updated statuses.  The earlier
@@ -1190,7 +1191,7 @@ export class Engine extends EventEmitter {
             if (runningPhases.length > 0) return; // Workers are live, no stall
 
             // Stall detected: no running phases but FSM thinks workers are active
-            console.warn(
+            log.warn(
                 `[Engine] Stall watchdog: FSM in EXECUTING_WORKER but no running phases. ` +
                 `activeWorkerCount=${this.activeWorkerCount}. Attempting recovery.`
             );
@@ -1228,7 +1229,7 @@ export class Engine extends EventEmitter {
                     this.emit('run:completed', this.runbook);
                     this.emit('run:consolidate', this.stateManager.getSessionDir());
                 }
-                this.persist().catch(console.error);
+                this.persist().catch(log.onError);
                 this.emitUIMessage({
                     type: 'STATE_SNAPSHOT',
                     payload: { runbook: this.runbook, engineState: this.state },
@@ -1251,7 +1252,7 @@ export class Engine extends EventEmitter {
             this.transition(EngineEvent.WORKER_EXITED);
             this.transition(EngineEvent.PHASE_FAIL);
             this.runbook.status = 'paused_error';
-            this.persist().catch(console.error);
+            this.persist().catch(log.onError);
             this.emitUIMessage({
                 type: 'STATE_SNAPSHOT',
                 payload: { runbook: this.runbook, engineState: this.state },
