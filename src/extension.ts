@@ -19,7 +19,7 @@ import { GitManager } from './git/GitManager.js';
 import { GitSandboxManager } from './git/GitSandboxManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
 import { PlannerAgent } from './planner/PlannerAgent.js';
-import { SessionManager } from './session/SessionManager.js';
+import { SessionManager, formatSessionDirName } from './session/SessionManager.js';
 import { HandoffExtractor } from './context/HandoffExtractor.js';
 import { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 
@@ -171,7 +171,8 @@ export function activate(context: vscode.ExtensionContext): void {
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (workspaceRoot) {
           const newId = uuidv7();
-          const newDir = path.join(workspaceRoot, '.coogent', 'ipc', newId);
+          const newDirName = formatSessionDirName(newId);
+          const newDir = path.join(workspaceRoot, '.coogent', 'ipc', newDirName);
           currentSessionDir = newDir;
           const newSM = new StateManager(newDir);
           await engine.reset(newSM);
@@ -216,7 +217,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ─── Initialize services ───────────────────────────────────────────
     const sessionId = uuidv7();
-    const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', sessionId);
+    const sessionDirName = formatSessionDirName(sessionId);
+    const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', sessionDirName);
     currentSessionDir = sessionDir;
 
 
@@ -274,9 +276,29 @@ export function activate(context: vscode.ExtensionContext): void {
       MissionControlPanel.broadcast(message);
     });
 
-    // ─── Wire Engine → Logger + Webview (state:changed) ────────────────
+    // ─── Wire Engine → Webview (state:changed) ────────────────────────────
+    let branchCreated = false; // Bug 4: ensure branch creation runs once per session
     engine.on('state:changed', (from, to, event) => {
       logger?.logStateTransition(from, to, event).catch(console.error);
+
+      // Bug 4: Auto-create sandbox branch on first EXECUTING_WORKER transition
+      if (to === 'EXECUTING_WORKER' && !branchCreated && gitSandbox) {
+        branchCreated = true;
+        const branchRb = engine?.getRunbook();
+        const slug = branchRb?.project_id || 'coogent-task';
+        gitSandbox.createSandboxBranch({ taskSlug: slug })
+          .then(result => {
+            if (result.success) {
+              MissionControlPanel.broadcast({
+                type: 'LOG_ENTRY',
+                payload: { timestamp: asTimestamp(), level: 'info', message: `🔀 ${result.message}` },
+              });
+            } else {
+              console.warn('[Coogent] Branch creation skipped:', result.message);
+            }
+          })
+          .catch(err => console.error('[Coogent] Auto-branch creation error:', err));
+      }
 
       // Broadcast STATE_SNAPSHOT to webview on every state transition (Req §3)
       const rb = engine?.getRunbook();

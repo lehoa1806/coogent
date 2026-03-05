@@ -358,7 +358,7 @@ export class MissionControlPanel {
     const sessionDir = stateManager?.getSessionDir?.();
     if (!sessionDir) return;
 
-    const reportPath = path.join(sessionDir, '.coogent', 'consolidation-report.md');
+    const reportPath = path.join(sessionDir, 'consolidation-report.md');
     fs.readFile(reportPath, 'utf-8')
       .then(report => {
         this.sendToWebview({
@@ -407,8 +407,9 @@ export class MissionControlPanel {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none';
-                 style-src ${webview.cspSource} 'nonce-${nonce}';
-                 font-src ${webview.cspSource};
+                 style-src ${webview.cspSource} 'unsafe-inline';
+                 font-src ${webview.cspSource} data:;
+                 img-src ${webview.cspSource} data:;
                  script-src 'nonce-${nonce}';">
   <title>Mission Control</title>
   <!-- Fonts: inherited from VS Code's configured --vscode-font-family / --vscode-editor-font-family -->
@@ -515,12 +516,6 @@ export class MissionControlPanel {
       <pre class="terminal-output" id="output">Waiting for execution...\n</pre>
       <button class="btn-scroll-bottom" id="btn-scroll-bottom" data-tooltip="Scroll to bottom" aria-label="Scroll to bottom">↓</button>
     </section>
-
-    <!-- Token Budget Bar -->
-    <div class="token-bar" id="token-bar" style="display:none;">
-      <div class="token-fill" id="token-fill"></div>
-      <span class="token-label" id="token-label"></span>
-    </div>
 
 
 

@@ -7,6 +7,7 @@
 
 import { setAppState, getAppState } from './store.js';
 import { escapeHtml } from './utils.js';
+import { createMarkdownContainer, attachMarkdownToggleHandlers, renderMermaidBlocks } from './markdown.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Plan Draft (Carousel)
@@ -45,7 +46,7 @@ export function renderPlanDraft(draft, fileTree) {
                 <span class="phase-id">#${p.id}</span>
                 <span class="plan-card-files">${(p.context_files || []).length} context files</span>
             </div>
-            <div class="plan-card-prompt">${escapeHtml(p.prompt)}</div>
+            <div class="plan-card-prompt">${createMarkdownContainer(p.prompt || '', `plan-phase-md-${p.id}`)}</div>
             ${(p.context_files || []).length > 0 ? `
             <div class="plan-card-context">
                 ${p.context_files.map((/** @type {string} */ f) => `<code>${escapeHtml(f)}</code>`).join(' ')}
@@ -55,12 +56,14 @@ export function renderPlanDraft(draft, fileTree) {
             </div>
         `;
         $planCarousel.appendChild(card);
+        attachMarkdownToggleHandlers(card);
         planSlideCards.push(card);
     });
 
     // Show first slide
     if (planSlideCards.length > 0) {
         showPlanSlide(0);
+        renderMermaidBlocks();
     }
 }
 
@@ -76,6 +79,9 @@ export function showPlanSlide(index) {
     planSlideCards.forEach((card, i) => {
         card.classList.toggle('carousel-hidden', i !== index);
     });
+
+    // Re-render Mermaid diagrams for newly visible slide
+    renderMermaidBlocks();
 
     // Update label
     const $planCarouselLabel = document.getElementById('plan-carousel-label');

@@ -2083,3 +2083,220 @@ button:focus-visible {
     background: var(--info-bg);
     animation: badge-pulse 2s ease-in-out infinite;
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Markdown Rendering                                                        */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.md-container {
+    position: relative;
+}
+
+.md-toggle-bar {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    display: flex;
+    gap: 2px;
+    z-index: 5;
+    opacity: 0.5;
+    transition: opacity var(--transition);
+}
+
+.md-container:hover .md-toggle-bar {
+    opacity: 1;
+}
+
+.md-toggle-btn {
+    font-family: var(--font);
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--vscode-button-secondaryBackground, var(--surface-2));
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all var(--transition);
+    line-height: 1.4;
+}
+
+.md-toggle-btn:hover {
+    background: var(--vscode-button-secondaryHoverBackground, var(--surface-3));
+    color: var(--text);
+}
+
+.md-toggle-btn.active {
+    background: var(--accent);
+    color: var(--vscode-button-foreground, #fff);
+    border-color: var(--accent);
+}
+
+.md-rendered {
+    color: var(--vscode-editor-foreground);
+    line-height: 1.6;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.md-rendered h1,
+.md-rendered h2,
+.md-rendered h3,
+.md-rendered h4,
+.md-rendered h5,
+.md-rendered h6 {
+    color: var(--vscode-editor-foreground);
+    margin-top: 1em;
+    margin-bottom: 0.5em;
+    font-weight: 600;
+    line-height: 1.3;
+}
+
+.md-rendered h1 { font-size: 1.5em; border-bottom: 1px solid var(--border); padding-bottom: 0.3em; }
+.md-rendered h2 { font-size: 1.3em; border-bottom: 1px solid var(--border); padding-bottom: 0.25em; }
+.md-rendered h3 { font-size: 1.15em; }
+.md-rendered h4 { font-size: 1em; }
+
+.md-rendered p {
+    margin-bottom: 0.75em;
+}
+
+.md-rendered a {
+    color: var(--vscode-textLink-foreground, var(--accent));
+    text-decoration: none;
+}
+
+.md-rendered a:hover {
+    text-decoration: underline;
+}
+
+.md-rendered strong {
+    font-weight: 600;
+    color: var(--vscode-editor-foreground);
+}
+
+.md-rendered em {
+    font-style: italic;
+}
+
+.md-rendered code {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    background: var(--vscode-textCodeBlock-background, var(--surface-2));
+    color: var(--vscode-textPreformat-foreground, var(--text));
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+
+.md-rendered pre {
+    background: var(--vscode-textCodeBlock-background, var(--surface-2));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    overflow-x: auto;
+    margin-bottom: 0.75em;
+}
+
+.md-rendered pre code {
+    background: none;
+    padding: 0;
+    border-radius: 0;
+    font-size: var(--editor-font-size);
+    line-height: 1.5;
+}
+
+.md-rendered ul,
+.md-rendered ol {
+    padding-left: 1.5em;
+    margin-bottom: 0.75em;
+}
+
+.md-rendered li {
+    margin-bottom: 0.25em;
+}
+
+.md-rendered blockquote {
+    border-left: 3px solid var(--accent);
+    padding: 0.25em 1em;
+    margin-left: 0;
+    margin-bottom: 0.75em;
+    color: var(--text-dim);
+    background: var(--surface-2);
+    border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.md-rendered table {
+    border-collapse: collapse;
+    width: 100%;
+    margin-bottom: 0.75em;
+}
+
+.md-rendered th,
+.md-rendered td {
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    text-align: left;
+}
+
+.md-rendered th {
+    background: var(--surface-2);
+    font-weight: 600;
+}
+
+.md-rendered hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 1em 0;
+}
+
+.md-rendered img {
+    max-width: 100%;
+    border-radius: var(--radius);
+}
+
+.md-rendered input[type="checkbox"] {
+    margin-right: 6px;
+}
+
+.md-raw {
+    display: none;
+}
+
+.md-raw pre {
+    background: var(--vscode-textCodeBlock-background, var(--surface-2));
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px;
+    font-family: var(--mono);
+    font-size: var(--editor-font-size);
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    color: var(--text);
+    overflow-x: auto;
+}
+
+/* Mermaid diagram containers */
+.mermaid-container {
+    margin: 0.75em 0;
+    text-align: center;
+}
+
+.mermaid-container svg {
+    max-width: 100%;
+    height: auto;
+}
+
+.mermaid-error {
+    border: 1px solid var(--error);
+    border-radius: var(--radius);
+    padding: 12px;
+    background: var(--error-bg);
+    overflow-x: auto;
+}
+
+.mermaid-error-notice {
+    font-size: 11px;
+    color: var(--error);
+    margin-top: 4px;
+    font-weight: 600;
+}

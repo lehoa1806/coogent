@@ -235,10 +235,13 @@ export class AntigravityADKAdapter implements IADKAdapter {
         let outputCallback: ((stream: 'stdout' | 'stderr', chunk: string) => void) | null = null;
         let exitCallback: ((code: number) => void) | null = null;
 
-        // Build hierarchical path: .coogent/ipc/<masterTaskId>/<subTaskId>/
+        // Build hierarchical path: .coogent/ipc/<masterTaskId>/phase-NNN-<subTaskId>/
+        const subTaskName = options.phaseNumber != null
+            ? `phase-${String(options.phaseNumber).padStart(3, '0')}-${sessionId}`
+            : sessionId;
         const subDir = options.masterTaskId
-            ? path.join(this.ipcDir, options.masterTaskId, sessionId)
-            : path.join(this.ipcDir, sessionId);
+            ? path.join(this.ipcDir, options.masterTaskId, subTaskName)
+            : path.join(this.ipcDir, subTaskName);
         const requestFile = path.join(subDir, 'request.md');
         const responseFile = path.join(subDir, 'response.md');
 

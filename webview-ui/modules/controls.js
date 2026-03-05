@@ -44,7 +44,6 @@ export function initControls() {
 
     $('btn-reset')?.addEventListener('click', () => {
         clearOutput();
-        hideTokenBar();
         resetTimer();
         postMessage({ type: 'CMD_RESET' });
     });
@@ -303,9 +302,4 @@ function closeHistoryDrawer() {
     if (historyBtn) historyBtn.focus();
 }
 
-/** Hide the token budget bar. */
-function hideTokenBar() {
-    const $tokenBar = document.getElementById('token-bar');
-    if ($tokenBar) $tokenBar.style.display = 'none';
-}
 

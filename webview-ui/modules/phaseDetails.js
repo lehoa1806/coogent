@@ -11,6 +11,7 @@
 
 import { getAppState, postMessage } from './store.js';
 import { escapeHtml, formatDuration } from './utils.js';
+import { createMarkdownContainer, attachMarkdownToggleHandlers, renderMermaidBlocks } from './markdown.js';
 
 /**
  * Build the action buttons HTML for a phase based on its status.
@@ -169,6 +170,23 @@ function buildHandoffContextSection(phase, allPhases) {
 }
 
 /**
+ * Build the Context Summary section.
+ * Shows the AI-generated summary explaining what this phase does and why.
+ * @param {{ context_summary?: string }} phase
+ * @returns {string}
+ */
+function buildContextSummarySection(phase) {
+    if (!phase.context_summary) return '';
+
+    return `
+        <div class="phase-detail-section">
+            <h4>Context Summary</h4>
+            <div class="phase-context-summary">${escapeHtml(phase.context_summary)}</div>
+        </div>
+    `;
+}
+
+/**
  * Build the Worker Output section — a mini terminal scoped to this phase.
  * Reads accumulated output from `getAppState().phaseOutputs[phaseId]`.
  * Shows a placeholder when the phase is pending and has no output yet.
@@ -249,7 +267,7 @@ export function renderPhaseDetails(phaseId) {
         <h3>Phase ${phase.id + 1}: ${escapeHtml(promptPreview)}</h3>
         <div class="phase-detail-section">
             <h4>Prompt</h4>
-            <div class="phase-prompt-full">${escapeHtml(phase.prompt || '')}</div>
+            ${createMarkdownContainer(phase.prompt || '', `phase-prompt-md-${phase.id}`)}
         </div>
         <div class="phase-detail-section">
             <h4>Context Files</h4>
@@ -261,6 +279,7 @@ export function renderPhaseDetails(phaseId) {
         </div>
         ${buildDependenciesSection(phase, phases)}
         ${buildDependentsSection(phase, phases)}
+        ${buildContextSummarySection(phase)}
         <div class="phase-detail-section">
             <h4>Success Criteria</h4>
             <div class="phase-success-criteria">${escapeHtml(phase.success_criteria || 'exit_code:0')}</div>
@@ -274,4 +293,6 @@ export function renderPhaseDetails(phaseId) {
 
     // Attach click handlers after innerHTML is set
     attachActionHandlers($details);
+    attachMarkdownToggleHandlers($details);
+    renderMermaidBlocks();
 }

@@ -65,29 +65,3 @@ export function clearOutput() {
     if ($output) $output.textContent = 'Consolidation report will appear here when all phases complete.\n';
 }
 
-/**
- * Render token budget progress bar.
- * @param {{ totalTokens: number, limit: number, breakdown: Array<{ path: string, tokens: number }> }} data
- */
-export function renderTokenBudget(data) {
-    const $tokenBar = document.getElementById('token-bar');
-    const $tokenFill = document.getElementById('token-fill');
-    const $tokenLabel = document.getElementById('token-label');
-    if (!$tokenBar || !$tokenFill || !$tokenLabel) return;
-
-    $tokenBar.style.display = 'block';
-    const pct = Math.min(100, (data.totalTokens / data.limit) * 100);
-
-    $tokenFill.style.width = `${pct}%`;
-    // Change fill color based on usage level
-    if (pct > 90) {
-        $tokenFill.style.background = 'var(--error)';
-    } else if (pct > 70) {
-        $tokenFill.style.background = 'var(--warning)';
-    } else {
-        $tokenFill.style.background = '';  // Use CSS default
-    }
-
-    $tokenLabel.textContent =
-        `${data.totalTokens.toLocaleString()} / ${data.limit.toLocaleString()} tokens (${Math.round(pct)}%) · ${data.breakdown.length} files`;
-}

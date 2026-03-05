@@ -435,6 +435,8 @@ export class PlannerAgent extends EventEmitter {
             project_id: r.project_id as string,
             status: 'idle',
             current_phase: 0,
+            ...(typeof r.summary === 'string' ? { summary: r.summary } : {}),
+            ...(typeof r.implementation_plan === 'string' ? { implementation_plan: r.implementation_plan } : {}),
             phases: (r.phases as Array<Record<string, unknown>>).map((p, i) => ({
                 id: asPhaseId(typeof p.id === 'number' ? p.id : i),
                 status: 'pending' as const,
@@ -442,6 +444,7 @@ export class PlannerAgent extends EventEmitter {
                 context_files: p.context_files as string[],
                 success_criteria: (p.success_criteria as string) || 'exit_code:0',
                 ...(Array.isArray(p.depends_on) ? { depends_on: (p.depends_on as number[]).map(asPhaseId) } : {}),
+                ...(typeof p.context_summary === 'string' ? { context_summary: p.context_summary } : {}),
             })),
         };
     }
@@ -525,6 +528,8 @@ You are a Planning Agent. Your job is to analyze a codebase and break down a use
 \`\`\`json
 {
   "project_id": "<descriptive-slug>",
+  "summary": "<1-2 sentence high-level summary of the entire task>",
+  "implementation_plan": "<detailed markdown plan describing the approach, architecture decisions, and key changes>",
   "status": "idle",
   "current_phase": 0,
   "phases": [
@@ -533,7 +538,8 @@ You are a Planning Agent. Your job is to analyze a codebase and break down a use
       "status": "pending",
       "prompt": "<detailed instruction for the AI worker>",
       "context_files": ["<relative/path/to/file.ts>"],
-      "success_criteria": "exit_code:0"
+      "success_criteria": "exit_code:0",
+      "context_summary": "<1-2 sentence summary of what this phase does and why>"
     }
   ]
 }

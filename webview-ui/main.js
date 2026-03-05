@@ -10,7 +10,7 @@
 
 import { initStore, postMessage, getAppState, setAppState, appendPhaseOutput } from './modules/store.js';
 import { initTimer } from './modules/timer.js';
-import { initTerminal, appendOutput, renderTokenBudget } from './modules/terminal.js';
+import { initTerminal, appendOutput } from './modules/terminal.js';
 import { initControls } from './modules/controls.js';
 import { initPhaseNavigator, renderPhaseList } from './modules/phaseNavigator.js';
 import {
@@ -25,6 +25,7 @@ import {
     markdownToHtml,
     renderPhaseDetails,
 } from './modules/renderers.js';
+import { initMermaid, renderMermaidBlocks, refreshMermaidTheme, createMarkdownContainer, attachMarkdownToggleHandlers } from './modules/markdown.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Bootstrap
@@ -41,6 +42,7 @@ initTimer();
 initTerminal();
 initControls();
 initPhaseNavigator();
+initMermaid();
 initConversationModeToggle();
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -93,7 +95,7 @@ window.addEventListener('message', (event) => {
 
         case 'TOKEN_BUDGET':
             try {
-                renderTokenBudget(msg.payload);
+
                 // Store token budget per-phase for Phase Details panel (#BUG-4)
                 if (msg.payload.phaseId != null) {
                     const budgets = { ...getAppState().phaseTokenBudgets };
@@ -162,8 +164,7 @@ window.addEventListener('message', (event) => {
 
         case 'CONSOLIDATION_REPORT':
             try {
-                showReportModal(msg.payload.report);
-                // Also populate the global terminal with the report text
+                // Populate the global terminal with the report text (no modal — Bug 5)
                 const $terminalOutput = document.getElementById('output');
                 if ($terminalOutput) {
                     $terminalOutput.textContent = msg.payload.report;
@@ -191,9 +192,11 @@ window.addEventListener('message', (event) => {
                 const $masterPlan = document.getElementById('master-task-plan');
                 if ($masterSection) $masterSection.style.display = 'block';
                 if ($masterSummary) $masterSummary.textContent = msg.payload.summary;
-                // Render implementation plan as HTML (#BUG-2)
+                // Render implementation plan as rich Markdown with toggle (#BUG-2)
                 if ($masterPlan && msg.payload.implementationPlan) {
-                    $masterPlan.innerHTML = markdownToHtml(msg.payload.implementationPlan);
+                    $masterPlan.innerHTML = createMarkdownContainer(msg.payload.implementationPlan, 'impl-plan-md');
+                    attachMarkdownToggleHandlers($masterPlan);
+                    renderMermaidBlocks();
                 }
                 // Wire toggle button (idempotent — only attach once)
                 const $btnToggle = document.getElementById('btn-toggle-plan');
@@ -226,6 +229,15 @@ window.addEventListener('message', (event) => {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 postMessage({ type: 'CMD_REQUEST_STATE' });
+
+// Re-render Mermaid diagrams when VS Code theme changes
+const observer = new MutationObserver(() => {
+    refreshMermaidTheme();
+});
+observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['class', 'style'],
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Conversation Mode Toggle

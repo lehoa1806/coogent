@@ -17,6 +17,7 @@ async function main() {
         outfile: 'webview-ui/dist/main.js',
         target: 'es2020',
         platform: 'browser',
+        define: { 'process.env.NODE_ENV': '"production"' },
     });
 
     if (watch) {

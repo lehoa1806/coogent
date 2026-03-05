@@ -14,6 +14,7 @@ import { startTimer, stopTimer, resetTimer } from './timer.js';
 import { renderPhaseList, updatePhaseItemStatus } from './phaseNavigator.js';
 import { renderPhaseDetails } from './phaseDetails.js';
 import { escapeHtml } from './utils.js';
+import { renderMarkdown, createMarkdownContainer, attachMarkdownToggleHandlers, renderMermaidBlocks } from './markdown.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Helpers
@@ -463,9 +464,7 @@ export function resetUI() {
     const $controls = document.getElementById('controls');
     if ($controls) $controls.style.display = 'flex';
 
-    // ── Token Bar ────────────────────────────────────────────────────────────
-    const $tokenBar = document.getElementById('token-bar');
-    if ($tokenBar) $tokenBar.style.display = 'none';
+
 
     // ── Control buttons — reset to IDLE state ────────────────────────────────
     updateControlState('IDLE');
@@ -479,32 +478,13 @@ export function resetUI() {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Convert a subset of Markdown to safe HTML.
- * Handles headings, bold, italic, code blocks, inline code, and lists.
+ * Convert Markdown to HTML using the `marked`-based renderer.
+ * Kept as a named export for backward compatibility.
  * @param {string} md
  * @returns {string}
  */
 export function markdownToHtml(md) {
-    return md
-        // Code blocks (fenced)
-        .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
-        // Headings
-        .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
-        .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-        .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-        .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-        // Bold + italic
-        .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
-        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replace(/\*(.+?)\*/g, '<em>$1</em>')
-        // Inline code
-        .replace(/`([^`]+)`/g, '<code>$1</code>')
-        // Unordered list items
-        .replace(/^[\-\*] (.+)$/gm, '<li>$1</li>')
-        // Wrap consecutive <li> in <ul>
-        .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
-        // Line breaks for remaining lines
-        .replace(/\n/g, '<br>');
+    return renderMarkdown(md);
 }
 
 /**
@@ -516,7 +496,9 @@ export function showReportModal(markdown) {
     const $content = document.getElementById('report-content');
     if (!$overlay || !$content) return;
 
-    $content.innerHTML = markdownToHtml(markdown);
+    $content.innerHTML = createMarkdownContainer(markdown, 'report-md');
+    attachMarkdownToggleHandlers($content);
+    renderMermaidBlocks();
     $overlay.classList.add('visible');
 
     // Close on overlay click (outside the modal)
@@ -544,4 +526,10 @@ export function showReportModal(markdown) {
 export function hideReportModal() {
     const $overlay = document.getElementById('report-overlay');
     if ($overlay) $overlay.classList.remove('visible');
+
+    // Bug 6: Ensure phase info stays visible after closing the modal
+    const $appBody = document.querySelector('.app-body');
+    if ($appBody) /** @type {HTMLElement} */ ($appBody).style.display = 'flex';
+    const $phaseDetails = document.getElementById('phase-details');
+    if ($phaseDetails) $phaseDetails.style.display = '';
 }

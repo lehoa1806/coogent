@@ -34,6 +34,8 @@ export interface ADKSessionOptions {
     newConversation?: boolean;
     /** Master task ID — determines the parent folder for IPC files. */
     masterTaskId?: string;
+    /** Phase number — used to build the `phase-NNN-<uuid>` sub-task directory. */
+    phaseNumber?: number;
 }
 
 export interface ADKSessionHandle {
@@ -180,6 +182,7 @@ export class ADKController extends EventEmitter {
                 initialPrompt: prompt,
                 newConversation,
                 ...(masterTaskId !== undefined && { masterTaskId }),
+                phaseNumber: phase.id as number,
             });
         } catch (err) {
             console.error(`[ADKController] Failed to create session for phase ${phase.id}:`, err);

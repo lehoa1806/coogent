@@ -37,14 +37,40 @@ export interface SessionSummary {
 
 /**
  * Extract the millisecond timestamp embedded in a UUIDv7.
+ * Handles both raw UUIDs and prefixed directory names (YYYYMMDD-HHMMSS-<uuid>).
  * UUIDv7 format: `TTTTTTTT-TTTT-7xxx-yxxx-xxxxxxxxxxxx`
  * The first 48 bits (12 hex chars across the first two segments) encode Unix ms.
  */
-export function extractUUIDv7Timestamp(uuid: string): number {
+export function extractUUIDv7Timestamp(dirNameOrUuid: string): number {
+    // Strip YYYYMMDD-HHMMSS- prefix if present (Bug 2)
+    const uuid = stripSessionDirPrefix(dirNameOrUuid);
     const parts = uuid.split('-');
     if (parts.length < 2) return 0;
     const hex = parts[0] + parts[1]; // 8 + 4 = 12 hex chars = 48 bits
     return parseInt(hex, 16) || 0;
+}
+
+/**
+ * Format a session directory name as `YYYYMMDD-HHMMSS-<uuid>` (Bug 2).
+ */
+export function formatSessionDirName(uuid: string, now = new Date()): string {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-`
+        + `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    return `${ts}-${uuid}`;
+}
+
+/** Regex matching the new session dir format: YYYYMMDD-HHMMSS-<uuid> */
+const SESSION_DIR_REGEX = /^\d{8}-\d{6}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Strip the `YYYYMMDD-HHMMSS-` prefix from a session directory name to get the raw UUID.
+ * Returns the input unchanged if no prefix is present.
+ */
+export function stripSessionDirPrefix(dirName: string): string {
+    // Prefix format: 8 digits + dash + 6 digits + dash = 16 chars
+    const prefixMatch = dirName.match(/^\d{8}-\d{6}-(.+)$/);
+    return prefixMatch ? prefixMatch[1] : dirName;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -57,8 +83,8 @@ const MAX_PROMPT_LENGTH = 120;
 /**
  * Discovers and manages past Coogent sessions.
  *
- * Sessions are stored under `<workspace>/.coogent/ipc/<uuid>/`, each
- * containing a `.task-runbook.json`. This class scans those directories,
+ * Sessions are stored under `<workspace>/.coogent/ipc/YYYYMMDD-HHMMSS-<uuid>/`,
+ * each containing a `.task-runbook.json`. This class scans those directories,
  * extracts metadata, and supports full-text search across phase prompts.
  */
 export class SessionManager {
@@ -85,12 +111,13 @@ export class SessionManager {
     /**
      * Create a new session.
      * Generates a UUIDv7 session ID, creates the session directory under
-     * `.coogent/ipc/{id}/`, and writes a metadata JSON with prompt and timestamp.
+     * `.coogent/ipc/YYYYMMDD-HHMMSS-<uuid>/`, and writes metadata JSON.
      * @returns The new session ID.
      */
     public async createSession(prompt: string): Promise<string> {
         const sessionId = generateUUIDv7();
-        const sessionDir = path.join(this.ipcDir, sessionId);
+        const dirName = formatSessionDirName(sessionId);
+        const sessionDir = path.join(this.ipcDir, dirName);
 
         // Create session directory (recursively creates .coogent/ipc/ if needed)
         await fs.mkdir(sessionDir, { recursive: true });
@@ -116,7 +143,7 @@ export class SessionManager {
      * Use this to access the runbook and state for replay/inspection.
      */
     public loadSession(sessionId: string): StateManager {
-        const sessionDir = path.join(this.ipcDir, sessionId);
+        const sessionDir = this.getSessionDir(sessionId);
         return new StateManager(sessionDir);
     }
 
@@ -220,14 +247,26 @@ export class SessionManager {
      * Load the full runbook for a specific session.
      */
     public async getSessionRunbook(sessionId: string): Promise<Runbook | null> {
-        const dir = path.join(this.ipcDir, sessionId);
+        const dir = this.getSessionDir(sessionId);
         return this.readRunbook(dir);
     }
 
     /**
      * Get the absolute session directory path for a given session ID.
+     * Scans the ipcDir for a directory ending in the UUID (handles prefixed names).
      */
     public getSessionDir(sessionId: string): string {
+        // Fast path: try prefixed lookup by scanning
+        try {
+            const entries = require('node:fs').readdirSync(this.ipcDir, { withFileTypes: true });
+            for (const e of entries) {
+                if (e.isDirectory() && e.name.endsWith(sessionId)) {
+                    return path.join(this.ipcDir, e.name);
+                }
+            }
+        } catch {
+            // Fall through to default
+        }
         return path.join(this.ipcDir, sessionId);
     }
 
@@ -236,7 +275,7 @@ export class SessionManager {
      * No-op if the directory doesn't exist.
      */
     public async deleteSession(sessionId: string): Promise<void> {
-        const dir = path.join(this.ipcDir, sessionId);
+        const dir = this.getSessionDir(sessionId);
         try {
             await fs.rm(dir, { recursive: true, force: true });
             console.log(`[SessionManager] Deleted session: ${sessionId}`);
@@ -251,12 +290,16 @@ export class SessionManager {
 
     /** Discover session directories, excluding the current active one. */
     private async discoverSessionDirs(): Promise<string[]> {
-        // #46: UUID regex to filter non-session directories
-        const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        // Bug 2: Match new YYYYMMDD-HHMMSS-<uuid> format only
         try {
             const entries = await fs.readdir(this.ipcDir, { withFileTypes: true });
             return entries
-                .filter(e => e.isDirectory() && e.name !== this.currentSessionId && UUID_REGEX.test(e.name))
+                .filter(e => {
+                    if (!e.isDirectory()) return false;
+                    // Exclude current session (check if dir name ends with current ID)
+                    if (e.name === this.currentSessionId || e.name.endsWith(this.currentSessionId)) return false;
+                    return SESSION_DIR_REGEX.test(e.name);
+                })
                 .map(e => path.join(this.ipcDir, e.name));
         } catch {
             // ipc directory may not exist yet
@@ -288,7 +331,9 @@ export class SessionManager {
         const runbook = await this.readRunbook(sessionDir);
         if (!runbook) return null;
 
-        const sessionId = path.basename(sessionDir);
+        const dirName = path.basename(sessionDir);
+        // Extract the UUID portion from the directory name
+        const sessionId = stripSessionDirPrefix(dirName);
         return this.runbookToSummary(sessionId, runbook);
     }
 
