@@ -91,7 +91,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
     /** Running estimate of tokens pumped into the current conversation. */
     private conversationTokens = 0;
 
-    constructor(private readonly workspaceRoot: string) {
+    constructor(workspaceRoot: string) {
         this.ipcDir = path.join(workspaceRoot, IPC_DIR_NAME);
     }
 
@@ -255,15 +255,14 @@ export class AntigravityADKAdapter implements IADKAdapter {
                 console.log(`[AntigravityADK] IPC request written: ${requestFile} (${options.initialPrompt.length} chars)`);
 
                 // Step 3: Build the meta-prompt for the chat agent
-                const relRequestFile = path.relative(this.workspaceRoot, requestFile);
-                const relResponseFile = path.relative(this.workspaceRoot, responseFile);
-
+                // Use ABSOLUTE paths — relative paths broke when the agent's
+                // working directory differed from the VS Code workspace root.
                 const metaPrompt = [
-                    `Read the instructions from the file: ${relRequestFile}`,
+                    `Read the instructions from the file: ${requestFile}`,
                     `Follow those instructions carefully.`,
-                    `Write your COMPLETE response to the file: ${relResponseFile}`,
+                    `Write your COMPLETE response to the file: ${responseFile}`,
                     `Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
-                    `Use the file editing tools to create/write to ${relResponseFile}.`,
+                    `Use the file editing tools to create/write to ${responseFile}.`,
                 ].join('\n');
 
                 // Step 4: Inject the meta-prompt into the chat panel
@@ -292,7 +291,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
 
                 if (content === null) {
                     const msg = `Timeout waiting for AI response file (${RESPONSE_TIMEOUT_MS / 1000}s). `
-                        + `The chat agent may not have written to: ${relResponseFile}`;
+                        + `The chat agent may not have written to: ${responseFile}`;
                     console.error(`[AntigravityADK] ${msg}`);
                     outputCallback?.('stderr', `[AntigravityADK] ${msg}\n`);
                     exitCallback?.(1);

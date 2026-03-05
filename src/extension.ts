@@ -339,7 +339,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ─── Wire Engine → ADK (phase execution) ───────────────────────────
     engine.on('phase:execute', (phase: Phase) => {
-      executePhase(phase, workspaceRoot, workerTimeoutMs, sessionId).catch((err) => {
+      executePhase(phase, workspaceRoot, workerTimeoutMs, sessionDirName).catch((err) => {
         console.error('[Coogent] Phase execution error:', err);
       });
     });
@@ -348,7 +348,7 @@ export function activate(context: vscode.ExtensionContext): void {
     engine.on('phase:heal', (phase: Phase, augmentedPrompt: string) => {
       // Clone the phase and override prompt for the newly spawned worker
       const healPhase = { ...phase, prompt: augmentedPrompt };
-      executePhase(healPhase, workspaceRoot, workerTimeoutMs, sessionId).catch((err) => {
+      executePhase(healPhase, workspaceRoot, workerTimeoutMs, sessionDirName).catch((err) => {
         console.error('[Coogent] Self-healing phase execution error:', err);
       });
     });
