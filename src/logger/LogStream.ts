@@ -127,7 +127,7 @@ export class LogStream {
 
             // Re-apply patches periodically — VS Code's Extension Host may
             // overwrite our console patches after activate() returns.
-            this._repatchTimer = setInterval(() => this.ensurePatched(), 2000);
+            this._repatchTimer = setInterval(() => this.ensurePatched(), 500);
         } catch {
             // Best-effort — if we can't create the log file, don't break the extension
         }
@@ -230,14 +230,16 @@ export class LogStream {
     private patch(): void {
         const self = this;
 
-        // Capture current console methods as "upstream" — these may already be
-        // VS Code's patched versions, and we want to call through to them.
-        const upstreamLog = this._patched ? this._origLog : console.log;
-        const upstreamInfo = this._patched ? this._origInfo : console.info;
-        const upstreamWarn = this._patched ? this._origWarn : console.warn;
-        const upstreamError = this._patched ? this._origError : console.error;
-        const upstreamDebug = this._patched ? this._origDebug : console.debug;
-        const upstreamTrace = this._patched ? this._origTrace : console.trace;
+        // ALWAYS capture the CURRENT console methods as upstream.
+        // When VS Code's Extension Host overwrites our patches, the current
+        // console.* methods are VS Code's versions — we must chain through
+        // them so the Extension Host output channel keeps working.
+        const upstreamLog = console.log;
+        const upstreamInfo = console.info;
+        const upstreamWarn = console.warn;
+        const upstreamError = console.error;
+        const upstreamDebug = console.debug;
+        const upstreamTrace = console.trace;
 
         const makeWrapper = (
             upstream: (...args: unknown[]) => void,

@@ -19,6 +19,8 @@ const runbookSchema = {
         project_id: { type: 'string', minLength: 1 },
         status: { type: 'string', enum: ['idle', 'running', 'paused_error', 'completed'] },
         current_phase: { type: 'integer', minimum: 0 },
+        summary: { type: 'string' },
+        implementation_plan: { type: 'string' },
         phases: {
             type: 'array',
             minItems: 1,
@@ -35,6 +37,7 @@ const runbookSchema = {
                     depends_on: { type: 'array', items: { type: 'integer' } },
                     evaluator: { type: 'string', enum: ['exit_code', 'regex', 'toolchain', 'test_suite'] },
                     max_retries: { type: 'integer', minimum: 0 },
+                    context_summary: { type: 'string' },
                 },
             },
         },

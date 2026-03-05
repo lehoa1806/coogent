@@ -221,9 +221,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceRoot) {
-      console.warn('[Coogent] No workspace folder open — engine not initialized.');
+      logStream?.warn('[Coogent] No workspace folder open — engine not initialized.');
       return;
     }
+    logStream?.log('[Coogent] Workspace root:', workspaceRoot);
 
 
     // Read extension configuration
@@ -237,12 +238,14 @@ export function activate(context: vscode.ExtensionContext): void {
     const sessionDirName = formatSessionDirName(sessionId);
     const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', sessionDirName);
     currentSessionDir = sessionDir;
-
+    logStream?.log('[Coogent] Session dir:', sessionDir);
 
     stateManager = new StateManager(sessionDir);
+    logStream?.log('[Coogent] StateManager initialized');
 
 
     engine = new Engine(stateManager, { workspaceRoot });
+    logStream?.log('[Coogent] Engine initialized');
 
 
     gitManager = new GitManager(workspaceRoot);
@@ -255,6 +258,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const adkAdapter = new AntigravityADKAdapter(workspaceRoot);
     adkController = new ADKController(adkAdapter, workspaceRoot);
+    logStream?.log('[Coogent] ADKController initialized');
 
 
     contextScoper = new ContextScoper({
@@ -265,6 +269,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 
     logger = new TelemetryLogger(workspaceRoot, '.coogent/logs');
+    logStream?.log('[Coogent] TelemetryLogger initialized');
 
 
     // Output buffer registry — replaces module-level Map (02-review.md § R11)
@@ -283,6 +288,7 @@ export function activate(context: vscode.ExtensionContext): void {
       maxTreeChars: 8000,
     });
     plannerAgent.setMasterTaskId(sessionDirName);
+    logStream?.log('[Coogent] PlannerAgent initialized');
 
     // ─── Initialize HandoffExtractor & ConsolidationAgent ────────────
     handoffExtractor = new HandoffExtractor();
@@ -628,6 +634,7 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(watcher);
 
     // ─── Orphan cleanup & crash recovery ───────────────────────────────
+    logStream?.log('[Coogent] All event handlers wired — running cleanup & crash recovery...');
     adkController.cleanupOrphanedWorkers().catch(console.error);
 
     stateManager.recoverFromCrash().then(async (recovered) => {
@@ -651,6 +658,7 @@ export function activate(context: vscode.ExtensionContext): void {
   } catch (err: any) {
     const msg = err?.message || String(err);
     vscode.window.showErrorMessage(`[Coogent] Activation failed: ${msg}`);
+    logStream?.error('[Coogent] Activation error:', err);
     console.error('[Coogent] Activation error:', err);
   }
 }
