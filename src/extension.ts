@@ -15,7 +15,8 @@ import { OutputBufferRegistry } from './adk/OutputBufferRegistry.js';
 import { ContextScoper, CharRatioEncoder } from './context/ContextScoper.js';
 import { ASTFileResolver } from './context/FileResolver.js';
 import { TelemetryLogger } from './logger/TelemetryLogger.js';
-import { LogStream, parseLogLevel } from './logger/LogStream.js';
+import log, { initLog, disposeLog } from './logger/log.js';
+import { parseLogLevel } from './logger/LogStream.js';
 import { GitManager } from './git/GitManager.js';
 import { GitSandboxManager } from './git/GitSandboxManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
@@ -50,7 +51,7 @@ let engine: Engine | undefined;
 let adkController: ADKController | undefined;
 let contextScoper: ContextScoper | undefined;
 let logger: TelemetryLogger | undefined;
-let logStream: LogStream | undefined;
+// LogStream is managed via the singleton in log.ts (initLog / disposeLog)
 let gitManager: GitManager | undefined;
 let gitSandbox: GitSandboxManager | undefined;
 let outputRegistry: OutputBufferRegistry | undefined;
@@ -85,7 +86,7 @@ export async function preFlightGitCheck(
     }
     return { blocked: false };
   } catch (err) {
-    console.warn('[Coogent] Git pre-flight check failed (non-blocking):', err);
+    log.warn('[Coogent] Git pre-flight check failed (non-blocking):', err);
     return { blocked: false };
   }
 }
@@ -97,12 +98,12 @@ export async function preFlightGitCheck(
 export function activate(context: vscode.ExtensionContext): void {
   // Start log stream FIRST — captures everything from this point on
   const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (wsRoot && !logStream) {
+  if (wsRoot) {
     const logConfig = vscode.workspace.getConfiguration('coogent');
     const logLevel = parseLogLevel(logConfig.get<string>('logLevel', 'info'));
     const logMaxSizeMB = logConfig.get<number>('logMaxSizeMB', 5);
     const logMaxBackups = logConfig.get<number>('logMaxBackups', 2);
-    logStream = new LogStream(wsRoot, {
+    initLog(wsRoot, {
       level: logLevel,
       maxLogBytes: logMaxSizeMB * 1024 * 1024,
       maxBackups: logMaxBackups,
@@ -110,7 +111,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 
   // Extension lifecycle starts
-  logStream?.log('[Coogent] Extension activating...');
+  log.info('[Coogent] Extension activating...');
 
   // ─── Register commands FIRST — must always be available ──────────────
   context.subscriptions.push(
@@ -221,10 +222,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceRoot) {
-      logStream?.warn('[Coogent] No workspace folder open — engine not initialized.');
+      log.warn('[Coogent] No workspace folder open — engine not initialized.');
       return;
     }
-    logStream?.log('[Coogent] Workspace root:', workspaceRoot);
+    log.info('[Coogent] Workspace root:', workspaceRoot);
 
 
     // Read extension configuration
@@ -238,14 +239,14 @@ export function activate(context: vscode.ExtensionContext): void {
     const sessionDirName = formatSessionDirName(sessionId);
     const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', sessionDirName);
     currentSessionDir = sessionDir;
-    logStream?.log('[Coogent] Session dir:', sessionDir);
+    log.info('[Coogent] Session dir:', sessionDir);
 
     stateManager = new StateManager(sessionDir);
-    logStream?.log('[Coogent] StateManager initialized');
+    log.info('[Coogent] StateManager initialized');
 
 
     engine = new Engine(stateManager, { workspaceRoot });
-    logStream?.log('[Coogent] Engine initialized');
+    log.info('[Coogent] Engine initialized');
 
 
     gitManager = new GitManager(workspaceRoot);
@@ -258,7 +259,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     const adkAdapter = new AntigravityADKAdapter(workspaceRoot);
     adkController = new ADKController(adkAdapter, workspaceRoot);
-    logStream?.log('[Coogent] ADKController initialized');
+    log.info('[Coogent] ADKController initialized');
 
 
     contextScoper = new ContextScoper({
@@ -269,7 +270,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
 
     logger = new TelemetryLogger(workspaceRoot, '.coogent/logs');
-    logStream?.log('[Coogent] TelemetryLogger initialized');
+    log.info('[Coogent] TelemetryLogger initialized');
 
 
     // Output buffer registry — replaces module-level Map (02-review.md § R11)
@@ -288,7 +289,7 @@ export function activate(context: vscode.ExtensionContext): void {
       maxTreeChars: 8000,
     });
     plannerAgent.setMasterTaskId(sessionDirName);
-    logStream?.log('[Coogent] PlannerAgent initialized');
+    log.info('[Coogent] PlannerAgent initialized');
 
     // ─── Initialize HandoffExtractor & ConsolidationAgent ────────────
     handoffExtractor = new HandoffExtractor();
@@ -303,7 +304,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // ─── Wire Engine → Webview (state:changed) ────────────────────────────
     let branchCreated = false; // Bug 4: ensure branch creation runs once per session
     engine.on('state:changed', (from, to, event) => {
-      logger?.logStateTransition(from, to, event).catch(console.error);
+      logger?.logStateTransition(from, to, event).catch(log.onError);
 
       // Bug 4: Auto-create sandbox branch on first EXECUTING_WORKER transition
       if (to === 'EXECUTING_WORKER' && !branchCreated && gitSandbox) {
@@ -318,10 +319,10 @@ export function activate(context: vscode.ExtensionContext): void {
                 payload: { timestamp: asTimestamp(), level: 'info', message: `🔀 ${result.message}` },
               });
             } else {
-              console.warn('[Coogent] Branch creation skipped:', result.message);
+              log.warn('[Coogent] Branch creation skipped:', result.message);
             }
           })
-          .catch(err => console.error('[Coogent] Auto-branch creation error:', err));
+          .catch(err => log.error('[Coogent] Auto-branch creation error:', err));
       }
 
       // Broadcast STATE_SNAPSHOT to webview on every state transition (Req §3)
@@ -339,7 +340,7 @@ export function activate(context: vscode.ExtensionContext): void {
     engine.on('run:completed', (runbook) => {
       const phaseCount = runbook.phases.length;
       const completedCount = runbook.phases.filter(p => p.status === 'completed').length;
-      console.log(
+      log.info(
         `[Coogent] Run completed: ${completedCount}/${phaseCount} phases completed ` +
         `for project "${runbook.project_id}".`
       );
@@ -356,7 +357,7 @@ export function activate(context: vscode.ExtensionContext): void {
     // ─── Wire Engine → ADK (phase execution) ───────────────────────────
     engine.on('phase:execute', (phase: Phase) => {
       executePhase(phase, workspaceRoot, workerTimeoutMs, sessionDirName).catch((err) => {
-        console.error('[Coogent] Phase execution error:', err);
+        log.error('[Coogent] Phase execution error:', err);
       });
     });
 
@@ -365,7 +366,7 @@ export function activate(context: vscode.ExtensionContext): void {
       // Clone the phase and override prompt for the newly spawned worker
       const healPhase = { ...phase, prompt: augmentedPrompt };
       executePhase(healPhase, workspaceRoot, workerTimeoutMs, sessionDirName).catch((err) => {
-        console.error('[Coogent] Self-healing phase execution error:', err);
+        log.error('[Coogent] Self-healing phase execution error:', err);
       });
     });
 
@@ -378,7 +379,7 @@ export function activate(context: vscode.ExtensionContext): void {
             payload: { timestamp: asTimestamp(), level: 'info', message: res.message }
           });
         }
-      }).catch(console.error);
+      }).catch(log.onError);
     });
 
     // ─── Wire ADK → Engine (worker lifecycle) ──────────────────────────
@@ -391,28 +392,28 @@ export function activate(context: vscode.ExtensionContext): void {
         workerOutputAccumulator.delete(phaseId);
         handoffExtractor.extractHandoff(phaseId, accumulatedOutput, workspaceRoot)
           .then(report => handoffExtractor!.saveHandoff(phaseId, report, currentSessionDir!))
-          .catch(err => console.error('[Coogent] Handoff extraction error:', err));
+          .catch(err => log.error('[Coogent] Handoff extraction error:', err));
       } else {
         workerOutputAccumulator.delete(phaseId);
       }
 
-      engine?.onWorkerExited(phaseId, exitCode).catch(console.error);
+      engine?.onWorkerExited(phaseId, exitCode).catch(log.onError);
     });
 
     adkController.on('worker:timeout', (phaseId) => {
       outputRegistry?.flushAndRemove(phaseId);
-      engine?.onWorkerFailed(phaseId, 'timeout').catch(console.error);
+      engine?.onWorkerFailed(phaseId, 'timeout').catch(log.onError);
     });
 
     adkController.on('worker:crash', (phaseId) => {
       outputRegistry?.flushAndRemove(phaseId);
-      engine?.onWorkerFailed(phaseId, 'crash').catch(console.error);
+      engine?.onWorkerFailed(phaseId, 'crash').catch(log.onError);
     });
 
     // ─── Wire ADK → Webview (output streaming) ────────────────────────
     adkController.on('worker:output', (phaseId, stream, chunk) => {
       outputRegistry?.getOrCreate(phaseId, stream).append(chunk);
-      logger?.logPhaseOutput(phaseId, stream, chunk).catch(console.error);
+      logger?.logPhaseOutput(phaseId, stream, chunk).catch(log.onError);
 
       // Route output to per-phase detail views
       MissionControlPanel.broadcast({
@@ -429,15 +430,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ─── Wire Engine → PlannerAgent ─────────────────────────────────
     engine.on('plan:request', (prompt: string) => {
-      plannerAgent?.plan(prompt).catch(console.error);
+      plannerAgent?.plan(prompt).catch(log.onError);
     });
 
     engine.on('plan:rejected', (prompt: string, feedback: string) => {
-      plannerAgent?.plan(prompt, feedback).catch(console.error);
+      plannerAgent?.plan(prompt, feedback).catch(log.onError);
     });
 
     engine.on('plan:retryParse', () => {
-      plannerAgent?.retryParse().catch(console.error);
+      plannerAgent?.retryParse().catch(log.onError);
     });
 
     // ─── Wire PlannerAgent → Engine ─────────────────────────────────
@@ -464,7 +465,7 @@ export function activate(context: vscode.ExtensionContext): void {
         payload: { code: 'PLAN_ERROR', message: error.message },
       });
       // Abort back to IDLE on planning failure
-      engine?.abort().catch(console.error);
+      engine?.abort().catch(log.onError);
     });
 
     plannerAgent.on('plan:timeout', (hasOutput) => {
@@ -482,7 +483,7 @@ export function activate(context: vscode.ExtensionContext): void {
       });
       // Only abort to IDLE if there's truly nothing to retry from
       if (!canRetry) {
-        engine?.abort().catch(console.error);
+        engine?.abort().catch(log.onError);
       }
       // Otherwise engine stays in PLANNING — user can send CMD_PLAN_RETRY_PARSE
     });
@@ -522,7 +523,7 @@ export function activate(context: vscode.ExtensionContext): void {
           });
         })
         .catch(err => {
-          console.error('[Coogent] Consolidation error:', err);
+          log.error('[Coogent] Consolidation error:', err);
           MissionControlPanel.broadcast({
             type: 'LOG_ENTRY',
             payload: {
@@ -605,12 +606,12 @@ export function activate(context: vscode.ExtensionContext): void {
         }
 
         // Propagate log level to LogStream
-        if (logStream && e.affectsConfiguration('coogent.logLevel')) {
+        if (e.affectsConfiguration('coogent.logLevel')) {
           const newLogLevel = parseLogLevel(updated.get<string>('logLevel', 'info'));
-          logStream.setLevel(newLogLevel);
+          log.setLevel(newLogLevel);
         }
 
-        console.log(
+        log.info(
           `[Coogent] Configuration updated: tokenLimit=${newTokenLimit}, ` +
           `workerTimeoutMs=${newWorkerTimeoutMs}, maxRetries=${newMaxRetries}`
         );
@@ -625,17 +626,17 @@ export function activate(context: vscode.ExtensionContext): void {
       true    // ignoreDeleteEvents
     );
     watcher.onDidChange(() => {
-      console.log(`[Coogent] ${RUNBOOK_FILENAME} changed externally`);
+      log.info(`[Coogent] ${RUNBOOK_FILENAME} changed externally`);
       // Only reload if the engine is in a state that accepts LOAD_RUNBOOK
       if (engine?.getState() === 'IDLE') {
-        engine.loadRunbook().catch(console.error);
+        engine.loadRunbook().catch(log.onError);
       }
     });
     context.subscriptions.push(watcher);
 
     // ─── Orphan cleanup & crash recovery ───────────────────────────────
-    logStream?.log('[Coogent] All event handlers wired — running cleanup & crash recovery...');
-    adkController.cleanupOrphanedWorkers().catch(console.error);
+    log.info('[Coogent] All event handlers wired — running cleanup & crash recovery...');
+    adkController.cleanupOrphanedWorkers().catch(log.onError);
 
     stateManager.recoverFromCrash().then(async (recovered) => {
       if (recovered) {
@@ -644,33 +645,32 @@ export function activate(context: vscode.ExtensionContext): void {
         try {
           await engine?.loadRunbook();
         } catch (err) {
-          console.error('[Coogent] Failed to load recovered runbook:', err);
+          log.error('[Coogent] Failed to load recovered runbook:', err);
         }
         vscode.window.showWarningMessage(
           'Coogent: Recovered from an interrupted session. Review state before continuing.'
         );
       }
-    }).catch(console.error);
+    }).catch(log.onError);
 
 
-    logStream?.log('[Coogent] Extension activated.');
+    log.info('[Coogent] Extension activated.');
 
   } catch (err: any) {
     const msg = err?.message || String(err);
     vscode.window.showErrorMessage(`[Coogent] Activation failed: ${msg}`);
-    logStream?.error('[Coogent] Activation error:', err);
-    console.error('[Coogent] Activation error:', err);
+    log.error('[Coogent] Activation error:', err);
   }
 }
 
 export async function deactivate(): Promise<void> {
-  logStream?.log('[Coogent] Extension deactivating (closing log stream)...');
+  log.info('[Coogent] Extension deactivating (closing log stream)...');
 
   // Graceful shutdown: abort engine + kill all workers in parallel (Req §6)
   await Promise.allSettled([
-    engine?.abort().catch(console.error),
-    adkController?.killAllWorkers().catch(console.error),
-    plannerAgent?.abort().catch(console.error),
+    engine?.abort().catch(log.onError),
+    adkController?.killAllWorkers().catch(log.onError),
+    plannerAgent?.abort().catch(log.onError),
   ]);
 
   // Flush any remaining output buffers
@@ -684,8 +684,7 @@ export async function deactivate(): Promise<void> {
   logger = undefined;
 
   // Dispose log stream LAST so all shutdown messages are captured
-  logStream?.dispose();
-  logStream = undefined;
+  disposeLog();
   gitManager = undefined;
   gitSandbox = undefined;
   outputRegistry = undefined;
@@ -695,7 +694,8 @@ export async function deactivate(): Promise<void> {
   consolidationAgent = undefined;
   currentSessionDir = undefined;
   workerOutputAccumulator.clear();
-  console.log('[Coogent] Extension deactivated.');
+  // Note: log is already disposed at this point, so this line is silent
+  // log.info('[Coogent] Extension deactivated.');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -709,7 +709,7 @@ async function executePhase(
   masterTaskId: string
 ): Promise<void> {
   if (!contextScoper || !adkController || !logger) {
-    engine?.onWorkerFailed(phase.id, 'crash').catch(console.error);
+    engine?.onWorkerFailed(phase.id, 'crash').catch(log.onError);
     return;
   }
 
@@ -737,7 +737,7 @@ async function executePhase(
         phaseId: phase.id,
       },
     });
-    engine?.onWorkerFailed(phase.id, 'crash').catch(console.error);
+    engine?.onWorkerFailed(phase.id, 'crash').catch(log.onError);
     return;
   }
 
@@ -772,7 +772,7 @@ async function executePhase(
     try {
       handoffContext = await handoffExtractor.buildNextContext(phase, currentSessionDir, workspaceRoot);
     } catch (err) {
-      console.error('[Coogent] Failed to build handoff context:', err);
+      log.error('[Coogent] Failed to build handoff context:', err);
     }
   }
 

@@ -9,6 +9,7 @@ import { watch, type FSWatcher } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import type { IADKAdapter, ADKSessionOptions, ADKSessionHandle } from './ADKController.js';
 import type { ConversationMode } from '../types/index.js';
+import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Active Session Tracking (for cancellation)
@@ -97,8 +98,8 @@ export class AntigravityADKAdapter implements IADKAdapter {
 
     async createSession(options: ADKSessionOptions): Promise<ADKSessionHandle> {
         const sessionId = uuidv7();
-        console.log(`[AntigravityADK] Creating session ${sessionId}`);
-        console.log(`[AntigravityADK] Prompt length: ${options.initialPrompt.length} chars`);
+        log.info(`[AntigravityADK] Creating session ${sessionId}`);
+        log.info(`[AntigravityADK] Prompt length: ${options.initialPrompt.length} chars`);
 
         // Handle conversation mode: start new conversation if needed
         if (options.newConversation) {
@@ -108,7 +109,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
         // Track token usage
         const estimatedTokens = Math.ceil(options.initialPrompt.length / CHARS_PER_TOKEN);
         this.conversationTokens += estimatedTokens;
-        console.log(`[AntigravityADK] Conversation tokens: ${this.conversationTokens} (+${estimatedTokens})`);
+        log.info(`[AntigravityADK] Conversation tokens: ${this.conversationTokens} (+${estimatedTokens})`);
 
         // Create a cancellation token for this session
         const cts = new vscode.CancellationTokenSource();
@@ -119,11 +120,11 @@ export class AntigravityADKAdapter implements IADKAdapter {
         const model = await this.tryVscodeLm(cts);
 
         if (model) {
-            console.log(`[AntigravityADK] ✅ vscode.lm primary: using model ${model.name} (${model.id})`);
+            log.info(`[AntigravityADK] ✅ vscode.lm primary: using model ${model.name} (${model.id})`);
             return this.createLmSession(sessionId, model, options, cts);
         }
 
-        console.log(`[AntigravityADK] ⚠️ No vscode.lm model available, using file-based IPC...`);
+        log.info(`[AntigravityADK] ⚠️ No vscode.lm model available, using file-based IPC...`);
 
         // ─── Path B: File-based IPC via Antigravity chat ────────────────────
         return this.createFileIpcSession(sessionId, options, session);
@@ -143,13 +144,13 @@ export class AntigravityADKAdapter implements IADKAdapter {
         try {
             const models = await vscode.lm.selectChatModels({});
             if (models.length > 0) {
-                console.log(`[AntigravityADK] vscode.lm found ${models.length} model(s): ` +
+                log.info(`[AntigravityADK] vscode.lm found ${models.length} model(s): ` +
                     models.map(m => `${m.name}(${m.id})`).join(', '));
                 return models[0];
             }
-            console.log(`[AntigravityADK] vscode.lm: no models returned`);
+            log.info(`[AntigravityADK] vscode.lm: no models returned`);
         } catch (err) {
-            console.log(`[AntigravityADK] vscode.lm unavailable:`, err);
+            log.info(`[AntigravityADK] vscode.lm unavailable:`, err);
         }
         return null;
     }
@@ -173,7 +174,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
 
         const runSession = async () => {
             try {
-                console.log(`[AntigravityADK] LM session ${sessionId}: sending request...`);
+                log.info(`[AntigravityADK] LM session ${sessionId}: sending request...`);
                 const response = await model.sendRequest(messages, {}, cts.token);
                 let chunkCount = 0;
                 let totalChars = 0;
@@ -186,10 +187,10 @@ export class AntigravityADKAdapter implements IADKAdapter {
                 }
 
                 if (!cts.token.isCancellationRequested) {
-                    console.log(`[AntigravityADK] LM session ${sessionId}: completed (${chunkCount} chunks, ${totalChars} chars)`);
+                    log.info(`[AntigravityADK] LM session ${sessionId}: completed (${chunkCount} chunks, ${totalChars} chars)`);
                     exitCallback?.(0);
                 } else {
-                    console.log(`[AntigravityADK] LM session ${sessionId}: cancelled`);
+                    log.info(`[AntigravityADK] LM session ${sessionId}: cancelled`);
                     exitCallback?.(1);
                 }
             } catch (err: unknown) {
@@ -198,7 +199,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
                     return;
                 }
                 const message = err instanceof Error ? err.message : String(err);
-                console.error(`[AntigravityADK] LM session ${sessionId} ERROR:`, message);
+                log.error(`[AntigravityADK] LM session ${sessionId} ERROR:`, message);
                 outputCallback?.('stderr', `[AntigravityADK Error] ${message}\n`);
                 exitCallback?.(1);
             } finally {
@@ -252,7 +253,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
 
                 // Step 2: Write the prompt to the request file
                 await fs.writeFile(requestFile, options.initialPrompt, 'utf-8');
-                console.log(`[AntigravityADK] IPC request written: ${requestFile} (${options.initialPrompt.length} chars)`);
+                log.info(`[AntigravityADK] IPC request written: ${requestFile} (${options.initialPrompt.length} chars)`);
 
                 // Step 3: Build the meta-prompt for the chat agent
                 // Use ABSOLUTE paths — relative paths broke when the agent's
@@ -266,7 +267,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
                 ].join('\n');
 
                 // Step 4: Inject the meta-prompt into the chat panel
-                console.log(`[AntigravityADK] Injecting meta-prompt into chat...`);
+                log.info(`[AntigravityADK] Injecting meta-prompt into chat...`);
                 const injected = await this.injectIntoChatPanel(metaPrompt);
                 if (!injected) {
                     outputCallback?.('stderr', `[AntigravityADK] Failed to inject meta-prompt into chat\n`);
@@ -276,7 +277,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
                 }
 
                 // Step 5: Watch for the response file
-                console.log(`[AntigravityADK] Waiting for response file: ${responseFile}`);
+                log.info(`[AntigravityADK] Waiting for response file: ${responseFile}`);
                 const content = await this.waitForResponseFile(
                     responseFile,
                     session,
@@ -284,7 +285,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
                 );
 
                 if (session.cts.token.isCancellationRequested) {
-                    console.log(`[AntigravityADK] Session ${sessionId} was cancelled`);
+                    log.info(`[AntigravityADK] Session ${sessionId} was cancelled`);
                     exitCallback?.(1);
                     return;
                 }
@@ -292,11 +293,11 @@ export class AntigravityADKAdapter implements IADKAdapter {
                 if (content === null) {
                     const msg = `Timeout waiting for AI response file (${RESPONSE_TIMEOUT_MS / 1000}s). `
                         + `The chat agent may not have written to: ${responseFile}`;
-                    console.error(`[AntigravityADK] ${msg}`);
+                    log.error(`[AntigravityADK] ${msg}`);
                     outputCallback?.('stderr', `[AntigravityADK] ${msg}\n`);
                     exitCallback?.(1);
                 } else {
-                    console.log(`[AntigravityADK] ✅ Response captured: ${content.length} chars`);
+                    log.info(`[AntigravityADK] ✅ Response captured: ${content.length} chars`);
                     outputCallback?.('stdout', content);
                     exitCallback?.(0);
                 }
@@ -306,7 +307,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
                     return;
                 }
                 const message = err instanceof Error ? err.message : String(err);
-                console.error(`[AntigravityADK] IPC session ${sessionId} ERROR:`, message);
+                log.error(`[AntigravityADK] IPC session ${sessionId} ERROR:`, message);
                 outputCallback?.('stderr', `[AntigravityADK Error] ${message}\n`);
                 exitCallback?.(1);
             } finally {
@@ -362,7 +363,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
 
             // Timeout handler
             const timeoutHandle = setTimeout(() => {
-                console.log(`[AntigravityADK] Response file timeout after ${timeoutMs}ms`);
+                log.info(`[AntigravityADK] Response file timeout after ${timeoutMs}ms`);
                 finish(null);
             }, timeoutMs);
 
@@ -395,7 +396,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
 
                     // Size hasn't changed — check if stable long enough
                     if (Date.now() - lastSizeTime >= STABILITY_THRESHOLD_MS) {
-                        console.log(`[AntigravityADK] Response file stable at ${size} bytes`);
+                        log.info(`[AntigravityADK] Response file stable at ${size} bytes`);
                         const content = await fs.readFile(responseFile, 'utf-8');
                         if (content.trim().length > 0) {
                             finish(content);
@@ -416,7 +417,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
                 });
             } catch {
                 // watch might fail — fall through to polling
-                console.log(`[AntigravityADK] fs.watch failed, using polling only`);
+                log.info(`[AntigravityADK] fs.watch failed, using polling only`);
             }
 
             // Poll periodically as a reliable fallback (fs.watch can be unreliable)
@@ -443,10 +444,10 @@ export class AntigravityADKAdapter implements IADKAdapter {
         // Primary: antigravity.sendPromptToAgentPanel (recommended launch pattern)
         try {
             await vscode.commands.executeCommand('antigravity.sendPromptToAgentPanel', prompt);
-            console.log(`[AntigravityADK] ✅ Injected via antigravity.sendPromptToAgentPanel`);
+            log.info(`[AntigravityADK] ✅ Injected via antigravity.sendPromptToAgentPanel`);
             return true;
         } catch (err) {
-            console.warn(`[AntigravityADK] sendPromptToAgentPanel failed:`, err);
+            log.warn(`[AntigravityADK] sendPromptToAgentPanel failed:`, err);
         }
 
         // Fallback: standard VSCode Chat API
@@ -455,10 +456,10 @@ export class AntigravityADKAdapter implements IADKAdapter {
                 mode: 'agent',
                 query: prompt,
             });
-            console.log(`[AntigravityADK] ✅ Injected via workbench.action.chat.open`);
+            log.info(`[AntigravityADK] ✅ Injected via workbench.action.chat.open`);
             return true;
         } catch (err) {
-            console.error(`[AntigravityADK] ❌ All chat injection methods failed:`, err);
+            log.error(`[AntigravityADK] ❌ All chat injection methods failed:`, err);
             return false;
         }
     }
@@ -472,21 +473,21 @@ export class AntigravityADKAdapter implements IADKAdapter {
      * Uses `antigravity.startNewConversation` command with fallback.
      */
     async startNewConversation(): Promise<void> {
-        console.log(`[AntigravityADK] Starting new conversation...`);
+        log.info(`[AntigravityADK] Starting new conversation...`);
 
         try {
             await vscode.commands.executeCommand('antigravity.startNewConversation');
-            console.log(`[AntigravityADK] ✅ New conversation via antigravity.startNewConversation`);
+            log.info(`[AntigravityADK] ✅ New conversation via antigravity.startNewConversation`);
         } catch (err) {
-            console.warn(`[AntigravityADK] startNewConversation failed, trying fallback:`, err);
+            log.warn(`[AntigravityADK] startNewConversation failed, trying fallback:`, err);
             try {
                 // Fallback: open a fresh chat via standard API (no query = fresh)
                 await vscode.commands.executeCommand('workbench.action.chat.open', {
                     mode: 'agent',
                 });
-                console.log(`[AntigravityADK] ✅ New conversation via workbench.action.chat.open`);
+                log.info(`[AntigravityADK] ✅ New conversation via workbench.action.chat.open`);
             } catch (err2) {
-                console.error(`[AntigravityADK] ❌ Failed to start new conversation:`, err2);
+                log.error(`[AntigravityADK] ❌ Failed to start new conversation:`, err2);
             }
         }
 
@@ -513,7 +514,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
             case 'smart': {
                 const estimated = Math.ceil(promptLength / CHARS_PER_TOKEN);
                 const wouldExceed = (this.conversationTokens + estimated) > threshold;
-                console.log(
+                log.info(
                     `[AntigravityADK] Smart switch: current=${this.conversationTokens}, ` +
                     `incoming=${estimated}, threshold=${threshold}, switch=${wouldExceed}`
                 );
@@ -565,7 +566,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
             session.cts.cancel();
             session.cts.dispose();
             this.cleanupSession(handle.sessionId);
-            console.log(`[AntigravityADK] Terminated session ${handle.sessionId}`);
+            log.info(`[AntigravityADK] Terminated session ${handle.sessionId}`);
         }
     }
 
@@ -574,6 +575,6 @@ export class AntigravityADKAdapter implements IADKAdapter {
      * Previously removed all IPC files from the `.coogent/ipc/` directory.
      */
     async cleanupAllIpc(): Promise<void> {
-        console.log('[AntigravityADK] cleanupAllIpc() is no-op (files preserved).');
+        log.info('[AntigravityADK] cleanupAllIpc() is no-op (files preserved).');
     }
 }

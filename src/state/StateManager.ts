@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import Ajv from 'ajv';
 import { RUNBOOK_FILENAME, asTimestamp } from '../types/index.js';
 import type { Runbook, WALEntry, EngineState } from '../types/index.js';
+import log from '../logger/log.js';
 
 // Inline JSON Schema — no external file dependency (esbuild-safe)
 const runbookSchema = {
@@ -227,7 +228,7 @@ export class StateManager {
                 walEntry = JSON.parse(walRaw) as WALEntry;
             } catch (parseErr) {
                 // Corrupt WAL — delete it and log warning (#33)
-                console.warn('[StateManager] Corrupt WAL file (invalid JSON). Deleting...');
+                log.warn('[StateManager] Corrupt WAL file (invalid JSON). Deleting...');
                 await fs.unlink(this.walPath).catch(() => { });
                 await this.cleanOrphanedTmpFiles();
                 return false;
@@ -237,13 +238,13 @@ export class StateManager {
             try {
                 this.validateSchema(walEntry.snapshot);
             } catch (validationErr) {
-                console.warn('[StateManager] WAL snapshot failed schema validation. Deleting WAL...', validationErr);
+                log.warn('[StateManager] WAL snapshot failed schema validation. Deleting WAL...', validationErr);
                 await fs.unlink(this.walPath).catch(() => { });
                 await this.cleanOrphanedTmpFiles();
                 return false;
             }
 
-            console.log(`[StateManager] WAL found (ts=${walEntry.timestamp}). Recovering...`);
+            log.info(`[StateManager] WAL found (ts=${walEntry.timestamp}). Recovering...`);
 
             // MUST acquire lock to avoid race conditions with other writers during recovery
             await this.acquireLock();
@@ -260,7 +261,7 @@ export class StateManager {
                 await fs.unlink(this.walPath).catch(() => { });
 
                 this.cachedRunbook = walEntry.snapshot;
-                console.log('[StateManager] Recovery complete.');
+                log.info('[StateManager] Recovery complete.');
 
                 // Clean orphaned .tmp files after successful recovery (#34)
                 await this.cleanOrphanedTmpFiles();
@@ -269,7 +270,7 @@ export class StateManager {
                 await this.releaseLock();
             }
         } catch (err: unknown) {
-            console.error('[StateManager] Recovery failed:', err);
+            log.error('[StateManager] Recovery failed:', err);
             throw err;
         }
     }
@@ -287,25 +288,25 @@ export class StateManager {
             if (isNaN(pid)) {
                 // Corrupt lockfile — remove it unconditionally
                 await fs.unlink(this.lockPath).catch(() => { });
-                console.log('[StateManager] Removed corrupt lockfile.');
+                log.info('[StateManager] Removed corrupt lockfile.');
                 return;
             }
 
             try {
                 process.kill(pid, 0); // Check if process is alive (signal 0)
                 // Process is alive — lock is legitimate, do NOT remove
-                console.warn(`[StateManager] Lockfile held by live PID ${pid}.`);
+                log.warn(`[StateManager] Lockfile held by live PID ${pid}.`);
             } catch {
                 // Process is dead — lock is stale
                 await fs.unlink(this.lockPath).catch(() => { });
-                console.log(`[StateManager] Removed stale lockfile (dead PID ${pid}).`);
+                log.info(`[StateManager] Removed stale lockfile (dead PID ${pid}).`);
             }
         } catch (err: unknown) {
             if (isNodeError(err) && err.code === 'ENOENT') {
                 return; // No lockfile — nothing to clean
             }
             // Unexpected error — log but don't throw (recovery should proceed)
-            console.warn('[StateManager] cleanStaleLock error:', err);
+            log.warn('[StateManager] cleanStaleLock error:', err);
         }
     }
 
@@ -364,7 +365,7 @@ export class StateManager {
             for (const entry of entries) {
                 if (entry.endsWith('.tmp')) {
                     await fs.unlink(path.join(this.sessionDir, entry)).catch(() => { });
-                    console.log(`[StateManager] Cleaned orphaned temp file: ${entry}`);
+                    log.info(`[StateManager] Cleaned orphaned temp file: ${entry}`);
                 }
             }
         } catch {

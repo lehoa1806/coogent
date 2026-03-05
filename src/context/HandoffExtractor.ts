@@ -5,6 +5,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { Phase, PhaseId } from '../types/index.js';
+import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  HandoffReport Interface
@@ -72,7 +73,7 @@ export class HandoffExtractor {
         const parsed = this.parseHandoffJson(workerOutput);
 
         if (!parsed) {
-            console.warn(
+            log.warn(
                 `[HandoffExtractor] Could not parse handoff JSON from phase ${phaseId}. Returning minimal report.`,
             );
             return {
@@ -93,7 +94,7 @@ export class HandoffExtractor {
             try {
                 fileContents[relPath] = await fs.readFile(absPath, 'utf-8');
             } catch {
-                console.warn(`[HandoffExtractor] Could not read modified file: ${relPath}`);
+                log.warn(`[HandoffExtractor] Could not read modified file: ${relPath}`);
             }
         }
 

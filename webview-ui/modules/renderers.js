@@ -394,6 +394,10 @@ export function resetUI() {
         projectId: '',
         planDraft: null,
         planSlideIndex: 0,
+        phaseOutputs: {},
+        phaseTokenBudgets: {},
+        masterSummary: '',
+        implementationPlan: '',
     });
 
     // ── Zone 1: Header badge ─────────────────────────────────────────────────
@@ -414,8 +418,8 @@ export function resetUI() {
     // ── Zone 3: Phase Navigator ──────────────────────────────────────────────
     const $phaseNavigator = document.getElementById('phase-navigator');
     if ($phaseNavigator) {
-        // Keep the nav-header, clear only the phase items
-        const items = $phaseNavigator.querySelectorAll('.phase-item');
+        // Keep the nav-header, clear phase items AND connectors
+        const items = $phaseNavigator.querySelectorAll('.phase-item, .phase-connector');
         items.forEach(item => item.remove());
     }
 
@@ -453,6 +457,22 @@ export function resetUI() {
 
     const $planPrompt = /** @type {HTMLTextAreaElement} */ (document.getElementById('plan-prompt'));
     if ($planPrompt) $planPrompt.value = '';
+
+    // ── Master Task Section — hide and clear content ───────────────────────────────────
+    const $masterSection = document.getElementById('master-task-section');
+    if ($masterSection) $masterSection.style.display = 'none';
+    const $masterSummary = document.getElementById('master-task-summary');
+    if ($masterSummary) $masterSummary.textContent = '';
+    const $masterPlan = document.getElementById('master-task-plan');
+    if ($masterPlan) {
+        $masterPlan.innerHTML = '';
+        $masterPlan.style.display = 'none';
+    }
+    const $btnToggle = document.getElementById('btn-toggle-plan');
+    if ($btnToggle) {
+        $btnToggle.style.display = 'none';
+        delete $btnToggle.dataset.wired;
+    }
 
     // ── History Drawer — close if open ───────────────────────────────────────
     const $historyDrawer = document.getElementById('history-drawer');

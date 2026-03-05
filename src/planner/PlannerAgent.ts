@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import type { Runbook } from '../types/index.js';
 import { asPhaseId } from '../types/index.js';
 import type { IADKAdapter, ADKSessionHandle } from '../adk/ADKController.js';
+import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Configuration
@@ -112,7 +113,7 @@ export class PlannerAgent extends EventEmitter {
         this.timedOut = false;
         this.lastIpcSessionDir = null;
 
-        console.log(`[PlannerAgent] Starting plan generation (prompt=${prompt.slice(0, 80)}..., hasFeedback=${!!feedback})`);
+        log.info(`[PlannerAgent] Starting plan generation (prompt=${prompt.slice(0, 80)}..., hasFeedback=${!!feedback})`);
 
         try {
             // Step 1: Scan workspace
@@ -121,15 +122,15 @@ export class PlannerAgent extends EventEmitter {
                 this.config.workspaceRoot,
                 this.config.maxTreeDepth
             );
-            console.log(`[PlannerAgent] File tree collected: ${this.fileTree.length} entries`);
+            log.info(`[PlannerAgent] File tree collected: ${this.fileTree.length} entries`);
 
             // Step 2: Build the planner prompt
             const systemPrompt = this.buildPlannerPrompt(prompt, this.fileTree, feedback);
-            console.log(`[PlannerAgent] Prompt built: ${systemPrompt.length} chars`);
+            log.info(`[PlannerAgent] Prompt built: ${systemPrompt.length} chars`);
 
             // Step 3: Spawn the planner worker
             this.emit('plan:status', 'generating', 'AI agent is creating your plan...');
-            console.log(`[PlannerAgent] Creating ADK session...`);
+            log.info(`[PlannerAgent] Creating ADK session...`);
             this.activeSession = await this.adapter.createSession({
                 zeroContext: true,
                 workingDirectory: this.config.workspaceRoot,
@@ -137,7 +138,7 @@ export class PlannerAgent extends EventEmitter {
                 ...(this.masterTaskId !== undefined && { masterTaskId: this.masterTaskId }),
                 phaseNumber: 0, // Planner is always "phase 0" in the IPC directory
             });
-            console.log(`[PlannerAgent] ADK session created: ${this.activeSession.sessionId}`);
+            log.info(`[PlannerAgent] ADK session created: ${this.activeSession.sessionId}`);
 
             // Store session ID for file-based retry
             this.lastIpcSessionDir = this.activeSession.sessionId;
@@ -149,13 +150,13 @@ export class PlannerAgent extends EventEmitter {
                 const hasOutput = this.accumulatedOutput.length > 0;
                 this.lastTimeoutOutput = hasOutput ? this.accumulatedOutput : null;
                 this.timedOut = true; // Suppress duplicate error from exit handler
-                console.error(
+                log.error(
                     `[PlannerAgent] Timeout after ${timeoutMs}ms — ` +
                     `cached ${this.accumulatedOutput.length} chars for retry`
                 );
                 this.emit('plan:status', 'timeout', 'Planner agent timed out');
                 this.emit('plan:timeout', hasOutput);
-                this.abort().catch(console.error);
+                this.abort().catch(log.onError);
             }, timeoutMs);
 
             // Wire output accumulation
@@ -170,14 +171,14 @@ export class PlannerAgent extends EventEmitter {
             // Wire exit handler
             this.activeSession.onExit((exitCode) => {
                 clearTimeout(timeoutHandle);
-                console.log(`[PlannerAgent] Worker exited with code ${exitCode}`);
+                log.info(`[PlannerAgent] Worker exited with code ${exitCode}`);
                 this.activeSession = null;
                 this.onWorkerExited(exitCode);
             });
         } catch (err) {
             this.activeSession = null;
             const error = err instanceof Error ? err : new Error(String(err));
-            console.error(`[PlannerAgent] plan() threw:`, error.message, error.stack);
+            log.error(`[PlannerAgent] plan() threw:`, error.message, error.stack);
             this.emit('plan:status', 'error', error.message);
             this.emit('plan:error', error);
         }
@@ -228,7 +229,7 @@ export class PlannerAgent extends EventEmitter {
     async retryParse(): Promise<void> {
         // Strategy 1: Use cached streaming output (vscode.lm path)
         if (this.lastTimeoutOutput && this.lastTimeoutOutput.trim().length > 0) {
-            console.log(`[PlannerAgent] retryParse() — parsing ${this.lastTimeoutOutput.length} cached chars`);
+            log.info(`[PlannerAgent] retryParse() — parsing ${this.lastTimeoutOutput.length} cached chars`);
             this.emit('plan:status', 'parsing', 'Re-parsing cached output...');
             const parsed = this.extractRunbook(this.lastTimeoutOutput);
             if (parsed) {
@@ -263,7 +264,7 @@ export class PlannerAgent extends EventEmitter {
                 try {
                     const content = await fs.readFile(responseFile, 'utf-8');
                     if (content.trim().length > 0) {
-                        console.log(`[PlannerAgent] retryParse() — read ${content.length} chars from ${responseFile}`);
+                        log.info(`[PlannerAgent] retryParse() — read ${content.length} chars from ${responseFile}`);
                         this.emit('plan:status', 'parsing', 'Parsing response file from disk...');
                         const parsed = this.extractRunbook(content);
                         if (parsed) {
@@ -278,7 +279,7 @@ export class PlannerAgent extends EventEmitter {
                         // Content exists but didn't parse — report what we found
                         const errorMsg = 'Response file exists but does not contain a valid JSON runbook.\n' +
                             `File: ${responseFile}\nFirst 500 chars:\n${content.slice(0, 500)}`;
-                        console.error(`[PlannerAgent] retryParse() FAILED: ${errorMsg}`);
+                        log.error(`[PlannerAgent] retryParse() FAILED: ${errorMsg}`);
                         this.emit('plan:status', 'error', 'Response file found but failed to parse');
                         this.emit('plan:error', new Error(errorMsg));
                         return;
@@ -293,7 +294,7 @@ export class PlannerAgent extends EventEmitter {
         const msg = this.lastIpcSessionDir
             ? 'No response file found on disk yet. The chat agent may still be writing. Try again in a moment.'
             : 'No cached output or response file to parse — please regenerate the plan.';
-        console.warn(`[PlannerAgent] retryParse() — ${msg}`);
+        log.warn(`[PlannerAgent] retryParse() — ${msg}`);
         this.emit('plan:status', 'error', msg);
         this.emit('plan:error', new Error(msg));
     }
@@ -311,13 +312,13 @@ export class PlannerAgent extends EventEmitter {
     // ═══════════════════════════════════════════════════════════════════════════
 
     private onWorkerExited(exitCode: number): void {
-        console.log(`[PlannerAgent] onWorkerExited(${exitCode}), accumulatedOutput (${this.accumulatedOutput.length} chars):\n${this.accumulatedOutput || '(empty)'}\nstderr (${this.accumulatedStderr.length} chars):\n${this.accumulatedStderr || '(empty)'}`);
+        log.info(`[PlannerAgent] onWorkerExited(${exitCode}), accumulatedOutput (${this.accumulatedOutput.length} chars):\n${this.accumulatedOutput || '(empty)'}\nstderr (${this.accumulatedStderr.length} chars):\n${this.accumulatedStderr || '(empty)'}`);
 
         // If timeout already fired, the exit handler is a duplicate from abort().
         // The timeout handler already cached output and emitted plan:timeout.
         // Suppress to avoid undoing the timeout recovery.
         if (this.timedOut) {
-            console.log('[PlannerAgent] Suppressing exit handler — timeout already handled');
+            log.info('[PlannerAgent] Suppressing exit handler — timeout already handled');
             return;
         }
 
@@ -328,7 +329,7 @@ export class PlannerAgent extends EventEmitter {
 
             const detail = this.accumulatedStderr || this.accumulatedOutput || '(no output captured)';
             const errorMsg = `Planner agent exited with code ${exitCode}. Detail: ${detail.slice(0, 500)}`;
-            console.error(`[PlannerAgent] ERROR: ${errorMsg}`);
+            log.error(`[PlannerAgent] ERROR: ${errorMsg}`);
 
             // Emit timeout-style event so the user can attempt retry parse
             this.emit('plan:status', 'timeout', errorMsg);
@@ -338,8 +339,8 @@ export class PlannerAgent extends EventEmitter {
 
         // Parse the accumulated output for a JSON runbook
         this.emit('plan:status', 'parsing', 'Parsing generated plan...');
-        console.log(`[PlannerAgent] Parsing output (${this.accumulatedOutput.length} chars)...`);
-        console.log(`[PlannerAgent] First 300 chars: ${this.accumulatedOutput.slice(0, 300)}`);
+        log.info(`[PlannerAgent] Parsing output (${this.accumulatedOutput.length} chars)...`);
+        log.info(`[PlannerAgent] First 300 chars: ${this.accumulatedOutput.slice(0, 300)}`);
         const parsed = this.extractRunbook(this.accumulatedOutput);
 
         if (!parsed) {
@@ -347,7 +348,7 @@ export class PlannerAgent extends EventEmitter {
             this.planRetryCount = (this.planRetryCount ?? 0) + 1;
             const maxRetries = 2;
             if (this.planRetryCount <= maxRetries) {
-                console.warn(`[PlannerAgent] Malformed JSON — retrying (${this.planRetryCount}/${maxRetries})...`);
+                log.warn(`[PlannerAgent] Malformed JSON — retrying (${this.planRetryCount}/${maxRetries})...`);
                 this.emit('plan:status', 'generating', `Retrying plan generation (attempt ${this.planRetryCount + 1})...`);
                 this.plan(this.userPrompt).catch(err => {
                     this.emit('plan:error', err instanceof Error ? err : new Error(String(err)));
@@ -358,14 +359,14 @@ export class PlannerAgent extends EventEmitter {
             const errorMsg = 'Planner agent did not produce a valid JSON runbook after ' +
                 `${maxRetries + 1} attempts. Raw output:\n` +
                 this.accumulatedOutput.slice(0, 500);
-            console.error(`[PlannerAgent] Parse FAILED: ${errorMsg}`);
+            log.error(`[PlannerAgent] Parse FAILED: ${errorMsg}`);
             this.emit('plan:status', 'error', 'Failed to parse runbook from agent output');
             this.emit('plan:error', new Error(errorMsg));
             return;
         }
 
         this.planRetryCount = 0; // Reset on success
-        console.log(`[PlannerAgent] Plan parsed successfully: ${parsed.phases.length} phases, project_id=${parsed.project_id}`);
+        log.info(`[PlannerAgent] Plan parsed successfully: ${parsed.phases.length} phases, project_id=${parsed.project_id}`);
         this.draft = parsed;
         this.emit('plan:status', 'ready', 'Plan generated successfully');
         this.emit('plan:generated', parsed, this.fileTree);
@@ -419,7 +420,7 @@ export class PlannerAgent extends EventEmitter {
 
             // #43: Check for duplicate phase IDs
             if (seenIds.has(phase.id as number)) {
-                console.warn(`[PlannerAgent] Duplicate phase ID: ${phase.id}`);
+                log.warn(`[PlannerAgent] Duplicate phase ID: ${phase.id}`);
                 return null;
             }
             seenIds.add(phase.id as number);
@@ -431,7 +432,7 @@ export class PlannerAgent extends EventEmitter {
             if (Array.isArray(phase.depends_on)) {
                 for (const dep of phase.depends_on) {
                     if (typeof dep !== 'number' || !seenIds.has(dep)) {
-                        console.warn(`[PlannerAgent] Invalid depends_on reference: phase ${phase.id} depends on non-existent phase ${dep}`);
+                        log.warn(`[PlannerAgent] Invalid depends_on reference: phase ${phase.id} depends on non-existent phase ${dep}`);
                         return null;
                     }
                 }
@@ -442,7 +443,9 @@ export class PlannerAgent extends EventEmitter {
         return {
             project_id: r.project_id as string,
             status: 'idle',
-            current_phase: 0,
+            current_phase: (r.phases as Array<Record<string, unknown>>).length > 0
+                ? ((r.phases as Array<Record<string, unknown>>)[0] as Record<string, unknown>).id as number
+                : 1,
             ...(typeof r.summary === 'string' ? { summary: r.summary } : {}),
             ...(typeof r.implementation_plan === 'string' ? { implementation_plan: r.implementation_plan } : {}),
             phases: (r.phases as Array<Record<string, unknown>>).map((p, i) => ({
@@ -531,6 +534,7 @@ You are a Planning Agent. Your job is to analyze a codebase and break down a use
 4. \`context_files\` must list ONLY the files the worker needs to read for that phase.
 5. Order phases so that dependencies are created before they are referenced.
 6. Use \`success_criteria\` of \`"exit_code:0"\` for all phases unless you have a specific test command.
+7. Phase IDs MUST start from 1 (id: 0 is reserved for the planner). Set \`current_phase\` to the first phase ID (1).
 
 ## JSON Schema
 \`\`\`json
@@ -539,10 +543,10 @@ You are a Planning Agent. Your job is to analyze a codebase and break down a use
   "summary": "<1-2 sentence high-level summary of the entire task>",
   "implementation_plan": "<detailed markdown plan describing the approach, architecture decisions, and key changes>",
   "status": "idle",
-  "current_phase": 0,
+  "current_phase": 1,
   "phases": [
     {
-      "id": 0,
+      "id": 1,
       "status": "pending",
       "prompt": "<detailed instruction for the AI worker>",
       "context_files": ["<relative/path/to/file.ts>"],

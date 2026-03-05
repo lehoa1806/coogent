@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { RUNBOOK_FILENAME } from '../types/index.js';
 import type { Runbook, RunbookStatus } from '../types/index.js';
 import { StateManager } from '../state/StateManager.js';
+import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Types
@@ -189,7 +190,7 @@ export class SessionManager {
         for (const { dir } of toDelete) {
             try {
                 await fs.rm(dir, { recursive: true, force: true });
-                console.log(`[SessionManager] Pruned old session: ${path.basename(dir)}`);
+                log.info(`[SessionManager] Pruned old session: ${path.basename(dir)}`);
             } catch {
                 // Best-effort: skip if deletion fails
             }
@@ -278,7 +279,7 @@ export class SessionManager {
         const dir = this.getSessionDir(sessionId);
         try {
             await fs.rm(dir, { recursive: true, force: true });
-            console.log(`[SessionManager] Deleted session: ${sessionId}`);
+            log.info(`[SessionManager] Deleted session: ${sessionId}`);
         } catch {
             // Best-effort: skip if deletion fails
         }

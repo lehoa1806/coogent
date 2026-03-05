@@ -7,6 +7,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Phase, ConversationSettings } from '../types/index.js';
 import { DEFAULT_CONVERSATION_SETTINGS } from '../types/index.js';
+import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ADK Adapter Interface (decoupled from real ADK)
@@ -123,7 +124,7 @@ export class ADKController extends EventEmitter {
     /** Update conversation settings. */
     setConversationSettings(settings: Partial<ConversationSettings>): void {
         this._conversationSettings = { ...this._conversationSettings, ...settings };
-        console.log(`[ADKController] Conversation mode: ${this._conversationSettings.mode} (threshold: ${this._conversationSettings.smartSwitchTokenThreshold})`);
+        log.info(`[ADKController] Conversation mode: ${this._conversationSettings.mode} (threshold: ${this._conversationSettings.smartSwitchTokenThreshold})`);
     }
 
     /** Set the watchdog idle timeout (ms). 0 disables the watchdog. */
@@ -152,7 +153,7 @@ export class ADKController extends EventEmitter {
     ): Promise<WorkerHandle | null> {
         // Limit check
         if (this.activeWorkers.size >= 4) {
-            console.warn(`[ADKController] Max concurrent workers reached (4). Skipping phase ${phase.id}`);
+            log.warn(`[ADKController] Max concurrent workers reached (4). Skipping phase ${phase.id}`);
             return null;
         }
 
@@ -185,7 +186,7 @@ export class ADKController extends EventEmitter {
                 phaseNumber: phase.id as number,
             });
         } catch (err) {
-            console.error(`[ADKController] Failed to create session for phase ${phase.id}:`, err);
+            log.error(`[ADKController] Failed to create session for phase ${phase.id}:`, err);
             this.emit('worker:crash', phase.id, err instanceof Error ? err : new Error(String(err)));
             return null;
         }
@@ -244,7 +245,7 @@ export class ADKController extends EventEmitter {
         try {
             await this.adapter.terminateSession(worker.handle);
         } catch (err) {
-            console.error(`[ADKController] Terminate failed for phase ${phaseId} (${reason}):`, err);
+            log.error(`[ADKController] Terminate failed for phase ${phaseId} (${reason}):`, err);
         }
 
         // Remove PID from active set
@@ -253,7 +254,7 @@ export class ADKController extends EventEmitter {
         // Clean up PID file
         await this.unregisterPID(phaseId);
 
-        console.log(
+        log.info(
             `[ADKController] Worker terminated (phase=${phaseId}, reason=${reason})`
         );
     }
@@ -284,7 +285,7 @@ export class ADKController extends EventEmitter {
         const pids = Array.from(this.activePids);
         if (pids.length === 0) return;
 
-        console.log(`[ADKController] killAllWorkers: sending SIGTERM to ${pids.length} PIDs: [${pids.join(', ')}]`);
+        log.info(`[ADKController] killAllWorkers: sending SIGTERM to ${pids.length} PIDs: [${pids.join(', ')}]`);
 
         // Phase 1: SIGTERM
         for (const pid of pids) {
@@ -304,7 +305,7 @@ export class ADKController extends EventEmitter {
             try {
                 process.kill(pid, 0); // Check if still alive
                 process.kill(pid, 'SIGKILL');
-                console.log(`[ADKController] Escalated to SIGKILL for PID ${pid}`);
+                log.info(`[ADKController] Escalated to SIGKILL for PID ${pid}`);
             } catch {
                 // Process already dead
             }
@@ -323,10 +324,10 @@ export class ADKController extends EventEmitter {
         if (this._disposed) return;
         this._disposed = true;
 
-        console.log('[ADKController] Disposing — killing all workers...');
+        log.info('[ADKController] Disposing — killing all workers...');
         await this.killAllWorkers();
         this.removeAllListeners();
-        console.log('[ADKController] Disposed.');
+        log.info('[ADKController] Disposed.');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -355,14 +356,14 @@ export class ADKController extends EventEmitter {
                     process.kill(pid, 0); // Check if process exists
                     // #35: SIGTERM first for graceful shutdown
                     process.kill(pid, 'SIGTERM');
-                    console.log(`[ADKController] Sent SIGTERM to orphaned worker PID ${pid}`);
+                    log.info(`[ADKController] Sent SIGTERM to orphaned worker PID ${pid}`);
 
                     // Wait 5s then escalate to SIGKILL if still alive
                     await new Promise<void>(resolve => setTimeout(resolve, 5000));
                     try {
                         process.kill(pid, 0); // Still alive?
                         process.kill(pid, 'SIGKILL');
-                        console.log(`[ADKController] Escalated to SIGKILL for PID ${pid}`);
+                        log.info(`[ADKController] Escalated to SIGKILL for PID ${pid}`);
                     } catch {
                         // Process died from SIGTERM — good
                     }
@@ -398,10 +399,10 @@ export class ADKController extends EventEmitter {
         const worker = this.activeWorkers.get(phaseId);
         if (!worker) return;
 
-        console.warn(`[ADKController] Worker timeout (phase=${phaseId})`);
+        log.warn(`[ADKController] Worker timeout (phase=${phaseId})`);
 
         // Force terminate
-        this.terminateWorker(phaseId, 'TIMEOUT').catch(console.error);
+        this.terminateWorker(phaseId, 'TIMEOUT').catch(log.onError);
         this.emit('worker:timeout', phaseId);
     }
 
@@ -418,7 +419,7 @@ export class ADKController extends EventEmitter {
                 { mode: 0o600 }
             );
         } catch (err) {
-            console.error('[ADKController] PID registration failed:', err);
+            log.error('[ADKController] PID registration failed:', err);
         }
     }
 
@@ -467,13 +468,13 @@ export class ADKController extends EventEmitter {
         if (!worker) return;
 
         const idleSec = Math.round(this.watchdogTimeoutMs / 1000);
-        console.warn(
+        log.warn(
             `[ADKController] Watchdog: worker for phase ${phaseId} ` +
             `(PID ${worker.handle.pid}) has been idle for ${idleSec}s. Killing.`
         );
 
         // Kill the idle process
-        this.terminateWorker(phaseId, 'WATCHDOG_IDLE').catch(console.error);
+        this.terminateWorker(phaseId, 'WATCHDOG_IDLE').catch(log.onError);
         this.emit('worker:timeout', phaseId);
     }
 
@@ -535,10 +536,10 @@ export class MockADKAdapter implements IADKAdapter {
                     outputCallback('stdout', JSON.stringify({
                         project_id: slug,
                         status: 'idle',
-                        current_phase: 0,
+                        current_phase: 1,
                         phases: [
                             {
-                                id: 0,
+                                id: 1,
                                 status: 'pending',
                                 prompt: 'Implement the requested changes based on the user\'s requirements.',
                                 context_files: [],

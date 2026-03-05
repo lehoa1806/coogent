@@ -23,10 +23,10 @@ describe('Coogent Integration: End-to-End Pillar 1', () => {
     const initialRunbook: Runbook = {
         project_id: 'integration-test',
         status: 'idle',
-        current_phase: 0,
+        current_phase: 1,
         phases: [
             {
-                id: asPhaseId(0),
+                id: asPhaseId(1),
                 status: 'pending',
                 prompt: 'Phase 1',
                 context_files: [],
@@ -58,7 +58,7 @@ describe('Coogent Integration: End-to-End Pillar 1', () => {
         engine.on('phase:execute', async (phase: Phase) => {
             const ctx = await scoper.assemble(phase, baseDir);
             if (ctx.ok) {
-                if (phase.id === 0) await logger.initRun(engine.getRunbook()!.project_id);
+                if (phase.id === 1) await logger.initRun(engine.getRunbook()!.project_id);
                 await adk.spawnWorker(phase, ctx.payload, 2000);
             }
         });
@@ -73,7 +73,7 @@ describe('Coogent Integration: End-to-End Pillar 1', () => {
     });
 
     afterEach(async () => {
-        await adk.terminateWorker(0, 'CLEANUP');
+        await adk.terminateWorker(1, 'CLEANUP');
         await fs.rm(baseDir, { recursive: true, force: true });
     });
 
@@ -96,7 +96,7 @@ describe('Coogent Integration: End-to-End Pillar 1', () => {
         // Verify final state
         expect(engine.getState()).toBe('COMPLETED');
         const rb = engine.getRunbook()!;
-        expect(rb.current_phase).toBe(0);
+        expect(rb.current_phase).toBe(1);
         expect(rb.phases[0].status).toBe('completed');
 
         // Verify disk file

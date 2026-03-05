@@ -8,6 +8,7 @@ import type { ContextResult, Phase } from '../types/index.js';
 import { ExplicitFileResolver } from './FileResolver.js';
 import type { FileResolver } from '../types/index.js';
 import { TokenPruner, type PrunableEntry } from './TokenPruner.js';
+import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Token Encoder Interface (pluggable — V2: swap in tiktoken WASM)
@@ -109,7 +110,7 @@ export class ContextScoper {
             try {
                 const stat = await fs.stat(realPath);
                 if (stat.size > MAX_FILE_SIZE) {
-                    console.warn(`[ContextScoper] Skipping file > 10 MB: ${relativePath} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
+                    log.warn(`[ContextScoper] Skipping file > 10 MB: ${relativePath} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
                     continue;
                 }
             } catch {

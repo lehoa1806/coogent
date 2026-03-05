@@ -13,8 +13,7 @@ import { escapeHtml, truncate } from './utils.js';
 //  Phase Navigator
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** @type {HTMLElement | null} */
-let _navigatorEl = null;
+
 
 /**
  * Status display text mapping.
@@ -38,15 +37,15 @@ const STATUS_TEXT = {
  *   3. Toggles the `.active` class to highlight the selected item.
  */
 export function initPhaseNavigator() {
-    _navigatorEl = document.getElementById('phase-navigator');
-    if (!_navigatorEl) return;
+    const navigatorEl = document.getElementById('phase-navigator');
+    if (!navigatorEl) return;
 
     // #89: Ensure ARIA attributes on navigator container
-    _navigatorEl.setAttribute('aria-label', 'Phase navigator');
-    _navigatorEl.setAttribute('role', 'list');
+    navigatorEl.setAttribute('aria-label', 'Phase navigator');
+    navigatorEl.setAttribute('role', 'list');
 
     // Delegated click — avoids re-binding when the list re-renders
-    _navigatorEl.addEventListener('click', (e) => {
+    navigatorEl.addEventListener('click', (e) => {
         const target = /** @type {HTMLElement} */ (e.target);
         const item = target.closest('.phase-item');
         if (!item) return;
@@ -63,8 +62,8 @@ export function initPhaseNavigator() {
         }
 
         // 3. Visual highlight — toggle .active on clicked item
-        _navigatorEl
-            ?.querySelectorAll('.phase-item')
+        navigatorEl
+            .querySelectorAll('.phase-item')
             .forEach((el) => el.classList.remove('active'));
         item.classList.add('active');
     });
@@ -99,7 +98,7 @@ function isPhaseReady(phase, statusMap) {
  * @param {Array<{ id: number, prompt: string, status: string, context_files: string[], success_criteria: string, depends_on?: number[] }>} phases
  */
 export function renderPhaseList(phases) {
-    const container = _navigatorEl || document.getElementById('phase-navigator');
+    const container = document.getElementById('phase-navigator');
     if (!container) return;
 
     // Preserve the nav-header element — only remove phase items and connectors.
@@ -111,8 +110,8 @@ export function renderPhaseList(phases) {
     // Ensure the nav-header always exists (restore if somehow lost)
     if (!container.querySelector('.nav-header')) {
         const header = document.createElement('div');
-        header.className = 'nav-header';
-        header.textContent = 'Phases';
+        header.className = 'nav-header panel-header';
+        header.textContent = 'Phase Navigator';
         container.prepend(header);
     }
 
@@ -200,7 +199,7 @@ export function renderPhaseList(phases) {
  * @param {string} status
  */
 export function updatePhaseItemStatus(phaseId, status) {
-    const container = _navigatorEl || document.getElementById('phase-navigator');
+    const container = document.getElementById('phase-navigator');
     if (!container) return;
 
     const item = container.querySelector(`.phase-item[data-phase-id="${phaseId}"]`);
