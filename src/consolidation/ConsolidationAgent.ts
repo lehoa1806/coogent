@@ -119,18 +119,33 @@ export class ConsolidationAgent {
      */
     formatAsMarkdown(report: ConsolidationReport): string {
         const lines: string[] = [];
+        const ts = new Date(report.generatedAt).toISOString();
 
-        // ── Summary ──────────────────────────────────────────────────────
-        lines.push('# Consolidation Report');
+        // ── Title ──────────────────────────────────────────────────────
+        lines.push('# Walkthrough');
         lines.push('');
+
+        // ── Summary Table ──────────────────────────────────────────────
         lines.push('## Summary');
         lines.push('');
-        lines.push(`- **Project ID:** ${report.projectId}`);
-        lines.push(`- **Total Phases:** ${report.totalPhases}`);
-        lines.push(`- **Successful:** ${report.successfulPhases}`);
-        lines.push(`- **Failed:** ${report.failedPhases}`);
-        lines.push(`- **Skipped:** ${report.skippedPhases}`);
-        lines.push(`- **Generated At:** ${new Date(report.generatedAt).toISOString()}`);
+        lines.push('| Metric | Value |');
+        lines.push('|--------|-------|');
+        lines.push(`| **Project** | ${report.projectId} |`);
+        lines.push(`| **Total Phases** | ${report.totalPhases} |`);
+        lines.push(`| **Successful** | ${report.successfulPhases} |`);
+        lines.push(`| **Failed** | ${report.failedPhases} |`);
+        lines.push(`| **Skipped** | ${report.skippedPhases} |`);
+        lines.push(`| **Generated** | ${ts} |`);
+        lines.push('');
+
+        // ── Overall Status Alert ─────────────────────────────────────
+        if (report.failedPhases > 0) {
+            lines.push('> [!WARNING]');
+            lines.push(`> ${report.failedPhases} phase(s) failed during execution. Review the phase results below for details.`);
+        } else if (report.successfulPhases === report.totalPhases && report.totalPhases > 0) {
+            lines.push('> [!NOTE]');
+            lines.push('> All phases completed successfully.');
+        }
         lines.push('');
 
         // ── Phase Results ────────────────────────────────────────────────
@@ -138,28 +153,36 @@ export class ConsolidationAgent {
         lines.push('');
 
         for (const pr of report.phaseResults) {
-            lines.push(`### Phase ${pr.phaseId}`);
+            const icon = pr.status === 'completed' ? '✅' : pr.status === 'failed' ? '❌' : '⏭️';
+            lines.push(`### ${icon} Phase ${pr.phaseId}`);
             lines.push('');
-            lines.push(`- **Status:** ${pr.status}`);
+            lines.push(`**Status:** ${pr.status}`);
+            lines.push('');
 
             if (pr.decisions.length > 0) {
-                lines.push('- **Decisions:**');
+                lines.push('**Decisions:**');
                 for (const d of pr.decisions) {
-                    lines.push(`  - ${d}`);
+                    lines.push(`- ${d}`);
                 }
             } else {
-                lines.push('- **Decisions:** _None_');
+                lines.push('**Decisions:** _None_');
             }
+            lines.push('');
 
             if (pr.modifiedFiles.length > 0) {
-                lines.push('- **Modified Files:**');
+                lines.push('**Modified Files:**');
+                lines.push('');
+                lines.push('```diff');
                 for (const f of pr.modifiedFiles) {
-                    lines.push(`  - \`${f}\``);
+                    lines.push(`+ ${f}`);
                 }
+                lines.push('```');
             } else {
-                lines.push('- **Modified Files:** _None_');
+                lines.push('**Modified Files:** _None_');
             }
 
+            lines.push('');
+            lines.push('---');
             lines.push('');
         }
 
@@ -167,9 +190,11 @@ export class ConsolidationAgent {
         lines.push('## All Modified Files');
         lines.push('');
         if (report.allModifiedFiles.length > 0) {
+            lines.push('```diff');
             for (const f of report.allModifiedFiles) {
-                lines.push(`- \`${f}\``);
+                lines.push(`+ ${f}`);
             }
+            lines.push('```');
         } else {
             lines.push('_No files were modified._');
         }
@@ -188,13 +213,18 @@ export class ConsolidationAgent {
         lines.push('');
 
         // ── Unresolved Issues ────────────────────────────────────────────
-        lines.push('## Unresolved Issues');
-        lines.push('');
         if (report.unresolvedIssues.length > 0) {
+            lines.push('## Unresolved Issues');
+            lines.push('');
+            lines.push('> [!CAUTION]');
+            lines.push('> The following issues were not resolved during execution:');
+            lines.push('');
             for (const issue of report.unresolvedIssues) {
                 lines.push(`- ${issue}`);
             }
         } else {
+            lines.push('## Unresolved Issues');
+            lines.push('');
             lines.push('_No unresolved issues._');
         }
         lines.push('');

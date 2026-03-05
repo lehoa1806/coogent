@@ -192,6 +192,10 @@ export function attachMarkdownToggleHandlers(container) {
     const mdContainers = container.querySelectorAll('.md-container');
 
     mdContainers.forEach((mdContainer) => {
+        // Guard: skip if handlers already attached (#Issue-10)
+        if (mdContainer.dataset.toggleWired) return;
+        mdContainer.dataset.toggleWired = 'true';
+
         const btns = mdContainer.querySelectorAll('.md-toggle-btn');
         const renderedDiv = /** @type {HTMLElement | null} */ (
             mdContainer.querySelector('.md-rendered')
@@ -209,13 +213,16 @@ export function attachMarkdownToggleHandlers(container) {
                 btn.classList.add('active');
 
                 if (mode === 'preview') {
-                    if (renderedDiv) renderedDiv.style.display = '';
+                    if (renderedDiv) renderedDiv.style.display = 'block';
                     if (rawDiv) rawDiv.style.display = 'none';
                     // Re-render any Mermaid blocks that appeared in view
                     renderMermaidBlocks();
                 } else {
+                    // Issue 10 fix: use explicit 'block' instead of '' (empty
+                    // string) because the CSS rule `.md-raw { display: none }`
+                    // would override a cleared inline style.
                     if (renderedDiv) renderedDiv.style.display = 'none';
-                    if (rawDiv) rawDiv.style.display = '';
+                    if (rawDiv) rawDiv.style.display = 'block';
                 }
             });
         });
