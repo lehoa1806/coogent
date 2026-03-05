@@ -171,4 +171,81 @@ describe('GitSandboxManager', () => {
         expect(result.clean).toBe(false);
         expect(result.message).toContain('No Git repository found');
     });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Best-match repository discovery
+    // ─────────────────────────────────────────────────────────────────────────
+
+    test('finds repo when workspace root is a parent of git repo root', async () => {
+        // Simulate: workspace = /test/workspace, repo = /test/workspace/subdir
+        const parentWorkspace = '/test/workspace';
+        const subRepo = {
+            rootUri: { fsPath: '/test/workspace/subdir' },
+            state: {
+                workingTreeChanges: [],
+                indexChanges: [],
+                HEAD: { name: 'develop' },
+            },
+            createBranch: jest.fn(),
+            checkout: jest.fn(),
+            status: jest.fn(),
+        };
+        mockGitAPI.repositories = [subRepo];
+
+        const parentManager = new GitSandboxManager(parentWorkspace);
+        const result = await parentManager.preFlightCheck();
+        expect(result.clean).toBe(true);
+        expect(result.currentBranch).toBe('develop');
+    });
+
+    test('uses single-repo fallback when paths do not overlap', async () => {
+        // Simulate: workspace = /completely/different, repo = /other/place
+        const nonOverlappingRepo = {
+            rootUri: { fsPath: '/other/place' },
+            state: {
+                workingTreeChanges: [],
+                indexChanges: [],
+                HEAD: { name: 'main' },
+            },
+            createBranch: jest.fn(),
+            checkout: jest.fn(),
+            status: jest.fn(),
+        };
+        mockGitAPI.repositories = [nonOverlappingRepo];
+
+        const oddManager = new GitSandboxManager('/completely/different');
+        const result = await oddManager.preFlightCheck();
+        expect(result.clean).toBe(true);
+        expect(result.currentBranch).toBe('main');
+    });
+
+    test('prefers exact match over descendant when both exist', async () => {
+        const exactRepo = {
+            rootUri: { fsPath: workspaceRoot },
+            state: {
+                workingTreeChanges: [],
+                indexChanges: [],
+                HEAD: { name: 'exact-branch' },
+            },
+            createBranch: jest.fn(),
+            checkout: jest.fn(),
+            status: jest.fn(),
+        };
+        const childRepo = {
+            rootUri: { fsPath: workspaceRoot + '/child' },
+            state: {
+                workingTreeChanges: [],
+                indexChanges: [],
+                HEAD: { name: 'child-branch' },
+            },
+            createBranch: jest.fn(),
+            checkout: jest.fn(),
+            status: jest.fn(),
+        };
+        mockGitAPI.repositories = [childRepo, exactRepo];
+
+        const result = await manager.preFlightCheck();
+        expect(result.clean).toBe(true);
+        expect(result.currentBranch).toBe('exact-branch');
+    });
 });

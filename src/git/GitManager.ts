@@ -17,6 +17,8 @@ import type { GitOperationResult } from '../types/index.js';
  * - Stash/unstash to protect concurrent changes.
  */
 export class GitManager {
+    private gitRoot: string | undefined;
+
     constructor(private readonly workspaceRoot: string) { }
 
     /**
@@ -185,7 +187,33 @@ export class GitManager {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
+     * Resolve the actual Git repository root. Uses `git rev-parse --show-toplevel`
+     * starting from `workspaceRoot` and caches the result. If detection fails,
+     * falls back to `workspaceRoot`.
+     */
+    private async resolveGitRoot(): Promise<string> {
+        if (this.gitRoot) return this.gitRoot;
+
+        try {
+            const { execFile } = await import('node:child_process');
+            const { promisify } = await import('node:util');
+            const execFileAsync = promisify(execFile);
+
+            const { stdout } = await execFileAsync('git', ['rev-parse', '--show-toplevel'], {
+                cwd: this.workspaceRoot,
+                timeout: 10_000,
+            });
+            this.gitRoot = stdout.trim();
+        } catch {
+            // Fall back to workspaceRoot — git operations will still try
+            this.gitRoot = this.workspaceRoot;
+        }
+        return this.gitRoot;
+    }
+
+    /**
      * Execute a git command using execFile (no shell — prevents injection).
+     * Automatically resolves the actual git root for the cwd.
      * See 02-review.md § P1-4.
      */
     private async gitExec(...args: string[]): Promise<string> {
@@ -193,8 +221,10 @@ export class GitManager {
         const { promisify } = await import('node:util');
         const execFileAsync = promisify(execFile);
 
+        const cwd = await this.resolveGitRoot();
+
         const { stdout } = await execFileAsync('git', args, {
-            cwd: this.workspaceRoot,
+            cwd,
             timeout: 30_000,
             maxBuffer: 5 * 1024 * 1024,
         });

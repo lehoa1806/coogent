@@ -61,11 +61,18 @@ export class GitSandboxManager {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Acquire the built-in Git extension and locate the repository matching
-     * this manager's workspace root.
+     * Acquire the built-in Git extension and locate the best-matching
+     * repository for this manager's workspace root.
+     *
+     * Uses a best-match strategy: the repo whose root is the longest
+     * prefix of (or equal to) the workspace root is preferred. If no
+     * prefix match is found, checks whether the workspace root is a
+     * parent of any repo root (common when the VS Code workspace is
+     * opened at a parent directory). Falls back to the sole available
+     * repo in single-repo workspaces.
      *
      * @throws If the Git extension is not installed, not active, or no
-     *         repository is found for the workspace root.
+     *         repository can be matched to the workspace root.
      * @returns An object containing the top-level `api` and the matched `repository`.
      */
     private getGitAPI(): { api: GitAPI; repository: Repository } {
@@ -87,9 +94,7 @@ export class GitSandboxManager {
 
         const api = gitExtension.exports.getAPI(1);
 
-        const repository = api.repositories.find(
-            (repo) => repo.rootUri.fsPath === this.workspaceRoot
-        );
+        const repository = this.findBestRepository(api.repositories);
 
         if (!repository) {
             throw new Error(
@@ -99,6 +104,50 @@ export class GitSandboxManager {
         }
 
         return { api, repository };
+    }
+
+    /**
+     * Find the best-matching repository from the list of available repos.
+     *
+     * Matching priority:
+     * 1. Exact match: `repo.rootUri.fsPath === workspaceRoot`
+     * 2. Repo is ancestor of workspace: `workspaceRoot.startsWith(repoRoot + sep)`
+     *    → pick the deepest (longest path) match.
+     * 3. Workspace is ancestor of repo: `repoRoot.startsWith(workspaceRoot + sep)`
+     *    → pick the deepest (longest path) match.
+     * 4. Single-repo fallback: if only one repo exists, use it.
+     *
+     * @param repositories - All repositories known to the Git extension.
+     * @returns The best-matching repository, or `undefined` if none found.
+     */
+    private findBestRepository(repositories: readonly Repository[]): Repository | undefined {
+        if (repositories.length === 0) return undefined;
+
+        const wsRoot = this.workspaceRoot;
+        const sep = wsRoot.includes('\\') ? '\\' : '/';
+
+        // Priority 1: exact match
+        const exact = repositories.find(r => r.rootUri.fsPath === wsRoot);
+        if (exact) return exact;
+
+        // Priority 2: repo root is an ancestor of the workspace root
+        // (e.g. workspace = /a/b/c, repo = /a/b)
+        const ancestors = repositories
+            .filter(r => wsRoot.startsWith(r.rootUri.fsPath + sep))
+            .sort((a, b) => b.rootUri.fsPath.length - a.rootUri.fsPath.length);
+        if (ancestors.length > 0) return ancestors[0];
+
+        // Priority 3: workspace root is an ancestor of a repo root
+        // (e.g. workspace = /a, repo = /a/b/c — user opened parent dir)
+        const descendants = repositories
+            .filter(r => r.rootUri.fsPath.startsWith(wsRoot + sep))
+            .sort((a, b) => a.rootUri.fsPath.length - b.rootUri.fsPath.length);
+        if (descendants.length > 0) return descendants[0];
+
+        // Priority 4: single-repo fallback
+        if (repositories.length === 1) return repositories[0];
+
+        return undefined;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
