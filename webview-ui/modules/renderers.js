@@ -183,6 +183,9 @@ function updateControlState(s) {
 
     const $btnViewReport = document.getElementById('btn-view-report');
     if ($btnViewReport) $btnViewReport.style.display = isCompleted ? 'inline-block' : 'none';
+
+    const $btnViewPlan = document.getElementById('btn-view-plan');
+    if ($btnViewPlan) $btnViewPlan.style.display = (!isIdle) ? 'inline-block' : 'none';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -397,7 +400,6 @@ export function resetUI() {
         phaseOutputs: {},
         phaseTokenBudgets: {},
         masterSummary: '',
-        implementationPlan: '',
     });
 
     // ── Zone 1: Header badge ─────────────────────────────────────────────────
@@ -463,16 +465,6 @@ export function resetUI() {
     if ($masterSection) $masterSection.style.display = 'none';
     const $masterSummary = document.getElementById('master-task-summary');
     if ($masterSummary) $masterSummary.textContent = '';
-    const $masterPlan = document.getElementById('master-task-plan');
-    if ($masterPlan) {
-        $masterPlan.innerHTML = '';
-        $masterPlan.style.display = 'none';
-    }
-    const $btnToggle = document.getElementById('btn-toggle-plan');
-    if ($btnToggle) {
-        $btnToggle.style.display = 'none';
-        delete $btnToggle.dataset.wired;
-    }
 
     // ── History Drawer — close if open ───────────────────────────────────────
     const $historyDrawer = document.getElementById('history-drawer');
@@ -491,6 +483,9 @@ export function resetUI() {
 
     // ── Report modal — close if open ─────────────────────────────────────────
     hideReportModal();
+
+    // ── Plan modal — close if open ───────────────────────────────────────────
+    hidePlanModal();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -548,6 +543,52 @@ export function hideReportModal() {
     if ($overlay) $overlay.classList.remove('visible');
 
     // Bug 6: Ensure phase info stays visible after closing the modal
+    const $appBody = document.querySelector('.app-body');
+    if ($appBody) /** @type {HTMLElement} */ ($appBody).style.display = 'flex';
+    const $phaseDetails = document.getElementById('phase-details');
+    if ($phaseDetails) $phaseDetails.style.display = '';
+}
+
+/**
+ * Show the implementation plan modal with rendered Markdown.
+ * @param {string} markdown
+ */
+export function showPlanModal(markdown) {
+    const $overlay = document.getElementById('plan-overlay');
+    const $content = document.getElementById('plan-content');
+    if (!$overlay || !$content) return;
+
+    $content.innerHTML = createMarkdownContainer(markdown, 'plan-md');
+    attachMarkdownToggleHandlers($content);
+    renderMermaidBlocks();
+    $overlay.classList.add('visible');
+
+    // Close on overlay click (outside the modal)
+    $overlay.onclick = (e) => {
+        if (e.target === $overlay) hidePlanModal();
+    };
+
+    // Close on Escape key
+    const onEscape = (e) => {
+        if (e.key === 'Escape') {
+            hidePlanModal();
+            document.removeEventListener('keydown', onEscape);
+        }
+    };
+    document.addEventListener('keydown', onEscape);
+
+    // Close button
+    const $close = document.getElementById('btn-close-plan');
+    if ($close) $close.onclick = () => hidePlanModal();
+}
+
+/**
+ * Hide the implementation plan modal.
+ */
+export function hidePlanModal() {
+    const $overlay = document.getElementById('plan-overlay');
+    if ($overlay) $overlay.classList.remove('visible');
+
     const $appBody = document.querySelector('.app-body');
     if ($appBody) /** @type {HTMLElement} */ ($appBody).style.display = 'flex';
     const $phaseDetails = document.getElementById('phase-details');

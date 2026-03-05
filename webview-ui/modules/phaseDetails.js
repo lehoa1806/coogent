@@ -263,8 +263,11 @@ export function renderPhaseDetails(phaseId) {
         ? (phase.prompt.length > 80 ? phase.prompt.slice(0, 80) + '…' : phase.prompt)
         : '';
 
+    const phaseIndex = phases.indexOf(phase);
+    const phaseNumber = phaseIndex >= 0 ? phaseIndex + 1 : phase.id + 1;
+
     $details.innerHTML = `
-        <h3>Phase ${phase.id + 1}: ${escapeHtml(promptPreview)}</h3>
+        <h3>Phase ${phaseNumber}: ${escapeHtml(promptPreview)}</h3>
         <div class="phase-detail-section">
             <h4>Prompt</h4>
             ${createMarkdownContainer(phase.prompt || '', `phase-prompt-md-${phase.id}`)}

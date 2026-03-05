@@ -471,7 +471,6 @@ export function activate(context: vscode.ExtensionContext): void {
         type: 'PLAN_SUMMARY',
         payload: {
           summary: draft.summary || draft.project_id,
-          implementationPlan: draft.implementation_plan || '',
         },
       });
 
