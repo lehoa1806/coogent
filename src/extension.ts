@@ -15,7 +15,7 @@ import { OutputBufferRegistry } from './adk/OutputBufferRegistry.js';
 import { ContextScoper, CharRatioEncoder } from './context/ContextScoper.js';
 import { ASTFileResolver } from './context/FileResolver.js';
 import { TelemetryLogger } from './logger/TelemetryLogger.js';
-import { LogStream } from './logger/LogStream.js';
+import { LogStream, parseLogLevel } from './logger/LogStream.js';
 import { GitManager } from './git/GitManager.js';
 import { GitSandboxManager } from './git/GitSandboxManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
@@ -98,7 +98,15 @@ export function activate(context: vscode.ExtensionContext): void {
   // Start log stream FIRST — captures everything from this point on
   const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
   if (wsRoot && !logStream) {
-    logStream = new LogStream(wsRoot);
+    const logConfig = vscode.workspace.getConfiguration('coogent');
+    const logLevel = parseLogLevel(logConfig.get<string>('logLevel', 'info'));
+    const logMaxSizeMB = logConfig.get<number>('logMaxSizeMB', 5);
+    const logMaxBackups = logConfig.get<number>('logMaxBackups', 2);
+    logStream = new LogStream(wsRoot, {
+      level: logLevel,
+      maxLogBytes: logMaxSizeMB * 1024 * 1024,
+      maxBackups: logMaxBackups,
+    });
   }
 
   // Extension lifecycle starts
@@ -586,6 +594,12 @@ export function activate(context: vscode.ExtensionContext): void {
         // Propagate to Engine
         if (engine) {
           engine.setMaxRetries(newMaxRetries);
+        }
+
+        // Propagate log level to LogStream
+        if (logStream && e.affectsConfiguration('coogent.logLevel')) {
+          const newLogLevel = parseLogLevel(updated.get<string>('logLevel', 'info'));
+          logStream.setLevel(newLogLevel);
         }
 
         console.log(

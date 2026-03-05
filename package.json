@@ -81,6 +81,41 @@
           "type": "string",
           "default": ".coogent/logs",
           "description": "Directory for session logs (relative to workspace root)."
+        },
+        "coogent.logLevel": {
+          "type": "string",
+          "enum": [
+            "trace",
+            "debug",
+            "info",
+            "warn",
+            "error",
+            "off"
+          ],
+          "default": "info",
+          "description": "Minimum log level written to coogent.log. Messages below this level are suppressed.",
+          "enumDescriptions": [
+            "All messages (most verbose)",
+            "Debug and above",
+            "Info and above (default)",
+            "Warnings and errors only",
+            "Errors only",
+            "Disable file logging entirely"
+          ]
+        },
+        "coogent.logMaxSizeMB": {
+          "type": "number",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum log file size in MB before rotation."
+        },
+        "coogent.logMaxBackups": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Number of rotated backup log files to keep."
         }
       }
     }
