@@ -276,7 +276,7 @@ export class PlannerAgent extends EventEmitter {
         const IGNORE = new Set([
             '.git', 'node_modules', '.next', 'dist', 'out', 'build',
             '.cache', '.vscode', '__pycache__', '.DS_Store', 'coverage',
-            '.isolated_agent',
+            '.coogent',
         ]);
 
         const result: string[] = [];

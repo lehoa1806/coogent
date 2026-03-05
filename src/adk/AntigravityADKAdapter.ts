@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { watch, type FSWatcher } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import type { IADKAdapter, ADKSessionOptions, ADKSessionHandle } from './ADKController.js';
+import type { ConversationMode } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Active Session Tracking (for cancellation)
@@ -25,7 +26,7 @@ interface ActiveSession {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** Default timeout for waiting for the response file (ms). */
-const RESPONSE_TIMEOUT_MS = 120_000;
+const RESPONSE_TIMEOUT_MS = 900_000;
 
 /** How often to poll for file-stability (ms). */
 const STABILITY_POLL_MS = 2_000;
@@ -34,7 +35,10 @@ const STABILITY_POLL_MS = 2_000;
 const STABILITY_THRESHOLD_MS = 3_000;
 
 /** IPC subdirectory under the workspace. */
-const IPC_DIR_NAME = '.isolated_agent/ipc';
+const IPC_DIR_NAME = '.coogent/ipc';
+
+/** Approximate chars-per-token ratio for token estimation. */
+const CHARS_PER_TOKEN = 4;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  UUIDv7 Generator (time-ordered, no external dependency)
@@ -83,6 +87,10 @@ export class AntigravityADKAdapter implements IADKAdapter {
     private activeSessions = new Map<string, ActiveSession>();
     private readonly ipcDir: string;
 
+    // ── Conversation mode state ──────────────────────────────────────────────
+    /** Running estimate of tokens pumped into the current conversation. */
+    private conversationTokens = 0;
+
     constructor(private readonly workspaceRoot: string) {
         this.ipcDir = path.join(workspaceRoot, IPC_DIR_NAME);
     }
@@ -91,6 +99,16 @@ export class AntigravityADKAdapter implements IADKAdapter {
         const sessionId = uuidv7();
         console.log(`[AntigravityADK] Creating session ${sessionId}`);
         console.log(`[AntigravityADK] Prompt length: ${options.initialPrompt.length} chars`);
+
+        // Handle conversation mode: start new conversation if needed
+        if (options.newConversation) {
+            await this.startNewConversation();
+        }
+
+        // Track token usage
+        const estimatedTokens = Math.ceil(options.initialPrompt.length / CHARS_PER_TOKEN);
+        this.conversationTokens += estimatedTokens;
+        console.log(`[AntigravityADK] Conversation tokens: ${this.conversationTokens} (+${estimatedTokens})`);
 
         // Create a cancellation token for this session
         const cts = new vscode.CancellationTokenSource();
@@ -211,13 +229,17 @@ export class AntigravityADKAdapter implements IADKAdapter {
         let outputCallback: ((stream: 'stdout' | 'stderr', chunk: string) => void) | null = null;
         let exitCallback: ((code: number) => void) | null = null;
 
-        const requestFile = path.join(this.ipcDir, `request-${sessionId}.md`);
-        const responseFile = path.join(this.ipcDir, `response-${sessionId}.md`);
+        // Build hierarchical path: .coogent/ipc/<masterTaskId>/<subTaskId>/
+        const subDir = options.masterTaskId
+            ? path.join(this.ipcDir, options.masterTaskId, sessionId)
+            : path.join(this.ipcDir, sessionId);
+        const requestFile = path.join(subDir, 'request.md');
+        const responseFile = path.join(subDir, 'response.md');
 
         const runIpcSession = async () => {
             try {
-                // Step 1: Ensure IPC directory exists
-                await fs.mkdir(this.ipcDir, { recursive: true });
+                // Step 1: Ensure sub-task directory exists
+                await fs.mkdir(subDir, { recursive: true });
 
                 // Step 2: Write the prompt to the request file
                 await fs.writeFile(requestFile, options.initialPrompt, 'utf-8');
@@ -430,6 +452,77 @@ export class AntigravityADKAdapter implements IADKAdapter {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    //  Conversation Mode Support
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Start a new conversation in the Antigravity chat panel.
+     * Uses `antigravity.startNewConversation` command with fallback.
+     */
+    async startNewConversation(): Promise<void> {
+        console.log(`[AntigravityADK] Starting new conversation...`);
+
+        try {
+            await vscode.commands.executeCommand('antigravity.startNewConversation');
+            console.log(`[AntigravityADK] ✅ New conversation via antigravity.startNewConversation`);
+        } catch (err) {
+            console.warn(`[AntigravityADK] startNewConversation failed, trying fallback:`, err);
+            try {
+                // Fallback: open a fresh chat via standard API (no query = fresh)
+                await vscode.commands.executeCommand('workbench.action.chat.open', {
+                    mode: 'agent',
+                });
+                console.log(`[AntigravityADK] ✅ New conversation via workbench.action.chat.open`);
+            } catch (err2) {
+                console.error(`[AntigravityADK] ❌ Failed to start new conversation:`, err2);
+            }
+        }
+
+        this.conversationTokens = 0;
+    }
+
+    /**
+     * Determine if a new conversation should be started before the next subtask.
+     * Decision logic:
+     * - `isolated`: always `true`
+     * - `continuous`: always `false`
+     * - `smart`: `true` when cumulative tokens + estimated tokens exceed threshold
+     */
+    shouldStartNewConversation(
+        mode: ConversationMode,
+        promptLength: number,
+        threshold: number
+    ): boolean {
+        switch (mode) {
+            case 'isolated':
+                return true;
+            case 'continuous':
+                return false;
+            case 'smart': {
+                const estimated = Math.ceil(promptLength / CHARS_PER_TOKEN);
+                const wouldExceed = (this.conversationTokens + estimated) > threshold;
+                console.log(
+                    `[AntigravityADK] Smart switch: current=${this.conversationTokens}, ` +
+                    `incoming=${estimated}, threshold=${threshold}, switch=${wouldExceed}`
+                );
+                return wouldExceed;
+            }
+            default:
+                return true;
+        }
+    }
+
+    /** Reset the conversation token counter (called after starting a new conversation). */
+    resetTokenCounter(): void {
+        this.conversationTokens = 0;
+    }
+
+    /** Get the current cumulative token estimate for the active conversation. */
+    getConversationTokens(): number {
+        return this.conversationTokens;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     //  Session Management
     // ═══════════════════════════════════════════════════════════════════════════
 
@@ -451,11 +544,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
 
         this.activeSessions.delete(sessionId);
 
-        // Clean up IPC files (best-effort, don't await)
-        const requestFile = path.join(this.ipcDir, `request-${sessionId}.md`);
-        const responseFile = path.join(this.ipcDir, `response-${sessionId}.md`);
-        fs.unlink(requestFile).catch(() => { });
-        fs.unlink(responseFile).catch(() => { });
+        // IPC files are preserved for audit/debugging — no cleanup.
     }
 
     async terminateSession(handle: ADKSessionHandle): Promise<void> {
@@ -469,22 +558,10 @@ export class AntigravityADKAdapter implements IADKAdapter {
     }
 
     /**
-     * Remove all IPC files from the `.isolated_agent/ipc/` directory.
-     * Call this to clean up after old/stale sessions.
+     * No-op: IPC files are preserved for audit/debugging.
+     * Previously removed all IPC files from the `.coogent/ipc/` directory.
      */
     async cleanupAllIpc(): Promise<void> {
-        try {
-            const entries = await fs.readdir(this.ipcDir);
-            let removed = 0;
-            for (const entry of entries) {
-                if (entry.startsWith('request-') || entry.startsWith('response-')) {
-                    await fs.unlink(path.join(this.ipcDir, entry)).catch(() => { });
-                    removed++;
-                }
-            }
-            console.log(`[AntigravityADK] Cleaned up ${removed} IPC files from ${this.ipcDir}`);
-        } catch {
-            // Directory doesn't exist or is empty — nothing to clean
-        }
+        console.log('[AntigravityADK] cleanupAllIpc() is no-op (files preserved).');
     }
 }

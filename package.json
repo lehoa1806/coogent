@@ -1,10 +1,11 @@
 {
-  "name": "isolated-agent",
-  "displayName": "Isolated-Agent — Multi-Agent Orchestrator",
+  "name": "coogent",
+  "displayName": "Coogent — Multi-Agent Engine",
   "description": "Context Diffusion engine for Antigravity IDE. Breaks massive implementation plans into isolated, zero-context micro-tasks executed by ephemeral AI agents.",
   "version": "0.1.0",
   "publisher": "antigravity",
   "license": "MIT",
+  "icon": "icon.png",
   "engines": {
     "vscode": ">=1.85.0"
   },
@@ -18,32 +19,32 @@
   "contributes": {
     "commands": [
       {
-        "command": "isolated-agent.openMissionControl",
-        "title": "Isolated-Agent: Open Mission Control",
-        "category": "Isolated-Agent"
+        "command": "coogent.openMissionControl",
+        "title": "Coogent: Open Mission Control",
+        "category": "Coogent"
       }
     ],
     "configuration": {
-      "title": "Isolated-Agent",
+      "title": "Coogent",
       "properties": {
-        "isolated-agent.tokenLimit": {
+        "coogent.tokenLimit": {
           "type": "number",
           "default": 100000,
           "description": "Maximum token count for context injection per phase."
         },
-        "isolated-agent.workerTimeoutMs": {
+        "coogent.workerTimeoutMs": {
           "type": "number",
           "default": 300000,
           "description": "Timeout in milliseconds before force-killing a worker agent."
         },
-        "isolated-agent.maxRetries": {
+        "coogent.maxRetries": {
           "type": "number",
           "default": 3,
           "description": "Maximum automatic retries for a failed phase."
         },
-        "isolated-agent.logDirectory": {
+        "coogent.logDirectory": {
           "type": "string",
-          "default": ".isolated_agent/logs",
+          "default": ".coogent/logs",
           "description": "Directory for session logs (relative to workspace root)."
         }
       }
@@ -51,7 +52,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/lehoa1806/Isolated-Agent"
+    "url": "https://github.com/lehoa1806/coogent"
   },
   "scripts": {
     "compile": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --sourcemap",

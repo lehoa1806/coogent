@@ -1,9 +1,8 @@
 import * as fs from 'node:fs/promises';
-import * as fsSync from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { StateManager, RunbookValidationError } from '../StateManager.js';
-import { Runbook, OrchestratorState } from '../../types/index.js';
+import { Runbook, EngineState } from '../../types/index.js';
 
 describe('StateManager', () => {
     let tmpDir: string;
@@ -25,9 +24,9 @@ describe('StateManager', () => {
     };
 
     beforeEach(async () => {
-        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'isolated-agent-test-'));
-        // Simulate session dir: .isolated_agent/ipc/<id>/
-        const sessionDir = path.join(tmpDir, '.isolated_agent', 'ipc', 'test-session');
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-test-'));
+        // Simulate session dir: .coogent/ipc/<id>/
+        const sessionDir = path.join(tmpDir, '.coogent', 'ipc', 'test-session');
         await fs.mkdir(sessionDir, { recursive: true });
         runbookPath = path.join(sessionDir, '.task-runbook.json');
         tmpDir = sessionDir; // Tests use sessionDir as the StateManager root
@@ -61,7 +60,7 @@ describe('StateManager', () => {
 
         // Mutate and save
         runbook!.status = 'completed';
-        await sm.saveRunbook(runbook!, OrchestratorState.EVALUATING);
+        await sm.saveRunbook(runbook!, EngineState.EVALUATING);
 
         // Check if file is updated
         const content = await fs.readFile(runbookPath, 'utf-8');

@@ -1,4 +1,4 @@
-# Contributing to Isolated-Agent
+# Contributing to Coogent
 
 ---
 
@@ -11,7 +11,7 @@
 ## Setup
 
 ```bash
-git clone <repo-url> isolated-agent && cd isolated-agent
+git clone <repo-url> coogent && cd coogent
 npm install
 npm run build
 ```
@@ -31,7 +31,7 @@ src/
 ├── extension.ts          ← Activation entry point
 ├── types/index.ts        ← Types, enums, FSM transition table
 ├── state/                ← StateManager (WAL, mutex, crash recovery)
-├── engine/               ← OrchestratorEngine, Scheduler, SelfHealing
+├── engine/               ← Engine, Scheduler, SelfHealing
 ├── adk/                  ← ADKController, OutputBuffer, OutputBufferRegistry
 ├── context/              ← ContextScoper, FileResolver, TokenPruner
 ├── evaluators/           ← CompilerEvaluator (exit_code, regex, toolchain, test_suite)
@@ -57,7 +57,7 @@ Tests live alongside source in `__tests__/` directories:
 |---|---|---|
 | StateManager | `src/state/__tests__/` | Persistence, WAL, crash recovery |
 | StateManager.race | `src/state/__tests__/` | Concurrent writes, stale locks |
-| OrchestratorEngine | `src/engine/__tests__/` | FSM transitions, parallel DAG |
+| Engine | `src/engine/__tests__/` | FSM transitions, parallel DAG |
 | Scheduler | `src/engine/__tests__/` | DAG scheduling, cycle detection |
 | SelfHealing | `src/engine/__tests__/` | Retry counting, prompt augmentation |
 | ADKController | `src/adk/__tests__/` | Spawn/terminate, timeout race |

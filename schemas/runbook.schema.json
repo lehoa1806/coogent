@@ -1,8 +1,8 @@
 {
     "$schema": "http://json-schema.org/draft-07/schema#",
-    "$id": "https://isolated-agent.dev/schemas/runbook.schema.json",
-    "title": "Isolated-Agent Task Runbook",
-    "description": "The persistent state file for the Isolated-Agent orchestration engine.",
+    "$id": "runbook.schema.json",
+    "title": "Coogent Task Runbook",
+    "description": "The persistent state file for the Coogent execution engine.",
     "type": "object",
     "required": [
         "project_id",

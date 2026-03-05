@@ -5,7 +5,8 @@
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { Phase } from '../types/index.js';
+import type { Phase, ConversationSettings } from '../types/index.js';
+import { DEFAULT_CONVERSATION_SETTINGS } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ADK Adapter Interface (decoupled from real ADK)
@@ -29,6 +30,10 @@ export interface ADKSessionOptions {
     workingDirectory: string;
     /** The prompt to inject (includes file context). */
     initialPrompt: string;
+    /** Whether to start a new conversation before injecting the prompt. */
+    newConversation?: boolean;
+    /** Master task ID — determines the parent folder for IPC files. */
+    masterTaskId?: string;
 }
 
 export interface ADKSessionHandle {
@@ -91,14 +96,26 @@ export declare interface ADKController {
 export class ADKController extends EventEmitter {
     private readonly activeWorkers = new Map<number, WorkerHandle>();
     private readonly pidDir: string;
+    private _conversationSettings: ConversationSettings = { ...DEFAULT_CONVERSATION_SETTINGS };
 
     constructor(
         private readonly adapter: IADKAdapter,
         private readonly workspaceRoot: string,
-        pidDirName = '.isolated_agent/pid'
+        pidDirName = '.coogent/pid'
     ) {
         super();
         this.pidDir = path.join(workspaceRoot, pidDirName);
+    }
+
+    /** Get current conversation settings. */
+    get conversationSettings(): ConversationSettings {
+        return { ...this._conversationSettings };
+    }
+
+    /** Update conversation settings. */
+    setConversationSettings(settings: Partial<ConversationSettings>): void {
+        this._conversationSettings = { ...this._conversationSettings, ...settings };
+        console.log(`[ADKController] Conversation mode: ${this._conversationSettings.mode} (threshold: ${this._conversationSettings.smartSwitchTokenThreshold})`);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -112,7 +129,8 @@ export class ADKController extends EventEmitter {
     async spawnWorker(
         phase: Phase,
         contextPayload: string,
-        timeoutMs = 300_000
+        timeoutMs = 300_000,
+        masterTaskId?: string
     ): Promise<WorkerHandle | null> {
         // Limit check
         if (this.activeWorkers.size >= 4) {
@@ -127,10 +145,23 @@ export class ADKController extends EventEmitter {
 
         const prompt = this.buildInjectionPrompt(phase, contextPayload);
 
+        // Determine if a new conversation should be started based on mode
+        let newConversation = false;
+        const adapterAny = this.adapter as any;
+        if (typeof adapterAny.shouldStartNewConversation === 'function') {
+            newConversation = adapterAny.shouldStartNewConversation(
+                this._conversationSettings.mode,
+                prompt.length,
+                this._conversationSettings.smartSwitchTokenThreshold
+            );
+        }
+
         const handle = await this.adapter.createSession({
             zeroContext: true,
             workingDirectory: this.workspaceRoot,
             initialPrompt: prompt,
+            newConversation,
+            masterTaskId,
         });
 
         // Register PID for orphan recovery

@@ -1,6 +1,35 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/types/index.ts — Core type definitions for the Isolated-Agent extension
+// src/types/index.ts — Core type definitions for the Coogent extension
 // ─────────────────────────────────────────────────────────────────────────────
+
+import type { SessionSummary } from '../session/SessionManager.js';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  0. Conversation Mode — Controls how subtask conversations are managed
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Controls how the AI chat conversation is managed across subtask phases.
+ * - `isolated`: Each subtask opens a new conversation (zero-context, default).
+ * - `continuous`: All subtasks share the same conversation (context carries over).
+ * - `smart`: Automatically starts a new conversation when estimated token usage
+ *   crosses a configurable threshold.
+ */
+export type ConversationMode = 'isolated' | 'continuous' | 'smart';
+
+/** Configuration for conversation management across subtasks. */
+export interface ConversationSettings {
+    /** Active conversation mode. */
+    mode: ConversationMode;
+    /** Token threshold for smart-switch mode (default: 80_000). */
+    smartSwitchTokenThreshold: number;
+}
+
+/** Default conversation settings. */
+export const DEFAULT_CONVERSATION_SETTINGS: ConversationSettings = {
+    mode: 'isolated',
+    smartSwitchTokenThreshold: 80_000,
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  1. Runbook Data Model — .task-runbook.json schema
@@ -63,14 +92,14 @@ export interface Runbook {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  2. Finite State Machine — OrchestratorEngine states and events
+//  2. Finite State Machine — Engine states and events
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * The 9 deterministic states of the orchestration engine.
+ * The 9 deterministic states of the execution engine.
  * See ARCHITECTURE.md § State Machine for the transition diagram.
  */
-export enum OrchestratorState {
+export enum EngineState {
     /** No runbook loaded. Waiting for user action. */
     IDLE = 'IDLE',
     /** Planner agent is generating a runbook from user prompt. */
@@ -92,7 +121,7 @@ export enum OrchestratorState {
 }
 
 /** Events that trigger state transitions. */
-export enum OrchestratorEvent {
+export enum EngineEvent {
     PLAN_REQUEST = 'PLAN_REQUEST',
     PLAN_GENERATED = 'PLAN_GENERATED',
     PLAN_APPROVED = 'PLAN_APPROVED',
@@ -120,49 +149,51 @@ export enum OrchestratorEvent {
  * Missing entries are invalid transitions (silently rejected).
  */
 export const STATE_TRANSITIONS: Record<
-    OrchestratorState,
-    Partial<Record<OrchestratorEvent, OrchestratorState>>
+    EngineState,
+    Partial<Record<EngineEvent, EngineState>>
 > = {
-    [OrchestratorState.IDLE]: {
-        [OrchestratorEvent.PLAN_REQUEST]: OrchestratorState.PLANNING,
-        [OrchestratorEvent.LOAD_RUNBOOK]: OrchestratorState.PARSING,
+    [EngineState.IDLE]: {
+        [EngineEvent.PLAN_REQUEST]: EngineState.PLANNING,
+        [EngineEvent.LOAD_RUNBOOK]: EngineState.PARSING,
+        [EngineEvent.RESET]: EngineState.IDLE,
     },
-    [OrchestratorState.PLANNING]: {
-        [OrchestratorEvent.PLAN_GENERATED]: OrchestratorState.PLAN_REVIEW,
-        [OrchestratorEvent.ABORT]: OrchestratorState.IDLE,
+    [EngineState.PLANNING]: {
+        [EngineEvent.PLAN_GENERATED]: EngineState.PLAN_REVIEW,
+        [EngineEvent.ABORT]: EngineState.IDLE,
     },
-    [OrchestratorState.PLAN_REVIEW]: {
-        [OrchestratorEvent.PLAN_APPROVED]: OrchestratorState.PARSING,
-        [OrchestratorEvent.PLAN_REJECTED]: OrchestratorState.PLANNING,
-        [OrchestratorEvent.ABORT]: OrchestratorState.IDLE,
+    [EngineState.PLAN_REVIEW]: {
+        [EngineEvent.PLAN_APPROVED]: EngineState.PARSING,
+        [EngineEvent.PLAN_REJECTED]: EngineState.PLANNING,
+        [EngineEvent.ABORT]: EngineState.IDLE,
     },
-    [OrchestratorState.PARSING]: {
-        [OrchestratorEvent.PARSE_SUCCESS]: OrchestratorState.READY,
-        [OrchestratorEvent.PARSE_FAILURE]: OrchestratorState.IDLE,
+    [EngineState.PARSING]: {
+        [EngineEvent.PARSE_SUCCESS]: EngineState.READY,
+        [EngineEvent.PARSE_FAILURE]: EngineState.IDLE,
     },
-    [OrchestratorState.READY]: {
-        [OrchestratorEvent.START]: OrchestratorState.EXECUTING_WORKER,
-        [OrchestratorEvent.RESUME]: OrchestratorState.EXECUTING_WORKER,
-        [OrchestratorEvent.RESET]: OrchestratorState.IDLE,
+    [EngineState.READY]: {
+        [EngineEvent.START]: EngineState.EXECUTING_WORKER,
+        [EngineEvent.RESUME]: EngineState.EXECUTING_WORKER,
+        [EngineEvent.RESET]: EngineState.IDLE,
     },
-    [OrchestratorState.EXECUTING_WORKER]: {
-        [OrchestratorEvent.WORKER_EXITED]: OrchestratorState.EVALUATING,
-        [OrchestratorEvent.WORKER_TIMEOUT]: OrchestratorState.ERROR_PAUSED,
-        [OrchestratorEvent.WORKER_CRASH]: OrchestratorState.ERROR_PAUSED,
+    [EngineState.EXECUTING_WORKER]: {
+        [EngineEvent.WORKER_EXITED]: EngineState.EVALUATING,
+        [EngineEvent.WORKER_TIMEOUT]: EngineState.ERROR_PAUSED,
+        [EngineEvent.WORKER_CRASH]: EngineState.ERROR_PAUSED,
+        [EngineEvent.ABORT]: EngineState.IDLE,
     },
-    [OrchestratorState.EVALUATING]: {
-        [OrchestratorEvent.PHASE_PASS]: OrchestratorState.EXECUTING_WORKER,
-        [OrchestratorEvent.ALL_PHASES_PASS]: OrchestratorState.COMPLETED,
-        [OrchestratorEvent.PHASE_FAIL]: OrchestratorState.ERROR_PAUSED,
+    [EngineState.EVALUATING]: {
+        [EngineEvent.PHASE_PASS]: EngineState.EXECUTING_WORKER,
+        [EngineEvent.ALL_PHASES_PASS]: EngineState.COMPLETED,
+        [EngineEvent.PHASE_FAIL]: EngineState.ERROR_PAUSED,
     },
-    [OrchestratorState.ERROR_PAUSED]: {
-        [OrchestratorEvent.RETRY]: OrchestratorState.EXECUTING_WORKER,
-        [OrchestratorEvent.SKIP_PHASE]: OrchestratorState.READY,
-        [OrchestratorEvent.ABORT]: OrchestratorState.IDLE,
-        [OrchestratorEvent.RESET]: OrchestratorState.IDLE,
+    [EngineState.ERROR_PAUSED]: {
+        [EngineEvent.RETRY]: EngineState.EXECUTING_WORKER,
+        [EngineEvent.SKIP_PHASE]: EngineState.READY,
+        [EngineEvent.ABORT]: EngineState.IDLE,
+        [EngineEvent.RESET]: EngineState.IDLE,
     },
-    [OrchestratorState.COMPLETED]: {
-        [OrchestratorEvent.RESET]: OrchestratorState.IDLE,
+    [EngineState.COMPLETED]: {
+        [EngineEvent.RESET]: EngineState.IDLE,
     },
 };
 
@@ -182,7 +213,7 @@ export interface StateSnapshotMessage {
     readonly type: 'STATE_SNAPSHOT';
     readonly payload: {
         runbook: Runbook;
-        engineState: OrchestratorState;
+        engineState: EngineState;
     };
 }
 
@@ -250,6 +281,32 @@ export interface PlanStatusMessage {
     };
 }
 
+/** Session list message — recent sessions for the history drawer. */
+export interface SessionListMessage {
+    readonly type: 'SESSION_LIST';
+    readonly payload: {
+        sessions: readonly SessionSummary[];
+    };
+}
+
+/** Session search results message — filtered sessions from a search query. */
+export interface SessionSearchResultsMessage {
+    readonly type: 'SESSION_SEARCH_RESULTS';
+    readonly payload: {
+        query: string;
+        sessions: readonly SessionSummary[];
+    };
+}
+
+/** Conversation mode sync message — tells the Webview which mode is active. */
+export interface ConversationModeMessage {
+    readonly type: 'CONVERSATION_MODE';
+    readonly payload: {
+        mode: ConversationMode;
+        smartSwitchTokenThreshold: number;
+    };
+}
+
 /** Discriminated union of all messages the Extension Host sends to the Webview. */
 export type HostToWebviewMessage =
     | StateSnapshotMessage
@@ -259,7 +316,10 @@ export type HostToWebviewMessage =
     | ErrorMessage
     | LogEntryMessage
     | PlanDraftMessage
-    | PlanStatusMessage;
+    | PlanStatusMessage
+    | SessionListMessage
+    | SessionSearchResultsMessage
+    | ConversationModeMessage;
 
 // ── Webview → Host (user commands) ──────────────────────────────────────────
 
@@ -285,6 +345,21 @@ export interface CmdSkipPhaseMessage {
     readonly payload: { phaseId: number };
 }
 
+export interface CmdPausePhaseMessage {
+    readonly type: 'CMD_PAUSE_PHASE';
+    readonly payload: { phaseId: number };
+}
+
+export interface CmdStopPhaseMessage {
+    readonly type: 'CMD_STOP_PHASE';
+    readonly payload: { phaseId: number };
+}
+
+export interface CmdRestartPhaseMessage {
+    readonly type: 'CMD_RESTART_PHASE';
+    readonly payload: { phaseId: number };
+}
+
 export interface CmdEditPhaseMessage {
     readonly type: 'CMD_EDIT_PHASE';
     readonly payload: {
@@ -295,7 +370,7 @@ export interface CmdEditPhaseMessage {
 
 export interface CmdLoadRunbookMessage {
     readonly type: 'CMD_LOAD_RUNBOOK';
-    readonly payload: { filePath: string };
+    readonly payload?: { filePath: string };
 }
 
 export interface CmdRequestStateMessage {
@@ -337,6 +412,35 @@ export interface CmdResetMessage {
     readonly type: 'CMD_RESET';
 }
 
+/** User requests the list of recent/past sessions. */
+export interface CmdListSessionsMessage {
+    readonly type: 'CMD_LIST_SESSIONS';
+}
+
+/** User searches past sessions by query string. */
+export interface CmdSearchSessionsMessage {
+    readonly type: 'CMD_SEARCH_SESSIONS';
+    readonly payload: {
+        query: string;
+    };
+}
+
+/** User loads a specific past session by ID. */
+export interface CmdLoadSessionMessage {
+    readonly type: 'CMD_LOAD_SESSION';
+    readonly payload: {
+        sessionId: string;
+    };
+}
+
+/** User sets the conversation mode via the toggle. */
+export interface CmdSetConversationModeMessage {
+    readonly type: 'CMD_SET_CONVERSATION_MODE';
+    readonly payload: {
+        mode: ConversationMode;
+    };
+}
+
 /** Discriminated union of all messages the Webview sends to the Extension Host. */
 export type WebviewToHostMessage =
     | CmdStartMessage
@@ -344,6 +448,9 @@ export type WebviewToHostMessage =
     | CmdAbortMessage
     | CmdRetryMessage
     | CmdSkipPhaseMessage
+    | CmdPausePhaseMessage
+    | CmdStopPhaseMessage
+    | CmdRestartPhaseMessage
     | CmdEditPhaseMessage
     | CmdLoadRunbookMessage
     | CmdResetMessage
@@ -351,7 +458,11 @@ export type WebviewToHostMessage =
     | CmdPlanRequestMessage
     | CmdPlanApproveMessage
     | CmdPlanRejectMessage
-    | CmdPlanEditDraftMessage;
+    | CmdPlanEditDraftMessage
+    | CmdListSessionsMessage
+    | CmdSearchSessionsMessage
+    | CmdLoadSessionMessage
+    | CmdSetConversationModeMessage;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  4. ADK Integration Contracts
@@ -428,7 +539,7 @@ export type ContextResult = ContextResultOk | ContextResultOverBudget;
 /** A WAL entry written before mutating the runbook file. */
 export interface WALEntry {
     readonly timestamp: number;
-    readonly engineState: OrchestratorState;
+    readonly engineState: EngineState;
     readonly currentPhase: number;
     readonly snapshot: Runbook;
 }

@@ -1,4 +1,4 @@
-# Implementation Plan — Isolated-Agent v2.0 (Pillars 1-3)
+# Implementation Plan — Coogent v2.0 (Pillars 1-3)
 
 **Derived from:** [PRD](./PRD.md) · [ARCHITECTURE](./ARCHITECTURE.md) · [TDD](./TDD.md)  
 **Scope:** Pillar 1 (MVP) + Pillar 2 (Intelligent Context) + Pillar 3 (Autonomous Resilience)  
@@ -17,7 +17,7 @@
 | Extension Entry | `src/extension.ts` | ✅ Complete — Wired Engine ↔ ADK ↔ Context ↔ Panel + Watcher |
 | State Manager | `src/state/StateManager.ts` | ✅ Complete — WAL + atomic rename, lockfile, crash recovery, ajv validation |
 | Runbook Schema | `schemas/runbook.schema.json` | ✅ Complete — ajv-compatible JSON Schema |
-| Orchestrator Engine | `src/engine/OrchestratorEngine.ts` | ✅ Complete — 7-state FSM with EventEmitter |
+| Engine | `src/engine/Engine.ts` | ✅ Complete — 7-state FSM with EventEmitter |
 | Context Scoper | `src/context/ContextScoper.ts` | ✅ Complete — Read + Token limit budget + Check payload |
 | ADK Controller | `src/adk/ADKController.ts` | ✅ Complete — Adapter + worker lifecycle + process cleanup |
 | Output Buffer | `src/adk/OutputBuffer.ts` | ✅ Complete — 100ms batched stream flush |
@@ -51,19 +51,19 @@
 - Replace the manual `validateRunbookSchema()` stub with `ajv` validation against `runbook.schema.json`.
 - Add `ajv` as a production dependency.
 
-#### 1.3 `src/engine/OrchestratorEngine.ts`
+#### 1.3 `src/engine/Engine.ts`
 Core state machine — the brain of the extension.
 
 **Responsibilities:**
-- Owns the `OrchestratorState` lifecycle.
+- Owns the `EngineState` lifecycle.
 - Validates transitions against `STATE_TRANSITIONS` table.
 - Emits typed events on state change (EventEmitter pattern).
-- Orchestrates the execute loop: `loadRunbook → start → (scope → spawn → monitor → evaluate → advance)* → complete`.
+- Drives the execute loop: `loadRunbook → start → (scope → spawn → monitor → evaluate → advance)* → complete`.
 - Calls `StateManager.saveRunbook()` after every state mutation.
 
 **Key methods:**
 ```
-transition(event: OrchestratorEvent): OrchestratorState
+transition(event: EngineEvent): EngineState
 loadRunbook(filePath: string): Promise<void>
 start(): Promise<void>
 pause(): void
@@ -83,7 +83,7 @@ skipPhase(phaseId: number): Promise<void>
 npx jest src/state/__tests__/StateManager.test.ts
 
 # State machine transition tests
-npx jest src/engine/__tests__/OrchestratorEngine.test.ts
+npx jest src/engine/__tests__/Engine.test.ts
 ```
 
 ---
@@ -101,7 +101,7 @@ File-reading + tokenization pipeline.
 - Guard: binary detection (magic-number heuristic) → throw `BINARY_FILE`.
 - Read file contents as UTF-8.
 - Calculate token count (use `js-tiktoken` or character-ratio estimator).
-- Check total against `isolated-agent.tokenLimit` config.
+- Check total against `coogent.tokenLimit` config.
 - Assemble delimited payload: `<<<FILE: path>>> ... <<<END FILE>>>`.
 - Return discriminated `ContextResult` (ok | over-budget).
 
@@ -114,11 +114,11 @@ File-reading + tokenization pipeline.
 Session audit logging.
 
 **Responsibilities:**
-- Create `.isolated_agent/logs/<run_id>/` directory tree.
+- Create `.coogent/logs/<run_id>/` directory tree.
 - Append-only JSONL files per phase: `phase-<id>.jsonl`.
 - Log entries: timestamp, event type, prompt sent, output received, exit code, duration.
 - Serialize full session on worker termination.
-- Configurable via `isolated-agent.logDirectory` setting.
+- Configurable via `coogent.logDirectory` setting.
 
 #### 2.3 Verification
 ```bash
@@ -144,7 +144,7 @@ Adapter over the Antigravity ADK API.
 - Orphan prevention: if `activeWorker` exists when spawning, terminate it first.
 - Per-phase timeout with `setTimeout` → `onTimeout()` → force-kill.
 - Wire `onOutput` and `onExit` event callbacks.
-- PID file registry: write to `.isolated_agent/pid/phase-<id>.pid` on spawn, delete on terminate.
+- PID file registry: write to `.coogent/pid/phase-<id>.pid` on spawn, delete on terminate.
 - `cleanupOrphanedWorkers()` — called on extension activation, scans stale PIDs.
 
 **ADK API Strategy:**
@@ -161,7 +161,7 @@ Buffered output streaming to prevent UI thread congestion.
 - Combines chunked output into fewer, larger `WORKER_OUTPUT` messages.
 
 #### 3.3 `src/extension.ts`
-- Wire `OrchestratorEngine` ↔ `ADKController` ↔ `MissionControlPanel`.
+- Wire `Engine` ↔ `ADKController` ↔ `MissionControlPanel`.
 - Route engine events to the Webview via `sendToWebview()`.
 - Route Webview commands to engine methods.
 - Call `ADKController.cleanupOrphanedWorkers()` in `activate()`.
@@ -247,7 +247,7 @@ npx jest src/__tests__/pillar2_3.test.ts
 
 ### ✅ Phase 6 — Autonomous Resilience & QA (Pillar 3)
 
-> **Goal:** Equip the orchestrator to verify outputs against real toolchains, isolate failures, and self-heal automatically. *(Implemented)*
+> **Goal:** Equip the engine to verify outputs against real toolchains, isolate failures, and self-heal automatically. *(Implemented)*
 
 #### 6.1 Native Toolchain Hooks (`src/evaluators/CompilerEvaluator.ts`)
 - Implemented `SuccessEvaluator` chain: Exit Code, Regex Match, Workspace Toolchain commands, and Test Suite output parsing.
@@ -272,10 +272,10 @@ npx jest src/__tests__/pillar2_3.test.ts
 
 ### ✅ Phase 7 — Integration Wiring
 
-> **Goal:** Connect Phase 5 & Phase 6 subsystems into `OrchestratorEngine`, `ADKController`, and `extension.ts` pipelines. *(Implemented)*
+> **Goal:** Connect Phase 5 & Phase 6 subsystems into `Engine`, `ADKController`, and `extension.ts` pipelines. *(Implemented)*
 
 #### 7.1 Engine Wiring
-- Wire `Scheduler`, `EvaluatorRegistry`, and `SelfHealingController` into `OrchestratorEngine`. *(Done)*
+- Wire `Scheduler`, `EvaluatorRegistry`, and `SelfHealingController` into `Engine`. *(Done)*
 - Modify `onWorkerExited` to evaluate dynamically and emit `phase:heal` requests instead of immediately halting. *(Done)*
 
 #### 7.2 Context + ADK Wiring
@@ -310,7 +310,7 @@ graph TD
     subgraph "Phase 1"
         S["schemas/<br/>runbook.schema.json"]
         SM["StateManager<br/>(upgrade ajv)"]
-        OE["OrchestratorEngine"]
+        OE["Engine"]
     end
 
     subgraph "Phase 2"
@@ -377,7 +377,7 @@ graph TD
 ## File Manifest — Pillars 1-3 Structure
 
 ```
-Isolated-Agent/
+Coogent/
 ├── docs/
 │   ├── PRD.md
 │   ├── ARCHITECTURE.md
@@ -392,7 +392,7 @@ Isolated-Agent/
 │   ├── state/
 │   │   └── StateManager.ts          ✅ done
 │   ├── engine/
-│   │   ├── OrchestratorEngine.ts    ← Wired in Phase 7
+│   │   ├── Engine.ts    ← Wired in Phase 7
 │   │   ├── Scheduler.ts             ✅ done (Phase 5)
 │   │   └── SelfHealing.ts           ✅ done (Phase 6)
 │   ├── context/

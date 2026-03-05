@@ -3,14 +3,42 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as fs from 'node:fs/promises';
-import * as fsSync from 'node:fs';
 import * as path from 'node:path';
 import Ajv from 'ajv';
-import type { Runbook, WALEntry, OrchestratorState } from '../types/index.js';
+import type { Runbook, WALEntry, EngineState } from '../types/index.js';
 
-// Load JSON Schema at module level (sync is fine — runs once at import)
-const schemaPath = path.join(__dirname, '..', '..', 'schemas', 'runbook.schema.json');
-const runbookSchema = JSON.parse(fsSync.readFileSync(schemaPath, 'utf-8')) as Record<string, unknown>;
+// Inline JSON Schema — no external file dependency (esbuild-safe)
+const runbookSchema = {
+    $schema: 'http://json-schema.org/draft-07/schema#',
+    title: 'Coogent Task Runbook',
+    type: 'object',
+    required: ['project_id', 'status', 'current_phase', 'phases'],
+    additionalProperties: false,
+    properties: {
+        project_id: { type: 'string', minLength: 1 },
+        status: { type: 'string', enum: ['idle', 'running', 'paused_error', 'completed'] },
+        current_phase: { type: 'integer', minimum: 0 },
+        phases: {
+            type: 'array',
+            minItems: 1,
+            items: {
+                type: 'object',
+                required: ['id', 'status', 'prompt', 'context_files', 'success_criteria'],
+                additionalProperties: false,
+                properties: {
+                    id: { type: 'integer' },
+                    status: { type: 'string', enum: ['pending', 'running', 'completed', 'failed'] },
+                    prompt: { type: 'string', minLength: 1 },
+                    context_files: { type: 'array', items: { type: 'string', minLength: 1 } },
+                    success_criteria: { type: 'string', minLength: 1 },
+                    depends_on: { type: 'array', items: { type: 'integer' } },
+                    evaluator: { type: 'string', enum: ['exit_code', 'regex', 'toolchain', 'test_suite'] },
+                    max_retries: { type: 'integer', minimum: 0 },
+                },
+            },
+        },
+    },
+} as const;
 
 const ajv = new Ajv({ allErrors: true });
 const validateRunbook = ajv.compile<Runbook>(runbookSchema);
@@ -25,9 +53,9 @@ const validateRunbook = ajv.compile<Runbook>(runbookSchema);
  * - Schema validation via ajv on every load.
  *
  * Files are stored under the session directory:
- *   `.isolated_agent/ipc/<id>/.task-runbook.json`
- *   `.isolated_agent/ipc/<id>/.wal.json`
- *   `.isolated_agent/ipc/<id>/.lock`
+ *   `.coogent/ipc/<id>/.task-runbook.json`
+ *   `.coogent/ipc/<id>/.wal.json`
+ *   `.coogent/ipc/<id>/.lock`
  *
  * See ARCHITECTURE.md § Persistence Strategy for the full design.
  * See 02-review.md § R10 — singleton removed for multi-workspace support.
@@ -55,7 +83,7 @@ export class StateManager {
 
     /**
      * @param sessionDir Absolute path to the session directory
-     *   (e.g., `<workspace>/.isolated_agent/ipc/<uuid>/`).
+     *   (e.g., `<workspace>/.coogent/ipc/<uuid>/`).
      */
     constructor(sessionDir: string) {
         this.sessionDir = sessionDir;
@@ -115,7 +143,7 @@ export class StateManager {
      */
     public async saveRunbook(
         runbook: Runbook,
-        engineState: OrchestratorState
+        engineState: EngineState
     ): Promise<void> {
         // Serialize through the in-process mutex (P0-1 fix)
         const ticket = this.writeLock.then(() =>
@@ -131,7 +159,7 @@ export class StateManager {
      */
     private async _doSave(
         runbook: Runbook,
-        engineState: OrchestratorState
+        engineState: EngineState
     ): Promise<void> {
         await this.ensureDir();
         await this.acquireLock();

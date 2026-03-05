@@ -4,7 +4,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { OrchestratorState } from '../types/index.js';
+import type { EngineState } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Log Entry Types
@@ -32,7 +32,7 @@ export interface LogEntry {
  *
  * File structure:
  * ```
- * .isolated_agent/logs/
+ * .coogent/logs/
  *   <run_id>/
  *     engine.jsonl       — state transitions and commands
  *     phase-<id>.jsonl   — per-phase prompts, output, and results
@@ -46,7 +46,7 @@ export class TelemetryLogger {
     private runDir: string | null = null;
     private initialized = false;
 
-    constructor(workspaceRoot: string, logDirName = '.isolated_agent/logs') {
+    constructor(workspaceRoot: string, logDirName = '.coogent/logs') {
         this.logDir = path.join(workspaceRoot, logDirName);
     }
 
@@ -71,8 +71,8 @@ export class TelemetryLogger {
 
     /** Log a state transition. */
     async logStateTransition(
-        from: OrchestratorState,
-        to: OrchestratorState,
+        from: EngineState,
+        to: EngineState,
         event: string
     ): Promise<void> {
         await this.logEngine('info', `${from} → ${to} (${event})`, {

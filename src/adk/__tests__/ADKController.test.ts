@@ -17,7 +17,7 @@ describe('ADKController (with MockADKAdapter)', () => {
     };
 
     beforeEach(async () => {
-        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'isolated-agent-adk-'));
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-adk-'));
         adapter = new MockADKAdapter(500); // 500ms delay to make timeout testing reliable
         controller = new ADKController(adapter, tmpDir);
     });

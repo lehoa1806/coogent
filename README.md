@@ -1,4 +1,4 @@
-# Isolated-Agent — Multi-Agent Orchestrator for Antigravity IDE
+# Coogent — Multi-Agent Engine for Antigravity IDE
 
 > **Context Diffusion, Not Context Collision.**
 > Break massive implementation plans into surgically scoped micro-tasks, each executed by a fresh, zero-context AI agent.
@@ -17,12 +17,12 @@ This is **Context Collapse**: the point at which an agent's cognitive load excee
 
 ## The Solution: Context Diffusion
 
-Isolated-Agent shifts cognitive load from the LLM to a deterministic, local state machine. Instead of one overloaded agent, it **diffuses** the work:
+Coogent shifts cognitive load from the LLM to a deterministic, local state machine. Instead of one overloaded agent, it **diffuses** the work:
 
 1. **Decompose** — A planning agent breaks the objective into serialized micro-tasks.
-2. **Scope** — Each task receives *only* the files it needs, calculated and assembled by the orchestrator.
+2. **Scope** — Each task receives *only* the files it needs, calculated and assembled by the engine.
 3. **Execute** — An ephemeral "Worker" agent is spawned with zero prior history, injected with the scoped context, and given a single focused instruction.
-4. **Evaluate** — The orchestrator verifies success (exit code, regex, compiler output) and terminates the worker.
+4. **Evaluate** — The engine verifies success (exit code, regex, compiler output) and terminates the worker.
 5. **Advance** — A fresh worker is spawned for the next task. Zero token bleed-over.
 
 The result: every agent operates in a **clean room** — maximum signal, zero noise.
@@ -36,7 +36,7 @@ The result: every agent operates in a **clean room** — maximum signal, zero no
 │  ┌──────────────────────────┐  ┌──────────────────────┐ │
 │  │    Extension Host         │◄►│  Webview (Mission    │ │
 │  │  ┌────────────────────┐   │  │   Control Dashboard) │ │
-│  │  │ OrchestratorEngine │   │  └──────────────────────┘ │
+│  │  │ Engine             │   │  └──────────────────────┘ │
 │  │  │  + Scheduler (DAG) │   │       ▲ postMessage       │
 │  │  │  + SelfHealing     │   │       │                   │
 │  │  │  + EvaluatorReg.   │   │       │                   │
@@ -59,7 +59,7 @@ The result: every agent operates in a **clean room** — maximum signal, zero no
 │  └─────────────┘  └─────────────┘  └─────────────┘     │
 │                                                          │
 │  ┌────────────────────────────────────────────────────┐ │
-│  │  .isolated_agent/ipc/<id>/  (session-scoped state) │ │
+│  │  .coogent/ipc/<id>/  (session-scoped state) │ │
 │  └────────────────────────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -68,7 +68,7 @@ See [ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the full technical design.
 
 ## Features
 
-### Pillar 1 — Core Orchestration (MVP) ✅
+### Pillar 1 — Core Engine (MVP) ✅
 - **Mission Control Dashboard** — Webview UI showing phase status, live agent output, and token budgets.
 - **Persistent State Machine** — Deterministic `.task-runbook.json` with crash recovery via write-ahead log.
 - **Programmatic Sandboxing** — Ephemeral agents spawned via the Antigravity ADK with strict context injection.
@@ -96,8 +96,8 @@ See [ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the full technical design.
 
 ```bash
 # Clone the repository
-git clone https://github.com/lehoa1806/Isolated-Agent.git
-cd Isolated-Agent
+git clone https://github.com/lehoa1806/coogent.git
+cd Coogent
 
 # Install dependencies
 npm install
@@ -114,15 +114,15 @@ npm run watch  # in one terminal
 ### Usage
 
 1. Open the Command Palette (`Cmd+Shift+P`)
-2. Run **Isolated-Agent: Open Mission Control**
+2. Run **Coogent: Open Mission Control**
 3. Enter a high-level implementation goal or load an existing `.task-runbook.json`
 4. Review and refine the generated phase breakdown
-5. Press **Start** — the orchestrator handles the rest
+5. Press **Start** — the engine handles the rest
 
 ## Project Structure
 
 ```
-Isolated-Agent/
+Coogent/
 ├── README.md
 ├── CONTRIBUTING.md
 ├── package.json
@@ -146,7 +146,7 @@ Isolated-Agent/
 │   ├── state/
 │   │   └── StateManager.ts        # Runbook I/O, locking, WAL
 │   ├── engine/
-│   │   ├── OrchestratorEngine.ts  # 9-state deterministic FSM
+│   │   ├── Engine.ts              # 9-state deterministic FSM
 │   │   ├── Scheduler.ts           # DAG scheduler (Pillar 2)
 │   │   └── SelfHealing.ts         # Auto-retry controller (Pillar 3)
 │   ├── adk/
@@ -172,7 +172,7 @@ Isolated-Agent/
 ├── webview-ui/
 │   ├── main.js                    # Mission Control frontend logic
 │   └── styles.css                 # Mission Control styles
-└── .isolated_agent/               # All runtime state (gitignored)
+└── .coogent/               # All runtime state (gitignored)
     ├── ipc/<id>/                  # Session-scoped runbook + WAL + lock
     ├── logs/                      # JSONL session logs
     └── pid/                       # PID files for orphan recovery

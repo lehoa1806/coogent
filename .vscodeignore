@@ -1,0 +1,36 @@
+# ── Source & Build Tooling (bundled via esbuild) ──────────────────────────────
+src/**
+tsconfig.json
+esbuild.js
+esbuild-webview.js
+jest.config.js
+
+# ── Webview source (bundled into webview-ui/dist/) ────────────────────────────
+webview-ui/main.js
+webview-ui/modules/**
+
+# ── Dependencies (already bundled) ────────────────────────────────────────────
+node_modules/**
+package-lock.json
+
+# ── Documentation & Metadata (not needed at runtime) ─────────────────────────
+docs/**
+CONTRIBUTING.md
+.git/**
+.gitignore
+
+# ── Development artifacts ─────────────────────────────────────────────────────
+.vscode/**
+.coogent/**
+.DS_Store
+*.vsix
+
+# ── Source maps (strip from production builds) ────────────────────────────────
+**/*.map
+
+# ── Test files ────────────────────────────────────────────────────────────────
+**/__tests__/**
+**/*.test.ts
+**/*.test.js
+**/*.spec.ts
+**/*.spec.js

@@ -1,15 +1,15 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { OrchestratorEngine } from '../OrchestratorEngine.js';
+import { Engine } from '../Engine.js';
 import { StateManager } from '../../state/StateManager.js';
 import type { Runbook } from '../../types/index.js';
 
-describe('OrchestratorEngine', () => {
+describe('Engine', () => {
     let tmpDir: string;
     let runbookPath: string;
     let stateManager: StateManager;
-    let engine: OrchestratorEngine;
+    let engine: Engine;
 
     const validRunbook: Runbook = {
         project_id: 'test-project',
@@ -36,15 +36,15 @@ describe('OrchestratorEngine', () => {
     };
 
     beforeEach(async () => {
-        const base = await fs.mkdtemp(path.join(os.tmpdir(), 'isolated-agent-eng-'));
-        // Simulate session dir: .isolated_agent/ipc/<id>/
-        tmpDir = path.join(base, '.isolated_agent', 'ipc', 'test-session');
+        const base = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-eng-'));
+        // Simulate session dir: .coogent/ipc/<id>/
+        tmpDir = path.join(base, '.coogent', 'ipc', 'test-session');
         await fs.mkdir(tmpDir, { recursive: true });
         runbookPath = path.join(tmpDir, '.task-runbook.json');
         await fs.writeFile(runbookPath, JSON.stringify(validRunbook));
 
         stateManager = new StateManager(tmpDir);
-        engine = new OrchestratorEngine(stateManager);
+        engine = new Engine(stateManager);
     });
 
     afterEach(async () => {

@@ -19,7 +19,7 @@ import type { Phase, HealingAttempt } from '../types/index.js';
  * 5. After `maxRetries`, surface the failure to the user.
  *
  * The SelfHealing controller does NOT make state transitions itself —
- * it produces healing plans that the OrchestratorEngine executes.
+ * it produces healing plans that the Engine executes.
  */
 export class SelfHealingController {
     private readonly maxRetries: number;

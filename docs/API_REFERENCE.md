@@ -1,4 +1,4 @@
-# Isolated-Agent API Reference
+# Coogent API Reference
 
 > **Audience**: Extension developers and contributors.
 
@@ -12,7 +12,7 @@ src/
 ├── types/index.ts            ← All TypeScript types and FSM definition
 ├── state/StateManager.ts     ← Persistence (WAL + atomic rename + mutex)
 ├── engine/
-│   ├── OrchestratorEngine.ts ← 7-state FSM, event-driven orchestration
+│   ├── Engine.ts ← 7-state FSM, event-driven engine
 │   ├── Scheduler.ts          ← DAG-aware phase scheduling
 │   └── SelfHealing.ts        ← Auto-retry with exponential backoff
 ├── adk/
@@ -38,13 +38,13 @@ src/
 
 ## Core Modules
 
-### OrchestratorEngine
+### Engine
 
 The deterministic FSM governing execution lifecycle.
 
 **Constructor**:
 ```typescript
-new OrchestratorEngine(
+new Engine(
     stateManager: StateManager,
     options?: {
         scheduler?: Scheduler;
@@ -58,7 +58,7 @@ new OrchestratorEngine(
 
 | Method | Description |
 |---|---|
-| `getState()` | Returns current `OrchestratorState` |
+| `getState()` | Returns current `EngineState` |
 | `getRunbook()` | Returns loaded `Runbook` or `null` |
 | `transition(event)` | Attempt FSM transition, returns new state or `null` |
 | `loadRunbook(filePath?)` | Load + validate runbook from disk |

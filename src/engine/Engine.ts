@@ -1,11 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/engine/OrchestratorEngine.ts — Deterministic state machine
+// src/engine/Engine.ts — Deterministic state machine
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { EventEmitter } from 'node:events';
 import {
-    OrchestratorState,
-    OrchestratorEvent,
+    EngineState,
+    EngineEvent,
     STATE_TRANSITIONS,
 } from '../types/index.js';
 import type {
@@ -26,7 +26,7 @@ import { EvaluatorRegistry } from '../evaluators/CompilerEvaluator.js';
 
 export interface EngineEvents {
     /** Fired on every state transition. */
-    'state:changed': (from: OrchestratorState, to: OrchestratorState, event: OrchestratorEvent) => void;
+    'state:changed': (from: EngineState, to: EngineState, event: EngineEvent) => void;
     /** Fired when a message should be sent to the Webview. */
     'ui:message': (message: HostToWebviewMessage) => void;
     /** Fired when a phase is ready for execution (may fire multiple times for DAG). */
@@ -39,6 +39,8 @@ export interface EngineEvents {
     'phase:heal': (phase: Phase, augmentedPrompt: string) => void;
     /** Fired when a phase passes and should trigger a Git checkpoint. */
     'phase:checkpoint': (phaseId: number) => void;
+    /** Fired when the user requests force-stopping a specific phase's worker. */
+    'phase:stop': (phaseId: number) => void;
     /** Fired when the user requests a plan from a prompt. */
     'plan:request': (prompt: string, feedback?: string) => void;
     /** Fired when the user rejects a plan and wants re-generation. */
@@ -46,17 +48,17 @@ export interface EngineEvents {
 }
 
 // Typed EventEmitter helper
-export declare interface OrchestratorEngine {
+export declare interface Engine {
     on<K extends keyof EngineEvents>(event: K, listener: EngineEvents[K]): this;
     emit<K extends keyof EngineEvents>(event: K, ...args: Parameters<EngineEvents[K]>): boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  OrchestratorEngine — the brain
+//  Engine — the brain
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Deterministic finite state machine governing the Isolated-Agent execution lifecycle.
+ * Deterministic finite state machine governing the Coogent execution lifecycle.
  *
  * Responsibilities:
  * - Owns and enforces the 9-state lifecycle (including PLANNING + PLAN_REVIEW).
@@ -67,8 +69,8 @@ export declare interface OrchestratorEngine {
  *
  * See ARCHITECTURE.md § State Machine for the transition diagram.
  */
-export class OrchestratorEngine extends EventEmitter {
-    private state: OrchestratorState = OrchestratorState.IDLE;
+export class Engine extends EventEmitter {
+    private state: EngineState = EngineState.IDLE;
     private runbook: Runbook | null = null;
     private pauseRequested = false;
     private planDraft: Runbook | null = null;
@@ -87,7 +89,7 @@ export class OrchestratorEngine extends EventEmitter {
     private evaluatorRegistry: EvaluatorRegistry | null = null;
 
     constructor(
-        private readonly stateManager: StateManager,
+        private stateManager: StateManager,
         options?: {
             scheduler?: Scheduler;
             healer?: SelfHealingController;
@@ -107,7 +109,7 @@ export class OrchestratorEngine extends EventEmitter {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /** Get the current engine state. */
-    public getState(): OrchestratorState {
+    public getState(): EngineState {
         return this.state;
     }
 
@@ -124,7 +126,7 @@ export class OrchestratorEngine extends EventEmitter {
      * Attempt a state transition. Returns the new state, or null if invalid.
      * Invalid transitions are silently rejected with a log.
      */
-    public transition(event: OrchestratorEvent): OrchestratorState | null {
+    public transition(event: EngineEvent): EngineState | null {
         const allowed = STATE_TRANSITIONS[this.state];
         const nextState = allowed[event];
 
@@ -160,26 +162,26 @@ export class OrchestratorEngine extends EventEmitter {
      * Load and validate a runbook from disk.
      */
     public async loadRunbook(filePath?: string): Promise<void> {
-        this.transition(OrchestratorEvent.LOAD_RUNBOOK);
+        this.transition(EngineEvent.LOAD_RUNBOOK);
 
         try {
             // Use StateManager to load + validate
             const runbook = await this.stateManager.loadRunbook();
 
             if (!runbook) {
-                this.transition(OrchestratorEvent.PARSE_FAILURE);
+                this.transition(EngineEvent.PARSE_FAILURE);
                 this.emitUIMessage({
                     type: 'ERROR',
                     payload: {
                         code: 'RUNBOOK_NOT_FOUND',
-                        message: 'No .task-runbook.json found in the session directory (.isolated_agent/ipc/).',
+                        message: 'No .task-runbook.json found in the session directory (.coogent/ipc/).',
                     },
                 });
                 return;
             }
 
             this.runbook = runbook;
-            this.transition(OrchestratorEvent.PARSE_SUCCESS);
+            this.transition(EngineEvent.PARSE_SUCCESS);
 
             // Send full state to the UI
             this.emitUIMessage({
@@ -190,7 +192,7 @@ export class OrchestratorEngine extends EventEmitter {
                 },
             });
         } catch (err: unknown) {
-            this.transition(OrchestratorEvent.PARSE_FAILURE);
+            this.transition(EngineEvent.PARSE_FAILURE);
             this.emitUIMessage({
                 type: 'ERROR',
                 payload: {
@@ -212,7 +214,7 @@ export class OrchestratorEngine extends EventEmitter {
 
         this.pauseRequested = false;
 
-        const result = this.transition(OrchestratorEvent.START);
+        const result = this.transition(EngineEvent.START);
         if (result === null) return;
 
         // Update runbook global status
@@ -243,7 +245,7 @@ export class OrchestratorEngine extends EventEmitter {
      * Abort execution and transition to IDLE.
      */
     public async abort(): Promise<void> {
-        const result = this.transition(OrchestratorEvent.ABORT);
+        const result = this.transition(EngineEvent.ABORT);
         if (result === null) return;
 
         if (this.runbook) {
@@ -262,14 +264,24 @@ export class OrchestratorEngine extends EventEmitter {
 
     /**
      * Reset from COMPLETED → IDLE (start a new chat).
-     * Clears the in-memory runbook so the UI returns to the initial prompt view.
+     * Clears all in-memory state so the UI returns to the initial prompt view.
+     * If a new StateManager is provided, the engine switches to that session
+     * directory so the next loadRunbook() won't reload the old session.
      */
-    public async reset(): Promise<void> {
-        const result = this.transition(OrchestratorEvent.RESET);
+    public async reset(newStateManager?: StateManager): Promise<void> {
+        const result = this.transition(EngineEvent.RESET);
         if (result === null) return;
 
-        // Clear internal state for a fresh start (in-memory only, no file writes)
+        // Clear ALL internal state for a fresh start
         this.runbook = null;
+        this.planDraft = null;
+        this.planPrompt = '';
+        this.activeWorkerCount = 0;
+
+        // Switch to a fresh session directory so loadRunbook() starts clean
+        if (newStateManager) {
+            this.stateManager = newStateManager;
+        }
 
         this.emitUIMessage({
             type: 'LOG_ENTRY',
@@ -279,6 +291,48 @@ export class OrchestratorEngine extends EventEmitter {
                 message: 'Session reset. Ready for a new chat.',
             },
         });
+    }
+
+    /**
+     * Switch to a different session by replacing the StateManager.
+     * Only allowed when the engine is in IDLE state to prevent data loss.
+     * After switching, automatically loads the runbook from the new session.
+     */
+    public async switchSession(newStateManager: StateManager): Promise<void> {
+        // Allow switching from any non-executing state
+        const safeToSwitch = new Set([
+            EngineState.IDLE,
+            EngineState.READY,
+            EngineState.COMPLETED,
+            EngineState.ERROR_PAUSED,
+            EngineState.PLAN_REVIEW,
+        ]);
+
+        if (!safeToSwitch.has(this.state)) {
+            this.emitUIMessage({
+                type: 'LOG_ENTRY',
+                payload: {
+                    timestamp: Date.now(),
+                    level: 'warn',
+                    message: 'Cannot switch session: engine is currently executing. Abort first.',
+                },
+            });
+            return;
+        }
+
+        // Auto-reset to IDLE if not already there
+        if (this.state !== EngineState.IDLE) {
+            this.state = EngineState.IDLE;
+        }
+
+        this.stateManager = newStateManager;
+        this.runbook = null;
+        this.planDraft = null;
+        this.planPrompt = '';
+        this.activeWorkerCount = 0;
+
+        // Load the runbook from the new session
+        await this.loadRunbook();
     }
 
     /**
@@ -294,7 +348,7 @@ export class OrchestratorEngine extends EventEmitter {
         phase.status = 'pending';
         this.runbook.current_phase = phaseId;
 
-        const result = this.transition(OrchestratorEvent.RETRY);
+        const result = this.transition(EngineEvent.RETRY);
         if (result === null) return;
 
         this.runbook.status = 'running';
@@ -315,7 +369,7 @@ export class OrchestratorEngine extends EventEmitter {
         phase.status = 'completed'; // Mark as skipped (completed)
         this.runbook.current_phase = phaseId + 1;
 
-        this.transition(OrchestratorEvent.SKIP_PHASE);
+        this.transition(EngineEvent.SKIP_PHASE);
         await this.persist();
 
         this.emitUIMessage({
@@ -348,6 +402,83 @@ export class OrchestratorEngine extends EventEmitter {
         });
     }
 
+    /**
+     * Pause a specific phase — prevents its next dispatch after current worker completes.
+     * Emits a LOG_ENTRY so the user sees immediate feedback.
+     */
+    public pausePhase(phaseId: number): void {
+        this.pauseRequested = true;
+        this.emitUIMessage({
+            type: 'LOG_ENTRY',
+            payload: {
+                timestamp: Date.now(),
+                level: 'info',
+                message: `Pause requested for phase #${phaseId} — will halt after current worker completes.`,
+            },
+        });
+    }
+
+    /**
+     * Stop (force-terminate) the worker for a specific phase.
+     * Marks the phase as failed and emits a worker failure event.
+     */
+    public async stopPhase(phaseId: number): Promise<void> {
+        if (!this.runbook) return;
+
+        const phase = this.runbook.phases.find(p => p.id === phaseId);
+        if (!phase || phase.status !== 'running') return;
+
+        // Emit an event that ADKController will listen to for force-termination
+        this.emit('phase:stop', phaseId);
+
+        this.emitUIMessage({
+            type: 'LOG_ENTRY',
+            payload: {
+                timestamp: Date.now(),
+                level: 'warn',
+                message: `Stop requested for phase #${phaseId} — terminating worker.`,
+            },
+        });
+    }
+
+    /**
+     * Restart a phase — reset its status and re-dispatch.
+     * Works for failed, completed, or pending phases.
+     */
+    public async restartPhase(phaseId: number): Promise<void> {
+        if (!this.runbook) return;
+
+        const phase = this.runbook.phases.find(p => p.id === phaseId);
+        if (!phase) return;
+
+        // Only restart if not currently running
+        if (phase.status === 'running') return;
+
+        phase.status = 'pending';
+        this.runbook.current_phase = phaseId;
+        this.healer.clearAttempts(phaseId);
+
+        // If we're in ERROR_PAUSED, transition via RETRY to get back to EXECUTING_WORKER
+        if (this.state === EngineState.ERROR_PAUSED) {
+            const result = this.transition(EngineEvent.RETRY);
+            if (result === null) return;
+        }
+
+        this.runbook.status = 'running';
+        await this.persist();
+
+        this.emitUIMessage({
+            type: 'LOG_ENTRY',
+            payload: {
+                timestamp: Date.now(),
+                level: 'info',
+                message: `Restarting phase #${phaseId} from scratch.`,
+            },
+        });
+
+        this.dispatchCurrentPhase();
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  Planning Commands — Conversational Runbook Generation
     // ═══════════════════════════════════════════════════════════════════════════
@@ -360,7 +491,7 @@ export class OrchestratorEngine extends EventEmitter {
         this.planPrompt = prompt;
         this.planDraft = null;
 
-        const result = this.transition(OrchestratorEvent.PLAN_REQUEST);
+        const result = this.transition(EngineEvent.PLAN_REQUEST);
         if (result === null) return;
 
         this.emitUIMessage({
@@ -385,7 +516,7 @@ export class OrchestratorEngine extends EventEmitter {
     public planGenerated(draft: Runbook, fileTree: string[]): void {
         this.planDraft = draft;
 
-        const result = this.transition(OrchestratorEvent.PLAN_GENERATED);
+        const result = this.transition(EngineEvent.PLAN_GENERATED);
         if (result === null) return;
 
         this.emitUIMessage({
@@ -415,25 +546,25 @@ export class OrchestratorEngine extends EventEmitter {
         await this.stateManager.saveRunbook(this.planDraft, this.state);
 
         // Transition to PARSING and load the saved runbook
-        const result = this.transition(OrchestratorEvent.PLAN_APPROVED);
+        const result = this.transition(EngineEvent.PLAN_APPROVED);
         if (result === null) return;
 
         // Load and validate the saved runbook (reuses existing loadRunbook logic)
         try {
             const runbook = await this.stateManager.loadRunbook();
             if (!runbook) {
-                this.transition(OrchestratorEvent.PARSE_FAILURE);
+                this.transition(EngineEvent.PARSE_FAILURE);
                 return;
             }
             this.runbook = runbook;
-            this.transition(OrchestratorEvent.PARSE_SUCCESS);
+            this.transition(EngineEvent.PARSE_SUCCESS);
 
             this.emitUIMessage({
                 type: 'STATE_SNAPSHOT',
                 payload: { runbook: this.runbook, engineState: this.state },
             });
         } catch (err) {
-            this.transition(OrchestratorEvent.PARSE_FAILURE);
+            this.transition(EngineEvent.PARSE_FAILURE);
             this.emitUIMessage({
                 type: 'ERROR',
                 payload: {
@@ -449,7 +580,7 @@ export class OrchestratorEngine extends EventEmitter {
      * Transitions PLAN_REVIEW → PLANNING and emits 'plan:rejected'.
      */
     public planRejected(feedback: string): void {
-        const result = this.transition(OrchestratorEvent.PLAN_REJECTED);
+        const result = this.transition(EngineEvent.PLAN_REJECTED);
         if (result === null) return;
 
         this.emitUIMessage({
@@ -477,7 +608,7 @@ export class OrchestratorEngine extends EventEmitter {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Called when a worker exits. Orchestrates evaluation → verdict → advance.
+     * Called when a worker exits. Drives evaluation → verdict → advance.
      * See 02-review.md § R9 and AB-1.
      *
      * AB-1: In parallel mode, multiple workers run concurrently. The FSM
@@ -502,7 +633,7 @@ export class OrchestratorEngine extends EventEmitter {
 
         if (this.activeWorkerCount === 0) {
             // Last worker exited — do full FSM transition
-            this.transition(OrchestratorEvent.WORKER_EXITED);
+            this.transition(EngineEvent.WORKER_EXITED);
             await this.applyVerdict(phase, passed, exitCode, stderr);
         } else {
             // Other workers still running — evaluate in-place without FSM transition
@@ -559,7 +690,7 @@ export class OrchestratorEngine extends EventEmitter {
                 if (hasFailed) {
                     // Some parallel sibling failed — transition to ERROR_PAUSED
                     this.runbook.status = 'paused_error';
-                    this.transition(OrchestratorEvent.PHASE_FAIL);
+                    this.transition(EngineEvent.PHASE_FAIL);
                     await this.persist();
                     this.emitUIMessage({
                         type: 'STATE_SNAPSHOT',
@@ -568,7 +699,7 @@ export class OrchestratorEngine extends EventEmitter {
                     return;
                 }
                 this.runbook.status = 'completed';
-                this.transition(OrchestratorEvent.ALL_PHASES_PASS);
+                this.transition(EngineEvent.ALL_PHASES_PASS);
                 await this.persist();
                 this.emit('run:completed', this.runbook);
                 this.emitUIMessage({
@@ -579,7 +710,7 @@ export class OrchestratorEngine extends EventEmitter {
             }
 
             // Advance: use DAG scheduler to find next ready phases
-            this.transition(OrchestratorEvent.PHASE_PASS);
+            this.transition(EngineEvent.PHASE_PASS);
             await this.persist();
 
             this.advanceSchedule();
@@ -601,7 +732,7 @@ export class OrchestratorEngine extends EventEmitter {
                     },
                 });
 
-                this.transition(OrchestratorEvent.PHASE_FAIL);
+                this.transition(EngineEvent.PHASE_FAIL);
                 phase.status = 'pending';
                 await this.persist();
 
@@ -614,7 +745,7 @@ export class OrchestratorEngine extends EventEmitter {
             // Max retries exhausted — surface to user
             phase.status = 'failed';
             this.runbook.status = 'paused_error';
-            this.transition(OrchestratorEvent.PHASE_FAIL);
+            this.transition(EngineEvent.PHASE_FAIL);
             await this.persist();
 
             this.emitUIMessage({
@@ -729,8 +860,8 @@ export class OrchestratorEngine extends EventEmitter {
         if (this.activeWorkerCount === 0) {
             // Last worker — transition FSM
             const event = reason === 'timeout'
-                ? OrchestratorEvent.WORKER_TIMEOUT
-                : OrchestratorEvent.WORKER_CRASH;
+                ? EngineEvent.WORKER_TIMEOUT
+                : EngineEvent.WORKER_CRASH;
             this.transition(event);
             this.runbook.status = 'paused_error';
             await this.persist();

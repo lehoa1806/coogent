@@ -7,7 +7,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { StateManager } from '../StateManager.js';
-import { Runbook, OrchestratorState } from '../../types/index.js';
+import { Runbook, EngineState } from '../../types/index.js';
 
 describe('StateManager — P0 Verification Tests', () => {
     let tmpDir: string;
@@ -26,9 +26,9 @@ describe('StateManager — P0 Verification Tests', () => {
     });
 
     beforeEach(async () => {
-        const base = await fs.mkdtemp(path.join(os.tmpdir(), 'isolated-agent-race-'));
-        // Simulate session dir: .isolated_agent/ipc/<id>/
-        tmpDir = path.join(base, '.isolated_agent', 'ipc', 'test-session');
+        const base = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-race-'));
+        // Simulate session dir: .coogent/ipc/<id>/
+        tmpDir = path.join(base, '.coogent', 'ipc', 'test-session');
         await fs.mkdir(tmpDir, { recursive: true });
         await fs.writeFile(
             path.join(tmpDir, '.task-runbook.json'),
@@ -54,7 +54,7 @@ describe('StateManager — P0 Verification Tests', () => {
             for (let i = 0; i < 10; i++) {
                 const rb = makeRunbook('running');
                 rb.current_phase = i;
-                promises.push(sm.saveRunbook(rb, OrchestratorState.EXECUTING_WORKER));
+                promises.push(sm.saveRunbook(rb, EngineState.EXECUTING_WORKER));
             }
 
             await Promise.all(promises);
@@ -75,7 +75,7 @@ describe('StateManager — P0 Verification Tests', () => {
 
             const promises: Promise<void>[] = [];
             for (let i = 0; i < 5; i++) {
-                promises.push(sm.saveRunbook(makeRunbook(), OrchestratorState.IDLE));
+                promises.push(sm.saveRunbook(makeRunbook(), EngineState.IDLE));
             }
             await Promise.all(promises);
 
@@ -154,7 +154,7 @@ describe('StateManager — P0 Verification Tests', () => {
             // Simulate a crash: WAL exists but rename never completed
             await fs.writeFile(walPath, JSON.stringify({
                 timestamp: Date.now(),
-                engineState: OrchestratorState.EXECUTING_WORKER,
+                engineState: EngineState.EXECUTING_WORKER,
                 currentPhase: 5,
                 snapshot: recoveredRunbook,
             }));

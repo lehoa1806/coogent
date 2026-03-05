@@ -9,7 +9,7 @@ describe('ContextScoper', () => {
     let scoper: ContextScoper;
 
     beforeEach(async () => {
-        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'isolated-agent-ctx-'));
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-ctx-'));
         scoper = new ContextScoper({
             encoder: new CharRatioEncoder(),
             tokenLimit: 100 // tight budget

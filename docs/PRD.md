@@ -1,4 +1,4 @@
-# Product Requirements Document: "Clean Room" Multi-Agent Orchestrator
+# Product Requirements Document: "Clean Room" Multi-Agent Coogent
 
 **Platform:** Google Antigravity IDE (VS Code Fork)  
 **Core Technologies:** TypeScript, VS Code Webview API, Antigravity Agent Development Kit (ADK)  
@@ -12,9 +12,9 @@
 
 Single-instance AI agents fail when handling dense, multi-layered codebases — such as bridging native C++ processing libraries with Swift UI components and CoreML models. As token limits fill with file history and irrelevant dependencies, the AI begins to hallucinate, forget initial constraints, or output truncated code.
 
-### The Solution: Sandboxed Orchestration
+### The Solution: Sandboxed Execution
 
-The "Clean Room" extension shifts cognitive load from the LLM to local state management. It acts as a "Master" orchestrator that breaks complex implementation plans into strictly isolated, serialized micro-tasks. For each phase, it spawns an ephemeral, zero-context "Worker" agent, injects only the strictly necessary files, and terminates the agent upon completion.
+The "Clean Room" extension shifts cognitive load from the LLM to local state management. It acts as a "Master" engine that breaks complex implementation plans into strictly isolated, serialized micro-tasks. For each phase, it spawns an ephemeral, zero-context "Worker" agent, injects only the strictly necessary files, and terminates the agent upon completion.
 
 ---
 
@@ -24,7 +24,7 @@ The system relies on **absolute decoupling** of global state from the executing 
 
 | Component | Role |
 |---|---|
-| **The Orchestrator (Master)** | The extension core. Maintains the global objective, parses `.task-runbook.json`, manages the execution sequence. **Never writes code itself.** |
+| **The Engine (Master)** | The extension core. Maintains the global objective, parses `.task-runbook.json`, manages the execution sequence. **Never writes code itself.** |
 | **The Workers (Phase Agents)** | Ephemeral Antigravity agent sessions. Spun up with zero historical context, given a specific micro-task and scoped file payload, terminated immediately after verification. |
 | **The State (Runbook)** | A static JSON manifest tracking the exact prompt, required files, and completion status of every phase. |
 
@@ -33,17 +33,17 @@ The system relies on **absolute decoupling** of global state from the executing 
 ## 3. User Journey
 
 1. **Initiation:** The developer opens the "Mission Control" Webview and enters a high-level architectural goal.
-2. **Decomposition:** The Orchestrator queries an initial planning agent to generate a multi-phase implementation strategy.
+2. **Decomposition:** The Engine queries an initial planning agent to generate a multi-phase implementation strategy.
 3. **Refinement:** The developer manually adjusts the breakdown in the UI, assigning specific file scopes and success criteria to each micro-task.
-4. **Execution Loop:** The Orchestrator reads Phase 1, spawns a blank-slate agent window, and injects the scoped context.
-5. **Verification:** The agent completes the task. The Orchestrator verifies the output (e.g., standard exit code 0) and marks Phase 1 as complete.
-6. **Handoff:** The Orchestrator automatically spins up a fresh window for Phase 2, ensuring zero token bleed-over from Phase 1.
+4. **Execution Loop:** The Engine reads Phase 1, spawns a blank-slate agent window, and injects the scoped context.
+5. **Verification:** The agent completes the task. The Engine verifies the output (e.g., standard exit code 0) and marks Phase 1 as complete.
+6. **Handoff:** The Engine automatically spins up a fresh window for Phase 2, ensuring zero token bleed-over from Phase 1.
 
 ---
 
 ## 4. Feature Roadmap & Scope
 
-### Pillar 1: Core Orchestration Engine (MVP)
+### Pillar 1: Core Engine (MVP)
 
 - **Persistent State Management:** Generation and tracking of a local `.task-runbook.json` file to ensure workflow recovery across IDE reloads.
 - **Mission Control Dashboard:** A custom Webview UI to render the active runbook, showing completed, running, and pending phases with global start/pause controls.
@@ -118,4 +118,4 @@ To support Directed Acyclic Graph (DAG) execution and pluggable toolchain evalua
 |---|---|
 | **Idempotency** | Re-running a failed phase must not corrupt the overall state. File modifications must overwrite cleanly. |
 | **Token Thresholds** | The extension must calculate the token count of `context_files` prior to spawning an agent. If the payload exceeds the model's safe processing window, it must halt and request further phase decomposition. |
-| **Telemetry & Auditing** | Since agent windows are destroyed upon completion, all chat histories, prompts, and raw outputs must be serialized to a local `.isolated_agent/logs` directory for developer review. |
+| **Telemetry & Auditing** | Since agent windows are destroyed upon completion, all chat histories, prompts, and raw outputs must be serialized to a local `.coogent/logs` directory for developer review. |

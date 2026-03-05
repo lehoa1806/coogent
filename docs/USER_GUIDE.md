@@ -1,6 +1,6 @@
-# Isolated-Agent User Guide
+# Coogent User Guide
 
-> **Audience**: Developers using the Isolated-Agent extension in Antigravity IDE.
+> **Audience**: Developers using the Coogent extension in Antigravity IDE.
 
 ---
 
@@ -9,7 +9,7 @@
 ### 1. Install & Build
 
 ```bash
-git clone <repo-url> isolated-agent && cd isolated-agent
+git clone <repo-url> coogent && cd coogent
 npm install
 npm run build
 ```
@@ -20,7 +20,7 @@ Press **F5** in the IDE (or `npm run watch` + Launch Extension from Debug panel)
 
 ### 3. Open Mission Control
 
-`Cmd+Shift+P` → **Isolated-Agent: Open Mission Control**
+`Cmd+Shift+P` → **Coogent: Open Mission Control**
 
 ### 4. Load or Create a Runbook
 
@@ -28,7 +28,7 @@ Place `.task-runbook.json` in the workspace root, or load one via the Mission Co
 
 ### 5. Start Execution
 
-Click **Start** — the orchestrator handles the rest.
+Click **Start** — the engine handles the rest.
 
 ---
 
@@ -150,14 +150,14 @@ Phases 1 and 2 run in parallel (both depend only on 0). Phase 3 waits for both.
 
 ## Settings
 
-Configure via **Settings** → **Extensions** → **Isolated-Agent**, or in `settings.json`:
+Configure via **Settings** → **Extensions** → **Coogent**, or in `settings.json`:
 
 | Setting | Default | Description |
 |---|---|---|
-| `isolated-agent.tokenLimit` | `100000` | Max tokens per phase context injection |
-| `isolated-agent.workerTimeoutMs` | `300000` | Worker timeout (5 min default) |
-| `isolated-agent.maxRetries` | `3` | Default auto-retry count |
-| `isolated-agent.logDirectory` | `.isolated_agent/logs` | Session log directory |
+| `coogent.tokenLimit` | `100000` | Max tokens per phase context injection |
+| `coogent.workerTimeoutMs` | `300000` | Worker timeout (5 min default) |
+| `coogent.maxRetries` | `3` | Default auto-retry count |
+| `coogent.logDirectory` | `.coogent/logs` | Session log directory |
 
 ---
 
@@ -201,7 +201,7 @@ When a phase fails and `max_retries > 0`:
 
 | Command | Description |
 |---|---|
-| `Isolated-Agent: Open Mission Control` | Open the Mission Control dashboard |
+| `Coogent: Open Mission Control` | Open the Mission Control dashboard |
 
 ### Mission Control Actions
 
@@ -218,7 +218,7 @@ When a phase fails and `max_retries > 0`:
 
 ## Logs & Debugging
 
-Session logs are written as JSONL to `<workspace>/.isolated_agent/logs/`:
+Session logs are written as JSONL to `<workspace>/.coogent/logs/`:
 
 ```
 session_<timestamp>.jsonl

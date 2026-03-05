@@ -1,7 +1,7 @@
-# Technical Design Document: "Clean Room" Multi-Agent Orchestrator
+# Technical Design Document: "Clean Room" Multi-Agent Coogent
 
 **Platform:** Google Antigravity IDE (VS Code Fork)  
-**Version:** 2.0 — Pillars 1-3 (Full Orchestration Pipeline)  
+**Version:** 2.0 — Pillars 1-3 (Full Engine Pipeline)  
 **Authors:** Architecture Team  
 **Status:** Draft  
 
@@ -30,7 +30,7 @@ The extension is composed of four decoupled subsystems running inside the Antigr
 graph TD
     subgraph IDE["Antigravity IDE"]
         subgraph ExtHost["Extension Host (Node.js)"]
-            SM["State Machine\n(OrchestratorEngine)"]
+            SM["State Machine\n(Engine)"]
             ADK["ADK Controller"]
             CS["Context Scoper"]
             FSW["File System Watcher"]
@@ -49,7 +49,7 @@ graph TD
         ADK -- spawns --> W2["Worker Agent N\n(Ephemeral)"]
     end
     FSW -- watches --> RB[".task-runbook.json"]
-    LOG -- writes --> LD[".isolated_agent/logs/"]
+    LOG -- writes --> LD[".coogent/logs/"]
 ```
 
 ### 1.2 Component Responsibilities
@@ -57,11 +57,11 @@ graph TD
 | Component | Process | Responsibility |
 |---|---|---|
 | **Extension Host** | Node.js (VS Code Extension API) | Houses all business logic: state machine, ADK calls, file I/O, logging. The **single source of truth** for execution state. |
-| **OrchestratorEngine** | Extension Host | The deterministic state machine. Reads the runbook, decides transitions, dispatches commands to the ADK Controller. |
+| **Engine** | Extension Host | The deterministic state machine. Reads the runbook, decides transitions, dispatches commands to the ADK Controller. |
 | **ADK Controller** | Extension Host | Thin adapter over the Antigravity ADK API. Translates `spawnWorker` / `terminateWorker` intents into platform calls. Manages the process handle registry. |
 | **Context Scoper** | Extension Host | Reads `context_files`, concatenates content, calculates token count (via `tiktoken` or equivalent), and assembles the injection payload. |
 | **File System Watcher** | Extension Host | Monitors `.task-runbook.json` for external edits (e.g., manual developer changes) and triggers re-parsing. |
-| **Telemetry Logger** | Extension Host | Serializes all prompts, agent outputs, and state transitions to `.isolated_agent/logs/<run_id>/` as append-only JSONL files. |
+| **Telemetry Logger** | Extension Host | Serializes all prompts, agent outputs, and state transitions to `.coogent/logs/<run_id>/` as append-only JSONL files. |
 | **Webview Panel** | Isolated iframe (chromium renderer) | Renders the Mission Control dashboard. Communicates **exclusively** via `postMessage`. Has zero direct access to Node.js APIs, filesystem, or ADK. |
 
 ### 1.3 Boundary Rules
@@ -80,7 +80,7 @@ graph TD
 
 ### 2.1 State Machine Definition
 
-The OrchestratorEngine implements a deterministic finite state machine with 7 states:
+The Engine implements a deterministic finite state machine with 7 states:
 
 ```mermaid
 stateDiagram-v2
@@ -115,7 +115,7 @@ stateDiagram-v2
 ### 2.2 Transition Table
 
 ```typescript
-type OrchestratorState =
+type EngineState =
   | 'Idle'
   | 'Parsing'
   | 'Ready'
@@ -124,7 +124,7 @@ type OrchestratorState =
   | 'Error_Paused'
   | 'Completed';
 
-type OrchestratorEvent =
+type EngineEvent =
   | 'LOAD_RUNBOOK'
   | 'PARSE_SUCCESS'
   | 'PARSE_FAILURE'
@@ -141,7 +141,7 @@ type OrchestratorEvent =
   | 'ABORT'
   | 'RESET';
 
-const transitions: Record<OrchestratorState, Partial<Record<OrchestratorEvent, OrchestratorState>>> = {
+const transitions: Record<EngineState, Partial<Record<EngineEvent, EngineState>>> = {
   Idle:             { LOAD_RUNBOOK: 'Parsing' },
   Parsing:          { PARSE_SUCCESS: 'Ready', PARSE_FAILURE: 'Idle' },
   Ready:            { START: 'Executing_Worker', RESUME: 'Executing_Worker' },
@@ -202,7 +202,7 @@ class RunbookStore {
 On extension activation, the recovery sequence is:
 
 ```
-1. Check if WAL file exists at `.isolated_agent/ipc/<id>/.wal.json`
+1. Check if WAL file exists at `.coogent/ipc/<id>/.wal.json`
 2. IF WAL exists:
    a. Read WAL snapshot → this is the last intended state
    b. Write WAL snapshot to `.task-runbook.json` (completing the interrupted write)
@@ -614,7 +614,7 @@ class TestSuiteEvaluator implements SuccessEvaluator { /* ... */ }  // pytest, j
 
 | # | Failure Scenario | Impact | Mitigation |
 |---|---|---|---|
-| E1 | **Orphaned agent process** — IDE crashes while worker is running | Zombie OS process consuming resources | `deactivate()` hook kills active workers. On activation, scan for stale PID files in `.isolated_agent/pid/` and send `SIGTERM`. |
+| E1 | **Orphaned agent process** — IDE crashes while worker is running | Zombie OS process consuming resources | `deactivate()` hook kills active workers. On activation, scan for stale PID files in `.coogent/pid/` and send `SIGTERM`. |
 | E2 | **Runbook file locked** — External editor holds an `flock` | `writeRunbook` hangs indefinitely | Acquire lock with a **5-second timeout**. If timeout, transition to `Error_Paused` with message "Runbook locked by another process." |
 | E3 | **Token limit breach** — `context_files` exceed model window | Worker hallucinates or truncates output | `ContextScoper` pre-calculates tokens. If over budget, halt with `TOKEN_BUDGET` message to UI. User must split the phase. |
 | E4 | **Binary file in `context_files`** | Corrupt injection payload | `ContextScoper` rejects binary files with `isBinary()` check (magic-number heuristic). |
@@ -628,7 +628,7 @@ class TestSuiteEvaluator implements SuccessEvaluator { /* ... */ }  // pytest, j
 ### 6.2 PID File Strategy for Orphan Recovery
 
 ```typescript
-const PID_DIR = '.isolated_agent/pid';
+const PID_DIR = '.coogent/pid';
 
 async function registerWorkerPID(phaseId: number, pid: number): Promise<void> {
   await fs.writeFile(path.join(PID_DIR, `phase-${phaseId}.pid`), String(pid));
@@ -688,11 +688,11 @@ async function cleanupOrphanedWorkers(): Promise<void> {
 ## Appendix A: Directory Layout
 
 ```
-.vscode/extensions/clean-room-orchestrator/
+.vscode/extensions/coogent/
 ├── src/
 │   ├── extension.ts              # activate/deactivate entry point
 │   ├── engine/
-│   │   ├── OrchestratorEngine.ts # State machine
+│   │   ├── Engine.ts # State machine
 │   │   ├── transitions.ts       # Transition table
 │   │   └── types.ts             # State/Event types
 │   ├── adk/
@@ -729,8 +729,8 @@ async function cleanupOrphanedWorkers(): Promise<void> {
   "cleanRoom.tokenLimit": 100000,
   "cleanRoom.workerTimeoutMs": 300000,
   "cleanRoom.maxRetries": 3,
-  "cleanRoom.logDirectory": ".isolated_agent/logs",
-  "cleanRoom.pidDirectory": ".isolated_agent/pid"
+  "cleanRoom.logDirectory": ".coogent/logs",
+  "cleanRoom.pidDirectory": ".coogent/pid"
 }
 ```
 
@@ -753,7 +753,7 @@ Pillar 2 replaces the static, manual `context_files` array with dynamic, AST-dri
 
 ### 7.3 DAG Execution & Parallel Processing
 - **Schema Update:** The Runbook schema is updated so each phase has an optional `depends_on: number[]` array.
-- **Frontier Set Scheduler:** The `OrchestratorEngine` state machine evaluates the graph to find all "ready" phases (phases where `depends_on` dependencies are all `completed`).
+- **Frontier Set Scheduler:** The `Engine` state machine evaluates the graph to find all "ready" phases (phases where `depends_on` dependencies are all `completed`).
 - **Parallel Dispatch:** `ADKController` spins up a worker for each "ready" phase concurrently, up to a configurable `MAX_CONCURRENT_WORKERS`.
 - **State Synchronization:** Worker completions trigger a state machine event that re-evaluates the Frontier Set, spawning the next batch of ready workers.
 
@@ -773,7 +773,7 @@ Pillar 3 shifts the definition of "done" from a simple worker exit to verifiable
 - **Retry Limits:** Exponential backoff is applied, up to `MAX_RETRIES`. If the limit is hit, the phase transitions to `failed` and halts the runbook.
 
 ### 8.3 Automated Version Control (Git Sandboxing)
-- **Snapshot Commits:** On a `PHASE_PASS` event, `GitManager` executes `git add . && git commit -m "isolated-agent: auto-checkpoint phase <id>"`.
+- **Snapshot Commits:** On a `PHASE_PASS` event, `GitManager` executes `git add . && git commit -m "coogent: auto-checkpoint phase <id>"`.
 - **Clean Fallback:** If a worker corrupts the workspace or a phase ultimately fails, the Engine triggers a `git reset --hard HEAD` and `git clean -fd` to restore the "Clean Room" state before retrying or pausing.
 
 ### 8.4 Test-Driven Execution Workflow

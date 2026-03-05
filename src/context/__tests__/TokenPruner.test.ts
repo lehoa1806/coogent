@@ -45,6 +45,6 @@ describe('TokenPruner', () => {
 
         // Since truncation appends a message, it might still exceed a tiny limit like 6.
         // It's a best-effort pruner. So we only check that the truncation occurred.
-        expect(result.entries[0].content).toContain('truncated by orchestrator');
+        expect(result.entries[0].content).toContain('truncated by Coogent');
     });
 });

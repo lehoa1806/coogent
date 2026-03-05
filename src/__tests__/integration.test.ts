@@ -2,16 +2,16 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { StateManager } from '../state/StateManager.js';
-import { OrchestratorEngine } from '../engine/OrchestratorEngine.js';
+import { Engine } from '../engine/Engine.js';
 import { ContextScoper, CharRatioEncoder } from '../context/ContextScoper.js';
 import { ADKController, MockADKAdapter } from '../adk/ADKController.js';
 import { TelemetryLogger } from '../logger/TelemetryLogger.js';
 import type { Runbook, Phase } from '../types/index.js';
 
-describe('Isolated-Agent Integration: End-to-End Pillar 1', () => {
+describe('Coogent Integration: End-to-End Pillar 1', () => {
     let tmpDir: string;
     let stateManager: StateManager;
-    let engine: OrchestratorEngine;
+    let engine: Engine;
     let scoper: ContextScoper;
     let adk: ADKController;
     let logger: TelemetryLogger;
@@ -35,15 +35,15 @@ describe('Isolated-Agent Integration: End-to-End Pillar 1', () => {
     };
 
     beforeEach(async () => {
-        baseDir = await fs.mkdtemp(path.join(os.tmpdir(), 'isolated-agent-e2e-'));
-        // Simulate session dir: .isolated_agent/ipc/<id>/
-        tmpDir = path.join(baseDir, '.isolated_agent', 'ipc', 'test-session');
+        baseDir = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-e2e-'));
+        // Simulate session dir: .coogent/ipc/<id>/
+        tmpDir = path.join(baseDir, '.coogent', 'ipc', 'test-session');
         await fs.mkdir(tmpDir, { recursive: true });
         await fs.writeFile(path.join(tmpDir, '.task-runbook.json'), JSON.stringify(initialRunbook));
         await fs.writeFile(path.join(baseDir, 'existing-file.txt'), 'Hello tests');
 
         stateManager = new StateManager(tmpDir);
-        engine = new OrchestratorEngine(stateManager);
+        engine = new Engine(stateManager);
 
         scoper = new ContextScoper({ encoder: new CharRatioEncoder(), tokenLimit: 1000 });
         logger = new TelemetryLogger(baseDir);

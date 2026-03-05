@@ -9,7 +9,7 @@ import type { GitOperationResult } from '../types/index.js';
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Manages automated Git operations for the orchestrator.
+ * Manages automated Git operations for Coogent.
  *
  * Responsibilities:
  * - Snapshot commits after each successful phase.
@@ -21,7 +21,7 @@ export class GitManager {
 
     /**
      * Create a snapshot commit after a successful phase.
-     * Stages all changes and commits with an orchestrator-prefixed message.
+     * Stages all changes and commits with an Coogent-prefixed message.
      */
     async snapshotCommit(phaseId: number): Promise<GitOperationResult> {
         try {
@@ -37,8 +37,8 @@ export class GitManager {
                 };
             }
 
-            // Commit with orchestrator prefix
-            const commitMsg = `isolated-agent: auto-checkpoint phase ${phaseId}`;
+            // Commit with Coogent prefix
+            const commitMsg = `coogent: auto-checkpoint phase ${phaseId}`;
             await this.gitExec('commit', '-m', commitMsg);
 
             // Get the commit hash
@@ -105,7 +105,7 @@ export class GitManager {
      */
     async stash(label: string): Promise<GitOperationResult> {
         try {
-            await this.gitExec('stash', 'push', '-m', `isolated-agent: ${label}`);
+            await this.gitExec('stash', 'push', '-m', `coogent: ${label}`);
             return {
                 success: true,
                 message: `Stashed changes: ${label}`,

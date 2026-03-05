@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { Phase, HostToWebviewMessage } from './types/index.js';
 import { StateManager } from './state/StateManager.js';
-import { OrchestratorEngine } from './engine/OrchestratorEngine.js';
+import { Engine } from './engine/Engine.js';
 import { ADKController } from './adk/ADKController.js';
 import { AntigravityADKAdapter } from './adk/AntigravityADKAdapter.js';
 import { OutputBufferRegistry } from './adk/OutputBufferRegistry.js';
@@ -17,6 +17,7 @@ import { TelemetryLogger } from './logger/TelemetryLogger.js';
 import { GitManager } from './git/GitManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
 import { PlannerAgent } from './planner/PlannerAgent.js';
+import { SessionManager } from './session/SessionManager.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  UUIDv7 — time-ordered session ID
@@ -40,79 +41,83 @@ function uuidv7(): string {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 let stateManager: StateManager | undefined;
-let engine: OrchestratorEngine | undefined;
+let engine: Engine | undefined;
 let adkController: ADKController | undefined;
 let contextScoper: ContextScoper | undefined;
 let logger: TelemetryLogger | undefined;
 let gitManager: GitManager | undefined;
 let outputRegistry: OutputBufferRegistry | undefined;
 let plannerAgent: PlannerAgent | undefined;
+let sessionManager: SessionManager | undefined;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Extension Lifecycle
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function activate(context: vscode.ExtensionContext): void {
-  vscode.window.showInformationMessage('[Isolated-Agent DEBUG] activate() called!');
-  console.log('[Isolated-Agent] Extension activating...');
+  vscode.window.showInformationMessage('[Coogent DEBUG] activate() called!');
+  console.log('[Coogent] Extension activating...');
 
   // ─── Register commands FIRST — must always be available ──────────────
   context.subscriptions.push(
-    vscode.commands.registerCommand('isolated-agent.openMissionControl', () => {
-      console.log('[Isolated-Agent DEBUG] openMissionControl command invoked!');
+    vscode.commands.registerCommand('coogent.openMissionControl', () => {
+      console.log('[Coogent DEBUG] openMissionControl command invoked!');
       if (!engine) {
         vscode.window.showWarningMessage(
-          'Isolated-Agent: Open a workspace folder first to use Mission Control.'
+          'Coogent: Open a workspace folder first to use Mission Control.'
         );
         return;
       }
-      MissionControlPanel.createOrShow(context.extensionUri, engine);
+      MissionControlPanel.createOrShow(context.extensionUri, engine, sessionManager, adkController);
     })
   );
-  console.log('[Isolated-Agent DEBUG] ✅ Command registered (before workspace check)');
+  console.log('[Coogent DEBUG] ✅ Command registered (before workspace check)');
 
   try {
 
     const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceRoot) {
-      console.warn('[Isolated-Agent] No workspace folder open — engine not initialized.');
+      console.warn('[Coogent] No workspace folder open — engine not initialized.');
       return;
     }
-    console.log('[Isolated-Agent DEBUG] Step 1/10 — workspaceRoot:', workspaceRoot);
+    console.log('[Coogent DEBUG] Step 1/10 — workspaceRoot:', workspaceRoot);
 
     // Read extension configuration
-    const config = vscode.workspace.getConfiguration('isolated-agent');
+    const config = vscode.workspace.getConfiguration('coogent');
     const tokenLimit = config.get<number>('tokenLimit', 100_000);
     const workerTimeoutMs = config.get<number>('workerTimeoutMs', 300_000);
-    console.log('[Isolated-Agent DEBUG] Step 2/10 — config loaded (tokenLimit=%d, timeout=%d)', tokenLimit, workerTimeoutMs);
+    console.log('[Coogent DEBUG] Step 2/10 — config loaded (tokenLimit=%d, timeout=%d)', tokenLimit, workerTimeoutMs);
 
     // ─── Initialize services ───────────────────────────────────────────
     const sessionId = uuidv7();
-    const sessionDir = path.join(workspaceRoot, '.isolated_agent', 'ipc', sessionId);
-    console.log('[Isolated-Agent DEBUG] Session ID:', sessionId);
+    const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', sessionId);
+    console.log('[Coogent DEBUG] Session ID:', sessionId);
 
     stateManager = new StateManager(sessionDir);
-    console.log('[Isolated-Agent DEBUG] Step 3/10 — StateManager created (sessionDir: %s)', sessionDir);
+    console.log('[Coogent DEBUG] Step 3/10 — StateManager created (sessionDir: %s)', sessionDir);
 
-    engine = new OrchestratorEngine(stateManager, { workspaceRoot });
-    console.log('[Isolated-Agent DEBUG] Step 4/10 — OrchestratorEngine created');
+    engine = new Engine(stateManager, { workspaceRoot });
+    console.log('[Coogent DEBUG] Step 4/10 — Engine created');
 
     gitManager = new GitManager(workspaceRoot);
-    console.log('[Isolated-Agent DEBUG] Step 5/10 — GitManager created');
+    console.log('[Coogent DEBUG] Step 5/10 — GitManager created');
+
+    sessionManager = new SessionManager(workspaceRoot, sessionId);
+    console.log('[Coogent DEBUG] Step 5.1/10 — SessionManager created');
 
     const adkAdapter = new AntigravityADKAdapter(workspaceRoot);
     adkController = new ADKController(adkAdapter, workspaceRoot);
-    console.log('[Isolated-Agent DEBUG] Step 6/10 — ADKController created');
+    console.log('[Coogent DEBUG] Step 6/10 — ADKController created');
 
     contextScoper = new ContextScoper({
       encoder: new CharRatioEncoder(),
       tokenLimit,
       resolver: new ASTFileResolver(),
     });
-    console.log('[Isolated-Agent DEBUG] Step 7/10 — ContextScoper created');
+    console.log('[Coogent DEBUG] Step 7/10 — ContextScoper created');
 
-    logger = new TelemetryLogger(workspaceRoot, '.isolated_agent/logs');
-    console.log('[Isolated-Agent DEBUG] Step 8/10 — TelemetryLogger created');
+    logger = new TelemetryLogger(workspaceRoot, '.coogent/logs');
+    console.log('[Coogent DEBUG] Step 8/10 — TelemetryLogger created');
 
     // Output buffer registry — replaces module-level Map (02-review.md § R11)
     outputRegistry = new OutputBufferRegistry((phaseId, stream, chunk) => {
@@ -121,7 +126,7 @@ export function activate(context: vscode.ExtensionContext): void {
         payload: { phaseId, stream, chunk },
       });
     });
-    console.log('[Isolated-Agent DEBUG] Step 9/10 — OutputBufferRegistry created');
+    console.log('[Coogent DEBUG] Step 9/10 — OutputBufferRegistry created');
 
     // ─── Initialize Planner Agent ────────────────────────────────────
     plannerAgent = new PlannerAgent(adkAdapter, {
@@ -129,7 +134,7 @@ export function activate(context: vscode.ExtensionContext): void {
       maxTreeDepth: 4,
       maxTreeChars: 8000,
     });
-    console.log('[Isolated-Agent DEBUG] Step 9.1/10 — PlannerAgent created');
+    console.log('[Coogent DEBUG] Step 9.1/10 — PlannerAgent created');
 
     // ─── Wire Engine → Webview ─────────────────────────────────────────
     engine.on('ui:message', (message: HostToWebviewMessage) => {
@@ -143,8 +148,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ─── Wire Engine → ADK (phase execution) ───────────────────────────
     engine.on('phase:execute', (phase: Phase) => {
-      executePhase(phase, workspaceRoot, workerTimeoutMs).catch((err) => {
-        console.error('[Isolated-Agent] Phase execution error:', err);
+      executePhase(phase, workspaceRoot, workerTimeoutMs, sessionId).catch((err) => {
+        console.error('[Coogent] Phase execution error:', err);
       });
     });
 
@@ -152,8 +157,8 @@ export function activate(context: vscode.ExtensionContext): void {
     engine.on('phase:heal', (phase: Phase, augmentedPrompt: string) => {
       // Clone the phase and override prompt for the newly spawned worker
       const healPhase = { ...phase, prompt: augmentedPrompt };
-      executePhase(healPhase, workspaceRoot, workerTimeoutMs).catch((err) => {
-        console.error('[Isolated-Agent] Self-healing phase execution error:', err);
+      executePhase(healPhase, workspaceRoot, workerTimeoutMs, sessionId).catch((err) => {
+        console.error('[Coogent] Self-healing phase execution error:', err);
       });
     });
 
@@ -225,26 +230,29 @@ export function activate(context: vscode.ExtensionContext): void {
       });
     });
 
-    console.log('[Isolated-Agent DEBUG] Step 9.5/10 — All event wiring complete');
+    console.log('[Coogent DEBUG] Step 9.5/10 — All event wiring complete');
 
-    console.log('[Isolated-Agent DEBUG] Step 10/10 — All services initialized');
+    console.log('[Coogent DEBUG] Step 10/10 — All services initialized');
 
     // ─── List all registered commands for debugging ────────────────────
     vscode.commands.getCommands(true).then((cmds) => {
-      const isolatedAgentCmds = cmds.filter(c => c.startsWith('isolated-agent'));
-      console.log('[Isolated-Agent DEBUG] Registered isolated-agent commands:', JSON.stringify(isolatedAgentCmds));
+      const coogentCmds = cmds.filter(c => c.startsWith('coogent'));
+      console.log('[Coogent DEBUG] Registered coogent commands:', JSON.stringify(coogentCmds));
     });
 
     // ─── File system watcher — auto-reload on external runbook edit ───
     const watcher = vscode.workspace.createFileSystemWatcher(
-      '**/.isolated_agent/ipc/**/.task-runbook.json',
+      '**/.coogent/ipc/**/.task-runbook.json',
       true,   // ignoreCreateEvents
       false,  // ignoreChangeEvents
       true    // ignoreDeleteEvents
     );
     watcher.onDidChange(() => {
-      console.log('[Isolated-Agent] .task-runbook.json changed externally');
-      engine?.loadRunbook().catch(console.error);
+      console.log('[Coogent] .task-runbook.json changed externally');
+      // Only reload if the engine is in a state that accepts LOAD_RUNBOOK
+      if (engine?.getState() === 'IDLE') {
+        engine.loadRunbook().catch(console.error);
+      }
     });
     context.subscriptions.push(watcher);
 
@@ -258,26 +266,26 @@ export function activate(context: vscode.ExtensionContext): void {
         try {
           await engine?.loadRunbook();
         } catch (err) {
-          console.error('[Isolated-Agent] Failed to load recovered runbook:', err);
+          console.error('[Coogent] Failed to load recovered runbook:', err);
         }
         vscode.window.showWarningMessage(
-          'Isolated-Agent: Recovered from an interrupted session. Review state before continuing.'
+          'Coogent: Recovered from an interrupted session. Review state before continuing.'
         );
       }
     }).catch(console.error);
 
-    vscode.window.showInformationMessage('[Isolated-Agent DEBUG] Extension activated successfully — command should be available now');
-    console.log('[Isolated-Agent] Extension activated.');
+    vscode.window.showInformationMessage('[Coogent DEBUG] Extension activated successfully — command should be available now');
+    console.log('[Coogent] Extension activated.');
 
   } catch (err: any) {
     const msg = err?.message || String(err);
-    vscode.window.showErrorMessage(`[Isolated-Agent DEBUG] activate() FAILED: ${msg}`);
-    console.error('[Isolated-Agent] Activation error:', err);
+    vscode.window.showErrorMessage(`[Coogent DEBUG] activate() FAILED: ${msg}`);
+    console.error('[Coogent] Activation error:', err);
   }
 }
 
 export function deactivate(): void {
-  console.log('[Isolated-Agent] Extension deactivating...');
+  console.log('[Coogent] Extension deactivating...');
   plannerAgent?.abort().catch(console.error);
   adkController?.terminateAll('IDE_SHUTDOWN').catch(console.error);
   outputRegistry?.dispose();
@@ -290,7 +298,8 @@ export function deactivate(): void {
   gitManager = undefined;
   outputRegistry = undefined;
   plannerAgent = undefined;
-  console.log('[Isolated-Agent] Extension deactivated.');
+  sessionManager = undefined;
+  console.log('[Coogent] Extension deactivated.');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -300,7 +309,8 @@ export function deactivate(): void {
 async function executePhase(
   phase: Phase,
   workspaceRoot: string,
-  timeoutMs: number
+  timeoutMs: number,
+  masterTaskId: string
 ): Promise<void> {
   if (!contextScoper || !adkController || !logger) return;
 
@@ -355,5 +365,5 @@ async function executePhase(
   }
 
   // Step 6: Spawn the worker
-  await adkController.spawnWorker(phase, result.payload, timeoutMs);
+  await adkController.spawnWorker(phase, result.payload, timeoutMs, masterTaskId);
 }

@@ -1,52 +1,115 @@
 /* ─────────────────────────────────────────────────────────────────────────── */
-/* webview-ui/styles.css — Isolated-Agent Mission Control design system       */
+/* webview-ui/styles.css — Coogent Mission Control design system v2          */
+/* Uses VS Code CSS variables for native theme adaptation (Dark/Light/HC)    */
 /* ─────────────────────────────────────────────────────────────────────────── */
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
-/*  Design Tokens                                                             */
+/*  Design Tokens — VS Code Native Variables                                  */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 :root {
-    /* Surfaces — fall back to VS Code theme variables when available */
-    --bg: var(--vscode-editor-background, #0a0e14);
-    --surface: rgba(22, 27, 34, 0.85);
-    --surface-2: rgba(28, 33, 40, 0.7);
-    --surface-3: rgba(35, 40, 48, 0.5);
-    --surface-glass: rgba(22, 27, 34, 0.55);
-    --border: rgba(48, 54, 61, 0.6);
-    --border-glow: rgba(88, 166, 255, 0.15);
+    /* Surfaces — derived from the user's active VS Code theme */
+    --bg: var(--vscode-editor-background);
+    --surface: var(--vscode-sideBar-background, var(--vscode-editor-background));
+    --surface-2: var(--vscode-editorWidget-background, var(--vscode-sideBar-background));
+    --surface-3: var(--vscode-editorHoverWidget-background, var(--vscode-editorWidget-background));
+    --border: var(--vscode-panel-border, var(--vscode-widget-border, rgba(128, 128, 128, 0.35)));
+    --border-focus: var(--vscode-focusBorder, #007fd4);
 
-    /* Text */
-    --text: var(--vscode-foreground, #e6edf3);
-    --text-muted: #7d8590;
-    --text-dim: #484f58;
+    /* Text — always matches the user's theme */
+    --text: var(--vscode-foreground);
+    --text-muted: var(--vscode-descriptionForeground, var(--vscode-foreground));
+    --text-dim: var(--vscode-disabledForeground, rgba(128, 128, 128, 0.6));
 
-    /* Accent palette */
-    --accent: #58a6ff;
-    --accent-dim: #1f6feb;
-    --accent-glow: rgba(88, 166, 255, 0.2);
-    --purple: #a78bfa;
-    --purple-dim: rgba(167, 139, 250, 0.15);
+    /* Accent palette — derived from VS Code brand colors */
+    --accent: var(--vscode-focusBorder, #007fd4);
+    --accent-bg: color-mix(in srgb, var(--accent) 12%, transparent);
 
-    /* Semantic */
-    --success: #3fb950;
-    --success-bg: rgba(63, 185, 80, 0.08);
-    --error: #f85149;
-    --error-bg: rgba(248, 81, 73, 0.08);
-    --warning: #d29922;
-    --warning-bg: rgba(210, 153, 34, 0.08);
+    /* Semantic status colors */
+    --success: var(--vscode-charts-green, var(--vscode-testing-iconPassed, #3fb950));
+    --success-bg: color-mix(in srgb, var(--success) 10%, transparent);
+    --error: var(--vscode-errorForeground, var(--vscode-charts-red, #f85149));
+    --error-bg: color-mix(in srgb, var(--error) 10%, transparent);
+    --warning: var(--vscode-editorWarning-foreground, var(--vscode-charts-yellow, #d29922));
+    --warning-bg: color-mix(in srgb, var(--warning) 10%, transparent);
+    --info: var(--vscode-editorInfo-foreground, var(--vscode-charts-blue, #58a6ff));
+    --info-bg: color-mix(in srgb, var(--info) 10%, transparent);
+    --purple: var(--vscode-charts-purple, #a78bfa);
+    --purple-bg: color-mix(in srgb, var(--purple) 12%, transparent);
 
-    /* Typography */
-    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
-    --mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'SFMono-Regular', Consolas, monospace;
+    /* Typography — use the user's configured fonts */
+    --font: var(--vscode-font-family, -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif);
+    --mono: var(--vscode-editor-font-family, 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace);
+    --font-size: var(--vscode-font-size, 13px);
+    --editor-font-size: var(--vscode-editor-font-size, 13px);
 
     /* Spacing & Shape */
-    --radius: 8px;
-    --radius-lg: 12px;
-    --transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
-    --shadow-glow: 0 0 20px rgba(88, 166, 255, 0.06);
+    --radius: 4px;
+    --radius-lg: 6px;
+    --transition: 0.15s ease;
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12);
+    --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Custom Tooltips — replaces native title attr (unreliable in webviews)    */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+[data-tooltip] {
+    position: relative;
+}
+
+[data-tooltip]::after {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%) translateY(4px);
+    padding: 4px 8px;
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 400;
+    line-height: 1.4;
+    color: var(--vscode-editorHoverWidget-foreground, var(--text));
+    background: var(--vscode-editorHoverWidget-background, var(--surface-3));
+    border: 1px solid var(--vscode-editorHoverWidget-border, var(--border));
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    white-space: nowrap;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0s linear 0.15s;
+    z-index: 1000;
+}
+
+[data-tooltip]:hover::after {
+    opacity: 1;
+    visibility: visible;
+    transform: translateX(-50%) translateY(0);
+    transition: opacity 0.15s ease 0.4s, transform 0.15s ease 0.4s, visibility 0s linear 0.4s;
+}
+
+/* Allow wrapping for longer tooltips */
+[data-tooltip-wrap]::after {
+    white-space: normal;
+    max-width: 280px;
+    text-align: left;
+}
+
+/* Position below for header elements (avoid going off-screen top) */
+[data-tooltip-pos="bottom"]::after {
+    bottom: auto;
+    top: calc(100% + 6px);
+}
+
+/* Ensure disabled buttons can still show tooltips */
+[data-tooltip][disabled],
+[data-tooltip].disabled {
+    pointer-events: auto;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -65,11 +128,11 @@ body {
     font-family: var(--font);
     background: var(--bg);
     color: var(--text);
-    font-size: 13px;
+    font-size: var(--font-size);
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
-    overflow: hidden;
+    overflow-y: auto;
     height: 100vh;
 }
 
@@ -81,7 +144,7 @@ body {
     display: flex;
     flex-direction: column;
     height: 100vh;
-    overflow: hidden;
+    overflow-y: auto;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -92,23 +155,20 @@ body {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 16px;
+    padding: 8px 16px;
     border-bottom: 1px solid var(--border);
-    background: var(--surface);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    background: var(--vscode-titleBar-activeBackground, var(--surface));
     flex-shrink: 0;
     z-index: 10;
+    position: sticky;
+    top: 0;
 }
 
 .header h1 {
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    background: linear-gradient(135deg, var(--text) 0%, var(--accent) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--vscode-titleBar-activeForeground, var(--text));
     white-space: nowrap;
 }
 
@@ -117,27 +177,93 @@ body {
 }
 
 .btn-new-chat {
-    background: linear-gradient(135deg, var(--accent-dim), var(--accent));
-    color: #fff;
+    background: var(--vscode-button-background, var(--accent));
+    color: var(--vscode-button-foreground, #fff);
     border: none;
     font-size: 11px;
-    padding: 5px 14px;
+    padding: 4px 12px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background var(--transition);
+    font-weight: 600;
+    font-family: var(--font);
+    white-space: nowrap;
+}
+
+.btn-new-chat:hover {
+    background: var(--vscode-button-hoverBackground, color-mix(in srgb, var(--accent) 85%, white));
+}
+
+.btn-refresh,
+.btn-history {
+    background: var(--vscode-button-secondaryBackground, var(--surface-2));
+    color: var(--vscode-button-secondaryForeground, var(--text-muted));
+    border: 1px solid var(--border);
+    font-size: 11px;
+    padding: 4px 10px;
     border-radius: var(--radius);
     cursor: pointer;
     transition: all var(--transition);
     font-weight: 600;
     font-family: var(--font);
-    box-shadow: 0 2px 8px rgba(31, 111, 235, 0.3);
+    white-space: nowrap;
+    line-height: 1.3;
+}
+
+.btn-refresh:hover,
+.btn-history:hover {
+    background: var(--vscode-button-secondaryHoverBackground, var(--surface-3));
+    color: var(--text);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Conversation Mode Toggle Bar                                              */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.conversation-mode-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+}
+
+.mode-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-right: 4px;
     white-space: nowrap;
 }
 
-.btn-new-chat:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 16px rgba(31, 111, 235, 0.4);
+.mode-btn {
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 10px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    background: var(--vscode-button-secondaryBackground, var(--surface-2));
+    color: var(--vscode-button-secondaryForeground, var(--text-muted));
+    cursor: pointer;
+    transition: all var(--transition);
+    white-space: nowrap;
+    line-height: 1.3;
 }
 
-.btn-new-chat:active {
-    transform: translateY(0);
+.mode-btn:hover {
+    background: var(--vscode-button-secondaryHoverBackground, var(--surface-3));
+    color: var(--text);
+}
+
+.mode-btn.active {
+    background: var(--accent-bg);
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, transparent);
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -146,11 +272,11 @@ body {
 
 .badge {
     font-size: 10px;
-    padding: 3px 10px;
-    border-radius: 20px;
+    padding: 2px 8px;
+    border-radius: 10px;
     font-weight: 600;
     text-transform: uppercase;
-    letter-spacing: 0.6px;
+    letter-spacing: 0.5px;
     transition: all var(--transition);
     white-space: nowrap;
 }
@@ -162,40 +288,35 @@ body {
 }
 
 .badge-running {
-    background: rgba(31, 111, 235, 0.15);
+    background: var(--accent-bg);
     color: var(--accent);
-    border: 1px solid rgba(88, 166, 255, 0.3);
-    box-shadow: 0 0 12px rgba(88, 166, 255, 0.15);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
     animation: badge-pulse 2s ease-in-out infinite;
 }
 
 .badge-completed {
     background: var(--success-bg);
     color: var(--success);
-    border: 1px solid rgba(63, 185, 80, 0.3);
-    box-shadow: 0 0 12px rgba(63, 185, 80, 0.1);
+    border: 1px solid color-mix(in srgb, var(--success) 30%, transparent);
 }
 
 .badge-error {
     background: var(--error-bg);
     color: var(--error);
-    border: 1px solid rgba(248, 81, 73, 0.3);
-    box-shadow: 0 0 12px rgba(248, 81, 73, 0.1);
+    border: 1px solid color-mix(in srgb, var(--error) 30%, transparent);
 }
 
 .badge-planning {
-    background: var(--purple-dim);
+    background: var(--purple-bg);
     color: var(--purple);
-    border: 1px solid rgba(167, 139, 250, 0.3);
-    box-shadow: 0 0 12px rgba(167, 139, 250, 0.1);
+    border: 1px solid color-mix(in srgb, var(--purple) 30%, transparent);
     animation: badge-pulse 2s ease-in-out infinite;
 }
 
 .badge-review {
     background: var(--warning-bg);
     color: var(--warning);
-    border: 1px solid rgba(210, 153, 34, 0.3);
-    box-shadow: 0 0 12px rgba(210, 153, 34, 0.1);
+    border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
 }
 
 @keyframes badge-pulse {
@@ -206,26 +327,87 @@ body {
     }
 
     50% {
-        opacity: 0.65;
+        opacity: 0.6;
     }
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
-/*  Main Content — two-column layout                                          */
+/*  Shared Status Utilities                                                   */
+/*  Used by phase cards, session items, and status pills                      */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.status-pill {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 2px 8px;
+    border-radius: var(--radius);
+    min-width: 50px;
+    text-align: center;
+    line-height: 1.4;
+}
+
+.status-pill.pending {
+    color: var(--text-dim);
+    background: var(--surface-2);
+}
+
+.status-pill.running {
+    color: var(--accent);
+    background: var(--accent-bg);
+    animation: badge-pulse 2s ease-in-out infinite;
+}
+
+.status-pill.completed {
+    color: var(--success);
+    background: var(--success-bg);
+}
+
+.status-pill.failed {
+    color: var(--error);
+    background: var(--error-bg);
+}
+
+.status-pill.skipped {
+    color: var(--warning);
+    background: var(--warning-bg);
+}
+
+.status-pill.idle {
+    color: var(--text-dim);
+    background: var(--surface-2);
+}
+
+.status-pill.error {
+    color: var(--error);
+    background: var(--error-bg);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Main Content — horizontal flex: phase-navigator | main-center             */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 .main-content {
     display: flex;
+    flex-direction: row;
     flex: 1;
     overflow: hidden;
     min-height: 0;
+}
+
+.main-center {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
 }
 
 .content-column {
     display: flex;
     flex-direction: column;
     flex: 1;
-    overflow: hidden;
+    overflow-y: auto;
     min-width: 0;
 }
 
@@ -309,85 +491,117 @@ body {
 .controls {
     display: flex;
     gap: 6px;
-    padding: 8px 16px;
+    padding: 6px 16px;
     border-bottom: 1px solid var(--border);
     background: var(--surface);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
     flex-shrink: 0;
+    position: sticky;
+    top: 0;
+    z-index: 9;
 }
 
-button {
+/* Scoped button styles — only within controls bar and named classes */
+.controls button,
+.plan-review-actions button,
+.planning-panel button {
     font-family: var(--font);
     font-size: 11px;
     font-weight: 600;
-    padding: 5px 14px;
+    padding: 4px 12px;
     border-radius: var(--radius);
     border: 1px solid var(--border);
-    background: var(--surface-2);
-    color: var(--text);
+    background: var(--vscode-button-secondaryBackground, var(--surface-2));
+    color: var(--vscode-button-secondaryForeground, var(--text));
     cursor: pointer;
     transition: all var(--transition);
     white-space: nowrap;
     letter-spacing: 0.01em;
 }
 
-button:hover {
-    background: rgba(48, 54, 61, 0.5);
-    border-color: rgba(88, 166, 255, 0.2);
-    transform: translateY(-1px);
+.controls button:hover,
+.plan-review-actions button:hover,
+.planning-panel button:hover {
+    background: var(--vscode-button-secondaryHoverBackground, var(--surface-3));
 }
 
-button:active {
-    transform: translateY(0);
-}
-
-button:disabled {
-    opacity: 0.3;
+.controls button:disabled,
+.plan-review-actions button:disabled,
+.planning-panel button:disabled {
+    opacity: 0.35;
     cursor: not-allowed;
     pointer-events: none;
 }
 
-button.primary {
-    background: linear-gradient(135deg, var(--accent-dim), #2d7de0);
-    color: #fff;
+.controls button.primary,
+.plan-review-actions button.primary,
+.planning-panel button.primary {
+    background: var(--vscode-button-background, var(--accent));
+    color: var(--vscode-button-foreground, #fff);
     border-color: transparent;
-    box-shadow: 0 2px 8px rgba(31, 111, 235, 0.25);
 }
 
-button.primary:hover {
-    box-shadow: 0 4px 16px rgba(31, 111, 235, 0.35);
+.controls button.primary:hover,
+.plan-review-actions button.primary:hover,
+.planning-panel button.primary:hover {
+    background: var(--vscode-button-hoverBackground, color-mix(in srgb, var(--accent) 85%, white));
 }
 
-button.danger {
-    border-color: rgba(248, 81, 73, 0.3);
+.controls button.danger,
+.plan-review-actions button.danger,
+.planning-panel button.danger {
+    border-color: color-mix(in srgb, var(--error) 30%, transparent);
     color: var(--error);
+    background: var(--error-bg);
 }
 
-button.danger:hover {
-    background: var(--error-bg);
-    border-color: rgba(248, 81, 73, 0.5);
+.controls button.danger:hover,
+.plan-review-actions button.danger:hover,
+.planning-panel button.danger:hover {
+    background: color-mix(in srgb, var(--error) 15%, transparent);
+    border-color: color-mix(in srgb, var(--error) 50%, transparent);
+}
+
+/* Button loading state — applied via JS after click */
+.controls button.is-loading {
+    position: relative;
+    pointer-events: none;
+    color: transparent;
+}
+
+.controls button.is-loading::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 12px;
+    height: 12px;
+    margin: -6px 0 0 -6px;
+    border: 2px solid var(--vscode-button-foreground, #fff);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
-/*  Planning Panel (Glassmorphism)                                            */
+/*  Planning Panel                                                            */
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 .planning-panel {
     padding: 16px;
     border-bottom: 1px solid var(--border);
-    background: var(--surface-glass);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid var(--border-glow);
-    animation: panel-enter 0.3s ease-out;
-    flex-shrink: 0;
+    background: var(--surface);
+    animation: panel-enter 0.2s ease-out;
+    flex-shrink: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
 }
 
 @keyframes panel-enter {
     from {
         opacity: 0;
-        transform: translateY(-8px);
+        transform: translateY(-4px);
     }
 
     to {
@@ -399,7 +613,7 @@ button.danger:hover {
 .plan-input-area h2,
 .plan-review-area h2 {
     font-size: 13px;
-    font-weight: 700;
+    font-weight: 600;
     margin-bottom: 10px;
     letter-spacing: -0.01em;
 }
@@ -407,33 +621,33 @@ button.danger:hover {
 .plan-prompt {
     width: 100%;
     min-height: 72px;
-    padding: 12px 14px;
+    padding: 8px 12px;
     font-family: var(--font);
-    font-size: 13px;
+    font-size: var(--font-size);
     line-height: 1.5;
-    background: rgba(10, 14, 20, 0.6);
-    color: var(--text);
-    border: 1px solid var(--border);
+    background: var(--vscode-input-background, var(--bg));
+    color: var(--vscode-input-foreground, var(--text));
+    border: 1px solid var(--vscode-input-border, var(--border));
     border-radius: var(--radius);
     resize: vertical;
-    margin-bottom: 10px;
-    transition: all var(--transition);
+    margin-bottom: 8px;
+    transition: border-color var(--transition);
 }
 
 .plan-prompt:focus {
     outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-glow), var(--shadow-glow);
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 .plan-prompt::placeholder {
-    color: var(--text-dim);
+    color: var(--vscode-input-placeholderForeground, var(--text-dim));
 }
 
 .plan-prompt-hint {
     font-size: 10px;
     color: var(--text-dim);
-    margin-top: -6px;
+    margin-top: -4px;
     margin-bottom: 8px;
     font-family: var(--mono);
 }
@@ -449,9 +663,9 @@ button.danger:hover {
 }
 
 .spinner {
-    width: 18px;
-    height: 18px;
-    border: 2px solid rgba(167, 139, 250, 0.2);
+    width: 16px;
+    height: 16px;
+    border: 2px solid color-mix(in srgb, var(--purple) 25%, transparent);
     border-top-color: var(--purple);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
@@ -464,6 +678,73 @@ button.danger:hover {
 }
 
 /* Plan review */
+.plan-review-area {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    flex: 1;
+    overflow-y: auto;
+}
+
+#plan-review-phases {
+    flex: 1;
+    min-height: 0;
+    padding-bottom: 4px;
+}
+
+/* Carousel navigation */
+.plan-carousel-nav {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 8px 0;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.plan-carousel-nav button {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all var(--transition);
+    padding: 0;
+}
+
+.plan-carousel-nav button:hover:not(:disabled) {
+    background: var(--accent-bg);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.plan-carousel-nav button:disabled {
+    opacity: 0.25;
+    cursor: not-allowed;
+}
+
+.plan-carousel-label {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 90px;
+    text-align: center;
+}
+
+/* Carousel card visibility */
+.plan-review-card.carousel-hidden {
+    display: none;
+}
+
 .plan-project-id {
     font-size: 11px;
     color: var(--text-muted);
@@ -474,17 +755,16 @@ button.danger:hover {
 }
 
 .plan-review-card {
-    background: rgba(10, 14, 20, 0.5);
+    background: var(--surface-2);
     border: 1px solid var(--border);
-    border-radius: var(--radius);
+    border-radius: var(--radius-lg);
     padding: 12px 14px;
     margin-bottom: 6px;
-    transition: all var(--transition);
+    transition: border-color var(--transition);
 }
 
 .plan-review-card:hover {
-    border-color: rgba(88, 166, 255, 0.25);
-    box-shadow: var(--shadow-glow);
+    border-color: color-mix(in srgb, var(--accent) 35%, transparent);
 }
 
 .plan-card-header {
@@ -517,9 +797,9 @@ button.danger:hover {
 .plan-card-context code {
     font-family: var(--mono);
     font-size: 10px;
-    padding: 2px 7px;
-    background: var(--purple-dim);
-    border-radius: 4px;
+    padding: 2px 6px;
+    background: var(--purple-bg);
+    border-radius: var(--radius);
     color: var(--purple);
 }
 
@@ -535,144 +815,88 @@ button.danger:hover {
 
 .plan-review-actions {
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    gap: 8px;
     margin-top: 12px;
-    padding-top: 12px;
+    padding: 10px 0 4px;
     border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    position: sticky;
+    bottom: 0;
+    background: var(--surface);
+    z-index: 2;
 }
 
-.plan-replan {
+.plan-review-actions .plan-nav {
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--vscode-widget-border, rgba(255,255,255,0.1));
+    margin-bottom: 4px;
+}
+
+.plan-decision {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 100%;
+}
+
+.plan-replan-group {
     display: flex;
     gap: 6px;
+    align-items: center;
+}
+
+.plan-replan-group .plan-feedback-input {
     flex: 1;
+}
+
+.plan-replan-group button {
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+#btn-plan-approve.primary {
+    background: var(--vscode-testing-iconPassed, #388a34);
+    color: #fff;
+}
+#btn-plan-approve.primary:hover {
+    background: var(--vscode-testing-iconPassed, #2d6e2a);
+    filter: brightness(1.15);
+}
+
+#btn-plan-reject.danger {
+    background: var(--vscode-editorWarning-foreground, #cca700);
+    color: #000;
+}
+#btn-plan-reject.danger:hover {
+    filter: brightness(1.15);
 }
 
 .plan-feedback-input {
     flex: 1;
-    padding: 6px 10px;
+    padding: 5px 10px;
     font-family: var(--font);
     font-size: 12px;
-    background: rgba(10, 14, 20, 0.6);
-    color: var(--text);
-    border: 1px solid var(--border);
+    background: var(--vscode-input-background, var(--bg));
+    color: var(--vscode-input-foreground, var(--text));
+    border: 1px solid var(--vscode-input-border, var(--border));
     border-radius: var(--radius);
-    transition: all var(--transition);
+    transition: border-color var(--transition);
 }
 
 .plan-feedback-input:focus {
     outline: none;
-    border-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-glow);
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 1px var(--border-focus);
 }
 
 .plan-feedback-input::placeholder {
-    color: var(--text-dim);
+    color: var(--vscode-input-placeholderForeground, var(--text-dim));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
-/*  Phase Pipeline                                                            */
+/*  Phase ID — shared by plan review cards                                    */
 /* ═══════════════════════════════════════════════════════════════════════════ */
-
-.phase-pipeline {
-    padding: 12px 16px;
-    flex-shrink: 0;
-    border-bottom: 1px solid var(--border);
-}
-
-.phase-pipeline h2 {
-    font-size: 10px;
-    color: var(--text-dim);
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    margin-bottom: 8px;
-    font-weight: 700;
-}
-
-.phase-scroll {
-    display: flex;
-    gap: 8px;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding-bottom: 6px;
-    scroll-behavior: smooth;
-    scrollbar-width: thin;
-}
-
-/* Phase card */
-.phase-card {
-    flex: 0 0 200px;
-    min-width: 180px;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 10px 12px;
-    transition: all var(--transition);
-    cursor: default;
-    position: relative;
-    border-top: 3px solid transparent;
-}
-
-.phase-card:hover {
-    border-color: rgba(88, 166, 255, 0.2);
-    background: rgba(22, 27, 34, 0.95);
-    transform: translateY(-2px);
-    box-shadow: var(--shadow-md);
-}
-
-/* Phase entry animation */
-.phase-card.phase-enter {
-    animation: phase-pop-in 0.3s ease-out both;
-}
-
-@keyframes phase-pop-in {
-    from {
-        opacity: 0;
-        transform: scale(0.92) translateY(6px);
-    }
-
-    to {
-        opacity: 1;
-        transform: scale(1) translateY(0);
-    }
-}
-
-/* Status-specific top border colors */
-.phase-card.pending {
-    border-top-color: var(--text-dim);
-}
-
-.phase-card.running {
-    border-top-color: var(--accent);
-    background: rgba(31, 111, 235, 0.04);
-    box-shadow: 0 0 16px rgba(88, 166, 255, 0.08);
-}
-
-.phase-card.completed {
-    border-top-color: var(--success);
-    opacity: 0.8;
-}
-
-.phase-card.completed:hover {
-    opacity: 0.95;
-}
-
-.phase-card.failed {
-    border-top-color: var(--error);
-    background: rgba(248, 81, 73, 0.03);
-}
-
-.phase-card.skipped {
-    border-top-color: var(--warning);
-    opacity: 0.6;
-}
-
-.phase-card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 6px;
-}
 
 .phase-id {
     font-family: var(--mono);
@@ -681,74 +905,156 @@ button.danger:hover {
     font-weight: 700;
 }
 
-.phase-status-pill {
-    font-size: 8px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 2px 8px;
-    border-radius: 4px;
-    min-width: 52px;
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Phase Details Placeholder                                                 */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.phase-details-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 16px;
+    color: var(--text-dim);
+    font-size: 12px;
     text-align: center;
+    gap: 8px;
 }
 
-.phase-status-pill.pending {
-    color: var(--text-dim);
-    background: rgba(28, 33, 40, 0.5);
+.phase-details-placeholder::before {
+    content: '📋';
+    font-size: 24px;
+    opacity: 0.4;
 }
 
-.phase-status-pill.running {
-    color: var(--accent);
-    background: rgba(31, 111, 235, 0.12);
-    animation: badge-pulse 2s ease-in-out infinite;
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Phase Details Content                                                     */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.phase-details {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
 }
 
-.phase-status-pill.completed {
-    color: var(--success);
-    background: var(--success-bg);
-}
-
-.phase-status-pill.failed {
-    color: var(--error);
-    background: var(--error-bg);
-}
-
-.phase-status-pill.skipped {
-    color: var(--warning);
-    background: var(--warning-bg);
-}
-
-.phase-card-prompt {
-    font-size: 11px;
+.phase-details h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
     color: var(--text);
-    line-height: 1.4;
+}
+
+.phase-prompt-full {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    background: var(--surface-2);
+    padding: 10px 12px;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    font-family: var(--font);
+}
+
+.phase-context-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.file-chip {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 8px;
+    background: var(--purple-bg);
+    border-radius: var(--radius);
+    color: var(--purple);
+    white-space: nowrap;
+    max-width: 200px;
     overflow: hidden;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    margin-bottom: 8px;
-    min-height: 30px;
+    text-overflow: ellipsis;
 }
 
-.phase-card-footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-}
-
-.phase-file-count {
-    font-size: 10px;
-    color: var(--text-dim);
+.phase-success-criteria {
     font-family: var(--mono);
-    display: flex;
-    align-items: center;
-    gap: 3px;
+    font-size: 11px;
+    color: var(--text-muted);
+    padding: 6px 10px;
+    background: var(--success-bg);
+    border-radius: var(--radius);
+    border-left: 3px solid var(--success);
 }
 
-.phase-duration {
-    font-size: 10px;
-    color: var(--text-dim);
-    font-family: var(--mono);
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Plan Prompt Section (within main-center)                                  */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.plan-prompt-section {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.plan-prompt-section textarea {
+    width: 100%;
+    min-height: 72px;
+    padding: 8px 12px;
+    font-family: var(--font);
+    font-size: var(--font-size);
+    line-height: 1.5;
+    background: var(--vscode-input-background, var(--bg));
+    color: var(--vscode-input-foreground, var(--text));
+    border: 1px solid var(--vscode-input-border, var(--border));
+    border-radius: var(--radius);
+    resize: vertical;
+    transition: border-color var(--transition);
+}
+
+.plan-prompt-section textarea:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 1px var(--border-focus);
+}
+
+.plan-prompt-section textarea::placeholder {
+    color: var(--vscode-input-placeholderForeground, var(--text-dim));
+}
+
+.plan-prompt-section button {
+    align-self: flex-end;
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 16px;
+    border-radius: var(--radius);
+    border: none;
+    background: var(--vscode-button-background, var(--accent));
+    color: var(--vscode-button-foreground, #fff);
+    cursor: pointer;
+    transition: background var(--transition);
+}
+
+.plan-prompt-section button:hover {
+    background: var(--vscode-button-hoverBackground, color-mix(in srgb, var(--accent) 85%, white));
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  App Body — horizontal flex layout for navigator + details                 */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.app-body {
+    display: flex;
+    flex-direction: row;
+    flex: 1;
+    overflow: hidden;
+    min-height: 0;
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -756,8 +1062,8 @@ button.danger:hover {
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 .terminal {
-    background: #010409;
-    padding: 12px 16px;
+    background: var(--vscode-terminal-background, var(--bg));
+    padding: 10px 16px;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -784,9 +1090,9 @@ button.danger:hover {
 
 .terminal-output {
     font-family: var(--mono);
-    font-size: 11px;
-    line-height: 1.7;
-    color: var(--text-muted);
+    font-size: var(--editor-font-size);
+    line-height: 1.6;
+    color: var(--vscode-terminal-foreground, var(--text-muted));
     white-space: pre-wrap;
     word-break: break-all;
     flex: 1;
@@ -795,26 +1101,26 @@ button.danger:hover {
 }
 
 .terminal-output .stderr {
-    color: var(--error);
+    color: var(--vscode-terminal-ansiBrightRed, var(--error));
 }
 
 .terminal-output .warn {
-    color: var(--warning);
+    color: var(--vscode-terminal-ansiYellow, var(--warning));
 }
 
 .terminal-output .info {
-    color: var(--accent);
+    color: var(--vscode-terminal-ansiBrightBlue, var(--info));
 }
 
 .btn-scroll-bottom {
     position: absolute;
-    bottom: 16px;
-    right: 16px;
-    width: 28px;
-    height: 28px;
+    bottom: 14px;
+    right: 14px;
+    width: 26px;
+    height: 26px;
     border-radius: 50%;
-    background: var(--accent-dim);
-    color: #fff;
+    background: var(--vscode-button-background, var(--accent));
+    color: var(--vscode-button-foreground, #fff);
     border: none;
     cursor: pointer;
     font-size: 12px;
@@ -822,9 +1128,9 @@ button.danger:hover {
     align-items: center;
     justify-content: center;
     opacity: 0;
-    transition: opacity 0.2s;
+    transition: opacity 0.15s;
     z-index: 5;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    box-shadow: var(--shadow-md);
 }
 
 .btn-scroll-bottom.visible {
@@ -832,7 +1138,7 @@ button.danger:hover {
 }
 
 .btn-scroll-bottom:hover {
-    background: var(--accent);
+    background: var(--vscode-button-hoverBackground, color-mix(in srgb, var(--accent) 85%, white));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -846,8 +1152,8 @@ button.danger:hover {
 
 .token-bar-track {
     width: 100%;
-    height: 4px;
-    background: rgba(28, 33, 40, 0.6);
+    height: 3px;
+    background: var(--surface-2);
     border-radius: 2px;
     overflow: hidden;
 }
@@ -856,29 +1162,7 @@ button.danger:hover {
     height: 100%;
     border-radius: 2px;
     transition: width 0.4s ease, background 0.4s ease;
-    position: relative;
-    overflow: hidden;
-}
-
-.token-bar-fill::after {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: -100%;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.15), transparent);
-    animation: shimmer 2s ease-in-out infinite;
-}
-
-@keyframes shimmer {
-    0% {
-        left: -100%;
-    }
-
-    100% {
-        left: 100%;
-    }
+    background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 70%, white));
 }
 
 .token-bar-label {
@@ -899,13 +1183,13 @@ button.danger:hover {
     justify-content: center;
     padding: 24px 0;
     color: var(--text-dim);
-    animation: fade-in 0.4s ease-out;
+    animation: fade-in 0.3s ease-out;
 }
 
 @keyframes fade-in {
     from {
         opacity: 0;
-        transform: translateY(8px);
+        transform: translateY(6px);
     }
 
     to {
@@ -947,12 +1231,12 @@ button.danger:hover {
 }
 
 ::-webkit-scrollbar-thumb {
-    background: rgba(48, 54, 61, 0.5);
+    background: var(--vscode-scrollbarSlider-background, rgba(128, 128, 128, 0.3));
     border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: var(--text-dim);
+    background: var(--vscode-scrollbarSlider-hoverBackground, rgba(128, 128, 128, 0.5));
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════ */
@@ -960,10 +1244,421 @@ button.danger:hover {
 /* ═══════════════════════════════════════════════════════════════════════════ */
 
 :focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
+    outline: 1px solid var(--border-focus);
+    outline-offset: 1px;
 }
 
 button:focus-visible {
-    box-shadow: 0 0 0 3px var(--accent-glow);
+    box-shadow: 0 0 0 2px var(--border-focus);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Chat History Drawer                                                       */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.chat-history-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 300px;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -4px 0 16px rgba(0, 0, 0, 0.2);
+    z-index: 100;
+    animation: drawer-slide-in 0.2s ease-out;
+}
+
+@keyframes drawer-slide-in {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+.drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.drawer-header h2 {
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+
+.btn-close-drawer {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 16px;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--radius);
+    transition: all var(--transition);
+    line-height: 1;
+}
+
+.btn-close-drawer:hover {
+    color: var(--text);
+    background: var(--surface-2);
+}
+
+.drawer-search {
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.session-search-input {
+    width: 100%;
+    padding: 6px 10px;
+    font-family: var(--font);
+    font-size: 12px;
+    background: var(--vscode-input-background, var(--bg));
+    color: var(--vscode-input-foreground, var(--text));
+    border: 1px solid var(--vscode-input-border, var(--border));
+    border-radius: var(--radius);
+    transition: border-color var(--transition);
+}
+
+.session-search-input:focus {
+    outline: none;
+    border-color: var(--border-focus);
+    box-shadow: 0 0 0 1px var(--border-focus);
+}
+
+.session-search-input::placeholder {
+    color: var(--vscode-input-placeholderForeground, var(--text-dim));
+}
+
+.session-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.empty-sessions {
+    text-align: center;
+    color: var(--text-dim);
+    padding: 32px 16px;
+    font-size: 12px;
+}
+
+/* ─── Session Item Cards ─────────────────────────────────────────────────── */
+
+.session-item {
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all var(--transition);
+    background: var(--surface-2);
+}
+
+.session-item:hover {
+    border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+    background: var(--accent-bg);
+}
+
+.session-item:active {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.session-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+}
+
+.session-project {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 180px;
+}
+
+/* Session status pills use shared .status-pill utility */
+.session-status-pill {
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    padding: 2px 8px;
+    border-radius: var(--radius);
+    min-width: 50px;
+    text-align: center;
+}
+
+.session-status-pill.completed {
+    color: var(--success);
+    background: var(--success-bg);
+}
+
+.session-status-pill.running {
+    color: var(--accent);
+    background: var(--accent-bg);
+}
+
+.session-status-pill.error {
+    color: var(--error);
+    background: var(--error-bg);
+}
+
+.session-status-pill.idle {
+    color: var(--text-dim);
+    background: var(--surface-2);
+}
+
+.session-item-prompt {
+    font-size: 11px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    margin-bottom: 6px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.session-item-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    color: var(--text-dim);
+    font-family: var(--mono);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Mission Overview Zone                                                     */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.mission-overview {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+}
+
+.mission-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+}
+
+.mission-subtitle {
+    font-size: 11px;
+    color: var(--text-muted);
+    font-family: var(--mono);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Phase Navigator Sidebar                                                   */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.phase-navigator {
+    width: 220px;
+    min-width: 180px;
+    border-right: 1px solid var(--border);
+    background: var(--vscode-sideBar-background, var(--surface));
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.nav-header {
+    padding: 10px 12px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-dim);
+    font-weight: 700;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+/* Phase items in the navigator sidebar */
+.phase-item {
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: background var(--transition);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 2px 4px;
+    font-size: 12px;
+    color: var(--text);
+}
+
+.phase-item:hover {
+    background: var(--surface-2);
+}
+
+.phase-item.active {
+    background: var(--accent-bg);
+    color: var(--accent);
+}
+
+.phase-number {
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-dim);
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--surface-2);
+    flex-shrink: 0;
+}
+
+.phase-prompt-preview {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    color: var(--text);
+}
+
+/* ─── Icon Buttons ──────────────────────────────────────────────────────── */
+
+.btn-icon {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: var(--radius);
+    transition: all var(--transition);
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+}
+
+.btn-icon:hover {
+    color: var(--text);
+    background: var(--surface-2);
+}
+
+.btn-icon.btn-danger:hover {
+    color: var(--error);
+    background: var(--error-bg);
+}
+
+.btn-icon svg {
+    display: block;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Phase Details Area                                                        */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.phase-details {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    overflow-y: auto;
+}
+
+.phase-details-header {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+.phase-details-header h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.phase-details-body {
+    padding: 12px 16px;
+    flex: 1;
+    overflow-y: auto;
+}
+
+.phase-detail-section {
+    margin-bottom: 16px;
+}
+
+.phase-detail-section h4 {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-dim);
+    font-weight: 700;
+    margin-bottom: 6px;
+}
+
+.phase-detail-prompt {
+    font-size: 12px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    background: var(--surface-2);
+    padding: 10px 12px;
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--border);
+}
+
+.phase-detail-files {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.phase-detail-files code {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    background: var(--purple-bg);
+    border-radius: var(--radius);
+    color: var(--purple);
+}
+
+.phase-detail-criteria code {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-muted);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════ */
+/*  Resizable Bottom Panel (Terminal Resizer)                                 */
+/* ═══════════════════════════════════════════════════════════════════════════ */
+
+.terminal-resizer {
+    height: 4px;
+    background: var(--border);
+    cursor: ns-resize;
+    flex-shrink: 0;
+    transition: background 0.15s;
+}
+
+.terminal-resizer:hover {
+    background: var(--accent);
 }

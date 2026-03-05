@@ -9,7 +9,7 @@ node_modules/
 *.vsix
 
 # Runtime artifacts
-.isolated_agent/
+.coogent/
 
 # OS
 .DS_Store

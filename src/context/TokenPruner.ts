@@ -113,7 +113,7 @@ export class TokenPruner {
                 // Truncate content to rough character estimate
                 const targetChars = maxPerFile * 4; // inverse of CharRatioEncoder
                 entry.content = entry.content.slice(0, targetChars) +
-                    '\n\n// ... [truncated by orchestrator — exceeds per-file token budget] ...';
+                    '\n\n// ... [truncated by Coogent — exceeds per-file token budget] ...';
                 entry.tokenCount = this.encoder.countTokens(entry.content);
                 prunedCount++;
             }

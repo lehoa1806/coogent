@@ -1,8 +1,8 @@
-# Isolated-Agent — Technical Architecture
+# Coogent — Technical Architecture
 
 ## System Overview
 
-Isolated-Agent implements an **Event-Driven Master-Worker** architecture inside the Antigravity IDE (VS Code fork). The system is composed of the following decoupled subsystems:
+Coogent implements an **Event-Driven Master-Worker** architecture inside the Antigravity IDE (VS Code fork). The system is composed of the following decoupled subsystems:
 
 | Component | Process | Responsibility |
 |---|---|---|
@@ -25,7 +25,7 @@ Isolated-Agent implements an **Event-Driven Master-Worker** architecture inside 
 
 ## State Machine
 
-The OrchestratorEngine implements a deterministic finite state machine with 7 states:
+The Engine implements a deterministic finite state machine with 7 states:
 
 ```
                         ┌──────────┐
@@ -96,7 +96,7 @@ The runbook is the system's single source of truth. Schema:
 
 To prevent corruption from IDE crashes mid-write:
 
-1. **Write WAL** — Serialize the intended state to `.isolated_agent/ipc/<id>/.wal.json`
+1. **Write WAL** — Serialize the intended state to `.coogent/ipc/<id>/.wal.json`
 2. **Atomic write** — Write to `.task-runbook.json.tmp`, then `rename()` over the real file
 3. **Clear WAL** — Delete the WAL file
 
@@ -178,7 +178,7 @@ Workers are spawned with:
 
 ### Process Registry
 
-The ADK Controller maintains a `Map<phaseId, WorkerHandle>` of active workers and their PIDs. On extension deactivation, all workers are force-terminated via `terminateAll()`. On activation, stale PID files from `.isolated_agent/pid/` are cleaned up.
+The ADK Controller maintains a `Map<phaseId, WorkerHandle>` of active workers and their PIDs. On extension deactivation, all workers are force-terminated via `terminateAll()`. On activation, stale PID files from `.coogent/pid/` are cleaned up.
 
 ---
 
@@ -209,7 +209,7 @@ On each phase success, `extension.ts` intercepts the `phase:checkpoint` event an
 ## Directory Layout
 
 ```
-isolated-agent/
+coogent/
 ├── README.md
 ├── docs/
 │   ├── PRD.md
@@ -229,7 +229,7 @@ isolated-agent/
 │   ├── state/
 │   │   └── StateManager.ts        # Runbook I/O, locking, WAL
 │   ├── engine/
-│   │   ├── OrchestratorEngine.ts  # 7-state FSM
+│   │   ├── Engine.ts  # 7-state FSM
 │   │   ├── Scheduler.ts           # DAG scheduler (Pillar 2)
 │   │   └── SelfHealing.ts         # Auto-retry controller (Pillar 3)
 │   ├── adk/
@@ -251,7 +251,7 @@ isolated-agent/
 │   ├── index.html
 │   ├── app.js
 │   └── styles.css
-└── .isolated_agent/                # All runtime state (gitignored)
+└── .coogent/                # All runtime state (gitignored)
     ├── ipc/<id>/                   # Session-scoped runbook + WAL + lock
     ├── logs/                       # JSONL session logs
     └── pid/                        # PID files for orphan recovery
