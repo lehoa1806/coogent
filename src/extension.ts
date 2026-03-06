@@ -454,9 +454,14 @@ export function activate(context: vscode.ExtensionContext): void {
     // ─── Initialize MCP Server & Client Bridge ──────────────────────
     mcpServer = new CoogentMCPServer(workspaceRoot);
     mcpBridge = new MCPClientBridge(mcpServer, workspaceRoot);
-    mcpBridge.connect()
+    // Async init: open SQLite DB, then connect MCP bridge
+    mcpServer.init(sessionDir)
+      .then(() => {
+        log.info('[Coogent] ArtifactDB initialised.');
+        return mcpBridge!.connect();
+      })
       .then(() => log.info('[Coogent] MCP Client Bridge connected.'))
-      .catch(err => log.error('[Coogent] MCP Client Bridge connection failed:', err));
+      .catch(err => log.error('[Coogent] MCP Server/Bridge init failed:', err));
 
     // ─── Wire MCP Server → Engine (phaseCompleted logging bridge) ───
     // P2-1 / M-1: The MCP Server emits phaseCompleted when a worker submits
@@ -1093,6 +1098,13 @@ export async function deactivate(): Promise<void> {
 
   // Flush any remaining output buffers
   outputRegistry?.dispose();
+
+  // Close the persistent SQLite store before releasing references
+  try {
+    mcpServer?.dispose();
+  } catch (err) {
+    log.warn('[Coogent] deactivate: mcpServer.dispose() threw:', err);
+  }
 
   // Release all module-level references for GC
   stateManager = undefined;

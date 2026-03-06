@@ -74,6 +74,18 @@ You: "Refactor the authentication module to use JWT"
 - **Token Budgeting** — Prevents expensive failures by checking context size *before* calling the API
 - **post-Execution Reports** — Aggregated summary of all decisions and changes across phases
 
+## Screenshots
+
+<p align="center">
+  <img src="docs/images/mission-control-planning.png" alt="Mission Control — Planning Phase" width="720" /><br/>
+  <em>Mission Control during the Planning phase — the AI planner decomposes your prompt into executable phases.</em>
+</p>
+
+<p align="center">
+  <img src="docs/images/mission-control-execution.png" alt="Mission Control — Execution Phase" width="720" /><br/>
+  <em>Mission Control during Execution — parallel workers stream output while the AI agent resolves issues in real-time.</em>
+</p>
+
 ## Installation
 
 ### Prerequisites

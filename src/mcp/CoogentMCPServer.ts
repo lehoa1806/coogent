@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/mcp/CoogentMCPServer.ts — Core MCP Server with in-memory state store
+// src/mcp/CoogentMCPServer.ts — Core MCP Server with persistent SQLite store
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as fs from 'node:fs/promises';
@@ -14,7 +14,6 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import type {
     TaskState,
-    PhaseArtifacts,
     PhaseHandoff,
     ParsedResourceURI,
 } from './types.js';
@@ -26,6 +25,7 @@ import {
     RESOURCE_URIS,
     MCP_TOOLS,
 } from './types.js';
+import { ArtifactDB } from './ArtifactDB.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -140,8 +140,8 @@ export function safeTruncate(s: string, limit: number): string {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Core MCP Server that manages all DAG state in-memory and exposes it
- * via MCP Resources (read) and MCP Tools (mutate).
+ * Core MCP Server that manages all DAG state via persistent SQLite storage
+ * (ArtifactDB) and exposes it via MCP Resources (read) and MCP Tools (mutate).
  *
  * Resources (read-only):
  *   - coogent://tasks/{masterTaskId}/summary
@@ -157,8 +157,8 @@ export function safeTruncate(s: string, limit: number): string {
  *   - get_modified_file_content
  */
 export class CoogentMCPServer {
-    // ── State Store ──────────────────────────────────────────────────────
-    private readonly store = new Map<string, TaskState>();
+    // ── Persistent Store ─────────────────────────────────────────────────
+    private db!: ArtifactDB;
     private readonly server: Server;
     private readonly emitter = new EventEmitter();
     private readonly workspaceRoot: string;
@@ -183,6 +183,36 @@ export class CoogentMCPServer {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
+    //  Async Initialisation — MUST be called after construction
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Initialise the persistent SQLite store. Must be called after construction
+     * and before any tool/resource calls.
+     *
+     * @param sessionDir Absolute path to the session directory
+     *        (e.g. `/workspace/.coogent/ipc/20260307-000104-<uuid>`).
+     *        The database file will be created at `<sessionDir>/artifacts.db`.
+     */
+    async init(sessionDir: string): Promise<void> {
+        this.db = await ArtifactDB.create(path.join(sessionDir, 'artifacts.db'));
+        log.info('[CoogentMCPServer] ArtifactDB initialised at:', path.join(sessionDir, 'artifacts.db'));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Lifecycle
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Flush pending writes and release the SQLite database handle.
+     * Call on extension deactivation or session switch.
+     */
+    dispose(): void {
+        this.db.close();
+        log.info('[CoogentMCPServer] ArtifactDB disposed.');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
     //  Public API
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -193,15 +223,15 @@ export class CoogentMCPServer {
 
     /** Get the full task state for internal use (e.g., from the engine). */
     getTaskState(masterTaskId: string): TaskState | undefined {
-        return this.store.get(masterTaskId);
+        return this.db.getTask(masterTaskId);
     }
 
     /**
-     * Remove a task from the in-memory store (B-4 fix).
-     * Call this on session reset to prevent unbounded memory growth.
+     * Remove a task from the persistent store (B-4 fix).
+     * Call this on session reset to prevent unbounded storage growth.
      */
     purgeTask(masterTaskId: string): void {
-        this.store.delete(masterTaskId);
+        this.db.deleteTask(masterTaskId);
         log.info(`[CoogentMCPServer] Purged task: ${masterTaskId}`);
     }
 
@@ -219,38 +249,6 @@ export class CoogentMCPServer {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  State Store Helpers
-    // ═══════════════════════════════════════════════════════════════════════
-
-    /**
-     * Get or lazily create a `TaskState` entry for the given masterTaskId.
-     */
-    private getOrCreateTask(masterTaskId: string): TaskState {
-        let task = this.store.get(masterTaskId);
-        if (!task) {
-            task = {
-                masterTaskId,
-                phases: new Map<string, PhaseArtifacts>(),
-            };
-            this.store.set(masterTaskId, task);
-        }
-        return task;
-    }
-
-    /**
-     * Get or lazily create a `PhaseArtifacts` entry within a task.
-     */
-    private getPhaseArtifacts(masterTaskId: string, phaseId: string): PhaseArtifacts {
-        const task = this.getOrCreateTask(masterTaskId);
-        let phase = task.phases.get(phaseId);
-        if (!phase) {
-            phase = {};
-            task.phases.set(phaseId, phase);
-        }
-        return phase;
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════
     //  Resource Handlers
     // ═══════════════════════════════════════════════════════════════════════
 
@@ -263,7 +261,8 @@ export class CoogentMCPServer {
                 mimeType: string;
             }> = [];
 
-            for (const [taskId, task] of this.store) {
+            const taskIds = this.db.listTaskIds();
+            for (const taskId of taskIds) {
                 // Task-level resources
                 resources.push({
                     uri: RESOURCE_URIS.taskSummary(taskId),
@@ -281,8 +280,9 @@ export class CoogentMCPServer {
                     mimeType: 'text/markdown',
                 });
 
-                // Phase-level resources
-                for (const [phaseId] of task.phases) {
+                // Phase-level resources — lightweight query avoids full task deserialization
+                const phaseIds = this.db.listPhaseIds(taskId);
+                for (const phaseId of phaseIds) {
                     resources.push({
                         uri: RESOURCE_URIS.phasePlan(taskId, phaseId),
                         name: `Phase ${phaseId} — Implementation Plan`,
@@ -308,7 +308,7 @@ export class CoogentMCPServer {
                 throw new Error(`Unknown or malformed resource URI: ${uri}`);
             }
 
-            const task = this.store.get(parsed.masterTaskId);
+            const task = this.db.getTask(parsed.masterTaskId);
             if (!task) {
                 throw new Error(`Task not found: ${parsed.masterTaskId}`);
             }
@@ -573,16 +573,14 @@ export class CoogentMCPServer {
             : undefined;
 
         if (phaseId) {
-            // Phase-level plan
-            const phase = this.getPhaseArtifacts(masterTaskId, phaseId);
-            phase.implementationPlan = markdownContent;
+            // Phase-level plan → persist via DB
+            this.db.upsertPhasePlan(masterTaskId, phaseId, markdownContent);
             log.info(
                 `[CoogentMCPServer] Phase implementation plan saved: ${masterTaskId} / ${phaseId}`
             );
         } else {
-            // Master-level plan
-            const task = this.getOrCreateTask(masterTaskId);
-            task.implementationPlan = markdownContent;
+            // Master-level plan → persist via DB
+            this.db.upsertTask(masterTaskId, { implementationPlan: markdownContent });
             log.info(
                 `[CoogentMCPServer] Master implementation plan saved: ${masterTaskId}`
             );
@@ -629,8 +627,8 @@ export class CoogentMCPServer {
             completedAt: Date.now(),
         };
 
-        const phase = this.getPhaseArtifacts(masterTaskId, phaseId);
-        phase.handoff = handoff;
+        // Persist handoff to DB — upsertHandoff ensures parent task/phase rows exist
+        this.db.upsertHandoff(handoff);
 
         log.info(
             `[CoogentMCPServer] Phase handoff saved: ${masterTaskId} / ${phaseId} — ` +
@@ -656,8 +654,8 @@ export class CoogentMCPServer {
         const masterTaskId = this.validateMasterTaskId(args['masterTaskId']);
         const markdownContent = this.validateString(args['markdown_content'], 'markdown_content');
 
-        const task = this.getOrCreateTask(masterTaskId);
-        task.consolidationReport = markdownContent;
+        // Persist consolidation report to DB
+        this.db.upsertTask(masterTaskId, { consolidationReport: markdownContent });
 
         log.info(
             `[CoogentMCPServer] Consolidation report saved: ${masterTaskId}`
@@ -683,20 +681,20 @@ export class CoogentMCPServer {
         /**
          * @security R-3 Authorization Gate
          *
-         * Verifies the masterTaskId belongs to an active in-memory session before
+         * Verifies the masterTaskId belongs to an active session before
          * performing any file I/O. Prevents IDOR by callers with fabricated but
          * syntactically valid masterTaskId values.
          *
-         * **V1 (in-process MCP transport):** Session-scoped Map lookup is sufficient
+         * **V1 (in-process MCP transport):** DB lookup is sufficient
          * because the only caller is the co-located ADK worker process.
          *
          * **Networked transport hardening (pre-V2 checklist):**
-         *   1. Replace this Map lookup with a bearer-token or mTLS identity check.
+         *   1. Replace this DB lookup with a bearer-token or mTLS identity check.
          *   2. Bind tokens to a specific masterTaskId at session creation time.
          *   3. Add per-IP rate limiting on failed auth attempts.
          *   4. Audit-log every rejected request with source IP.
          */
-        const task = this.store.get(masterTaskId);
+        const task = this.db.getTask(masterTaskId);
         if (!task) {
             log.warn(`[CoogentMCPServer] R-3: Unauthorized file read attempt for task ${masterTaskId}.`);
             throw new Error('Unauthorized');
