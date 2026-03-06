@@ -1919,6 +1919,21 @@ button:focus-visible {
     overflow: hidden;
 }
 
+.terminal-toggle-bar {
+    margin-left: auto;
+    margin-right: 8px;
+}
+
+.terminal-md-rendered {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--vscode-editor-foreground, var(--text));
+    word-wrap: break-word;
+}
+
 .terminal-panel.reporting {
     border-left: 3px solid var(--success);
     background: color-mix(in srgb, var(--success) 4%, var(--vscode-terminal-background, var(--bg)));

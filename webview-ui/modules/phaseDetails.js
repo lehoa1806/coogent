@@ -190,6 +190,7 @@ function buildContextSummarySection(phase) {
  * Build the Worker Output section — a mini terminal scoped to this phase.
  * Reads accumulated output from `getAppState().phaseOutputs[phaseId]`.
  * Shows a placeholder when the phase is pending and has no output yet.
+ * Uses a Preview/Raw markdown toggle when output is available.
  * @param {{ id: number, status: string }} phase
  * @returns {string}
  */
@@ -198,19 +199,23 @@ function buildWorkerOutputSection(phase) {
     const status = (phase.status || '').toLowerCase();
     const hasOutput = typeof output === 'string' && output.length > 0;
 
-    let content;
     if (hasOutput) {
-        content = escapeHtml(output);
-    } else if (status === 'pending') {
-        content = '<span class="output-placeholder">Waiting for execution...</span>';
-    } else {
-        content = '<span class="output-placeholder">No output recorded.</span>';
+        return `
+            <div class="phase-detail-section">
+                <h4>Worker Output</h4>
+                ${createMarkdownContainer(output, `phase-output-md-${phase.id}`)}
+            </div>
+        `;
     }
+
+    const placeholder = status === 'pending'
+        ? '<span class="output-placeholder">Waiting for execution...</span>'
+        : '<span class="output-placeholder">No output recorded.</span>';
 
     return `
         <div class="phase-detail-section">
             <h4>Worker Output</h4>
-            <pre class="phase-output-section" id="phase-output-terminal">${content}</pre>
+            <pre class="phase-output-section" id="phase-output-terminal">${placeholder}</pre>
         </div>
     `;
 }

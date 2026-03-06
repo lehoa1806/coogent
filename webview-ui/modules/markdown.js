@@ -213,6 +213,14 @@ export function attachMarkdownToggleHandlers(container) {
                 btn.classList.add('active');
 
                 if (mode === 'preview') {
+                    // Re-render if content was updated while in raw mode
+                    if (mdContainer.getAttribute('data-stale') === 'true' && renderedDiv && rawDiv) {
+                        const rawPre = rawDiv.querySelector('pre');
+                        if (rawPre) {
+                            renderedDiv.innerHTML = renderMarkdown(rawPre.textContent || '');
+                        }
+                        mdContainer.removeAttribute('data-stale');
+                    }
                     if (renderedDiv) renderedDiv.style.display = 'block';
                     if (rawDiv) rawDiv.style.display = 'none';
                     // Re-render any Mermaid blocks that appeared in view

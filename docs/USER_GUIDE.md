@@ -362,7 +362,7 @@ Configure via **Settings** → **Extensions** → **Coogent**, or in `settings.j
 | Setting | Default | Description |
 |---|---|---|
 | `coogent.tokenLimit` | `100000` | Max tokens per phase context injection |
-| `coogent.workerTimeoutMs` | `300000` | Worker timeout (5 min default) |
+| `coogent.workerTimeoutMs` | `900000` | Worker timeout (15 min default) |
 | `coogent.maxRetries` | `3` | Default auto-retry count per phase |
 | `coogent.logDirectory` | `.coogent/logs` | Session log directory |
 

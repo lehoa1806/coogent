@@ -5,19 +5,32 @@
 // @ts-check
 /// <reference lib="dom" />
 
+import { renderMarkdown, renderMermaidBlocks } from './markdown.js';
+
 const MAX_LOG_NODES = 5000;
 
 /** @type {HTMLElement | null} */
 let $output = null;
 /** @type {HTMLElement | null} */
+let $outputRendered = null;
+/** @type {HTMLElement | null} */
 let $btnScrollBottom = null;
+/** @type {HTMLElement | null} */
+let $btnPreview = null;
+/** @type {HTMLElement | null} */
+let $btnRaw = null;
+/** @type {'raw' | 'preview'} */
+let terminalMode = 'raw';
 
 /**
  * Initialize terminal DOM references and scroll listeners.
  */
 export function initTerminal() {
     $output = document.getElementById('output');
+    $outputRendered = document.getElementById('output-rendered');
     $btnScrollBottom = document.getElementById('btn-scroll-bottom');
+    $btnPreview = document.getElementById('btn-terminal-preview');
+    $btnRaw = document.getElementById('btn-terminal-raw');
 
     // Scroll-to-bottom button click
     $btnScrollBottom?.addEventListener('click', () => {
@@ -29,6 +42,29 @@ export function initTerminal() {
         if (!$output || !$btnScrollBottom) return;
         const atBottom = ($output.scrollHeight - $output.scrollTop - $output.clientHeight) < 40;
         $btnScrollBottom.classList.toggle('visible', !atBottom);
+    });
+
+    // Preview/Raw toggle for global terminal
+    $btnPreview?.addEventListener('click', () => {
+        terminalMode = 'preview';
+        $btnPreview?.classList.add('active');
+        $btnRaw?.classList.remove('active');
+        if ($output) $output.style.display = 'none';
+        if ($btnScrollBottom) $btnScrollBottom.style.display = 'none';
+        if ($outputRendered) {
+            $outputRendered.style.display = 'block';
+            $outputRendered.innerHTML = renderMarkdown($output?.textContent || '');
+            renderMermaidBlocks();
+        }
+    });
+
+    $btnRaw?.addEventListener('click', () => {
+        terminalMode = 'raw';
+        $btnRaw?.classList.add('active');
+        $btnPreview?.classList.remove('active');
+        if ($output) $output.style.display = 'block';
+        if ($btnScrollBottom) $btnScrollBottom.style.display = '';
+        if ($outputRendered) $outputRendered.style.display = 'none';
     });
 }
 
@@ -63,5 +99,5 @@ export function appendOutput(text, stream) {
  */
 export function clearOutput() {
     if ($output) $output.textContent = 'Consolidation report will appear here when all phases complete.\n';
+    if ($outputRendered) $outputRendered.innerHTML = '';
 }
-

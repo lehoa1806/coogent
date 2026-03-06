@@ -29,10 +29,27 @@ const STATUS_TEXT = {
 };
 
 /**
+ * Highlight a specific phase item in the navigator by toggling the `.active` class.
+ * Exported so that both user clicks and auto-selection can keep the highlight in sync.
+ * @param {number} phaseId
+ */
+export function highlightActivePhase(phaseId) {
+    const navigatorEl = document.getElementById('phase-navigator');
+    if (!navigatorEl) return;
+
+    navigatorEl
+        .querySelectorAll('.phase-item')
+        .forEach((el) => el.classList.remove('active'));
+
+    const target = navigatorEl.querySelector(`.phase-item[data-phase-id="${phaseId}"]`);
+    if (target) target.classList.add('active');
+}
+
+/**
  * Initialize the Phase Navigator.
  * Finds the `#phase-navigator` DOM element and sets up delegated click
  * listeners. When a phase item is clicked it:
- *   1. Updates `selectedPhaseId` in application state.
+ *   1. Updates `selectedPhaseId` and `userSelectedPhaseId` in application state.
  *   2. Calls `renderPhaseDetails(phaseId)` to populate Zone 5.
  *   3. Toggles the `.active` class to highlight the selected item.
  */
@@ -53,8 +70,8 @@ export function initPhaseNavigator() {
         const phaseId = Number(item.getAttribute('data-phase-id'));
         if (Number.isNaN(phaseId)) return;
 
-        // 1. Persist selection in store
-        setAppState({ selectedPhaseId: phaseId });
+        // 1. Persist selection in store — mark as user-initiated so auto-select won't override
+        setAppState({ selectedPhaseId: phaseId, userSelectedPhaseId: phaseId });
 
         // 2. Render the detail panel for this phase
         if (typeof renderPhaseDetails === 'function') {
@@ -62,12 +79,10 @@ export function initPhaseNavigator() {
         }
 
         // 3. Visual highlight — toggle .active on clicked item
-        navigatorEl
-            .querySelectorAll('.phase-item')
-            .forEach((el) => el.classList.remove('active'));
-        item.classList.add('active');
+        highlightActivePhase(phaseId);
     });
 }
+
 
 /**
  * Determine if a phase is "ready" — all its dependencies are completed

@@ -69,8 +69,8 @@
         },
         "coogent.workerTimeoutMs": {
           "type": "number",
-          "default": 300000,
-          "description": "Timeout in milliseconds before force-killing a worker agent."
+          "default": 900000,
+          "description": "Timeout in milliseconds before force-killing a worker agent (default: 15 minutes)."
         },
         "coogent.maxRetries": {
           "type": "number",
@@ -148,6 +148,7 @@
     "typescript": "^5.4.0"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "ajv": "^8.18.0",
     "marked": "^17.0.4",
     "mermaid": "^11.12.3"

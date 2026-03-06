@@ -6,6 +6,9 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { Runbook } from '../types/index.js';
 import type { HandoffReport } from '../context/HandoffExtractor.js';
+import type { MCPClientBridge } from '../mcp/MCPClientBridge.js';
+import { RESOURCE_URIS } from '../mcp/types.js';
+import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ConsolidationReport Interface
@@ -48,6 +51,8 @@ export class ConsolidationAgent {
     async generateReport(
         sessionDir: string,
         runbook: Runbook,
+        mcpBridge?: MCPClientBridge,
+        masterTaskId?: string,
     ): Promise<ConsolidationReport> {
         const phaseResults: ConsolidationReport['phaseResults'] = [];
         const allModifiedFiles = new Set<string>();
@@ -59,7 +64,14 @@ export class ConsolidationAgent {
         let skippedPhases = 0;
 
         for (const phase of runbook.phases) {
-            const handoff = await this.loadHandoffFile(sessionDir, phase.id as number);
+            // Try MCP first, then fall back to file-based loading
+            let handoff: HandoffReport | null = null;
+            if (mcpBridge && masterTaskId) {
+                handoff = await this.loadHandoffFromMCP(mcpBridge, masterTaskId, phase.id as number);
+            }
+            if (!handoff) {
+                handoff = await this.loadHandoffFile(sessionDir, phase.id as number);
+            }
 
             if (handoff) {
                 const decisions = Array.isArray(handoff.decisions) ? handoff.decisions : [];
@@ -239,11 +251,26 @@ export class ConsolidationAgent {
     async saveReport(
         sessionDir: string,
         report: ConsolidationReport,
+        mcpBridge?: MCPClientBridge,
+        masterTaskId?: string,
     ): Promise<string> {
         const markdown = this.formatAsMarkdown(report);
+
+        // Always write to filesystem
         await fs.mkdir(sessionDir, { recursive: true });
         const filePath = path.join(sessionDir, 'consolidation-report.md');
         await fs.writeFile(filePath, markdown, 'utf-8');
+
+        // Also submit to MCP if bridge is available
+        if (mcpBridge && masterTaskId) {
+            try {
+                await mcpBridge.submitConsolidationReport(masterTaskId, markdown);
+                log.info('[ConsolidationAgent] Report submitted to MCP state.');
+            } catch (err) {
+                log.warn('[ConsolidationAgent] Failed to submit report to MCP:', err);
+            }
+        }
+
         return filePath;
     }
 
@@ -268,6 +295,55 @@ export class ConsolidationAgent {
             const raw = await fs.readFile(filePath, 'utf-8');
             return JSON.parse(raw) as HandoffReport;
         } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Attempt to read a phase handoff from the MCP server.
+     * Maps the MCP `PhaseHandoff` shape (camelCase) to the file-based
+     * `HandoffReport` shape (snake_case) for uniform downstream processing.
+     *
+     * Returns `null` if the resource is empty or the read fails.
+     */
+    private async loadHandoffFromMCP(
+        bridge: MCPClientBridge,
+        masterTaskId: string,
+        phaseId: number,
+    ): Promise<HandoffReport | null> {
+        try {
+            // Build a phase ID string suitable for MCP URI (e.g., "phase-001-<uuid>")
+            // The MCP stores handoffs keyed by phaseId strings, but the consolidation
+            // agent works with numeric IDs. We construct a padded prefix to search.
+            const paddedPhaseNum = String(phaseId).padStart(3, '0');
+            const uri = RESOURCE_URIS.phaseHandoff(masterTaskId, `phase-${paddedPhaseNum}`);
+            const handoffJson = await bridge.readResource(uri);
+
+            if (!handoffJson || handoffJson.trim() === '') {
+                return null;
+            }
+
+            const mcpHandoff = JSON.parse(handoffJson) as Record<string, unknown>;
+
+            // Map MCP PhaseHandoff (camelCase) → file-based HandoffReport (snake_case)
+            return {
+                phaseId,
+                decisions: Array.isArray(mcpHandoff.decisions) ? mcpHandoff.decisions as string[] : [],
+                modified_files: Array.isArray(mcpHandoff.modifiedFiles)
+                    ? mcpHandoff.modifiedFiles as string[]
+                    : (Array.isArray(mcpHandoff.modified_files) ? mcpHandoff.modified_files as string[] : []),
+                unresolved_issues: Array.isArray(mcpHandoff.blockers)
+                    ? mcpHandoff.blockers as string[]
+                    : (Array.isArray(mcpHandoff.unresolved_issues) ? mcpHandoff.unresolved_issues as string[] : []),
+                next_steps_context: typeof mcpHandoff.next_steps_context === 'string'
+                    ? mcpHandoff.next_steps_context
+                    : '',
+                timestamp: typeof mcpHandoff.completedAt === 'number'
+                    ? mcpHandoff.completedAt as number
+                    : Date.now(),
+            };
+        } catch (err) {
+            log.warn(`[ConsolidationAgent] MCP handoff read failed for phase ${phaseId}:`, err);
             return null;
         }
     }

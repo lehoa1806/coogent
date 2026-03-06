@@ -37,6 +37,17 @@ export interface ADKSessionOptions {
     masterTaskId?: string;
     /** Phase number — used to build the `phase-NNN-<uuid>` sub-task directory. */
     phaseNumber?: number;
+    /**
+     * Optional MCP resource URIs for warm-start context injection.
+     * When provided, workers can read context from the local MCP server
+     * instead of relying solely on file-based context injection.
+     */
+    mcpResourceUris?: {
+        /** URI to the master-level implementation plan. e.g. coogent://tasks/{id}/implementation_plan */
+        implementationPlan?: string;
+        /** URI to the parent phase's handoff artifact. e.g. coogent://tasks/{id}/phases/{parentPhaseId}/handoff */
+        parentHandoff?: string;
+    };
 }
 
 export interface ADKSessionHandle {
@@ -103,8 +114,8 @@ export class ADKController extends EventEmitter {
     private readonly pidDir: string;
     private _conversationSettings: ConversationSettings = { ...DEFAULT_CONVERSATION_SETTINGS };
 
-    /** Configurable idle timeout for the watchdog (ms). Default: 5 minutes. */
-    private watchdogTimeoutMs = 300_000;
+    /** Configurable idle timeout for the watchdog (ms). Default: 15 minutes. */
+    private watchdogTimeoutMs = 900_000;
     private _disposed = false;
 
     constructor(
@@ -149,7 +160,11 @@ export class ADKController extends EventEmitter {
         phase: Phase,
         contextPayload: string,
         timeoutMs = 900_000,
-        masterTaskId?: string
+        masterTaskId?: string,
+        mcpResourceUris?: {
+            implementationPlan?: string;
+            parentHandoff?: string;
+        }
     ): Promise<WorkerHandle | null> {
         // Limit check
         if (this.activeWorkers.size >= 4) {
@@ -162,7 +177,7 @@ export class ADKController extends EventEmitter {
             await this.terminateWorker(phase.id, 'ORPHAN_PREVENTION');
         }
 
-        const prompt = this.buildInjectionPrompt(phase, contextPayload);
+        const prompt = this.buildInjectionPrompt(phase, contextPayload, mcpResourceUris);
 
         // Determine if a new conversation should be started based on mode
         let newConversation = false;
@@ -482,8 +497,15 @@ export class ADKController extends EventEmitter {
     //  Prompt Builder
     // ═══════════════════════════════════════════════════════════════════════════
 
-    private buildInjectionPrompt(phase: Phase, contextPayload: string): string {
-        return [
+    private buildInjectionPrompt(
+        phase: Phase,
+        contextPayload: string,
+        mcpResourceUris?: {
+            implementationPlan?: string;
+            parentHandoff?: string;
+        }
+    ): string {
+        const sections: string[] = [
             `## Task`,
             phase.prompt,
             ``,
@@ -491,7 +513,31 @@ export class ADKController extends EventEmitter {
             `The following files are provided for reference. Work ONLY with these files.`,
             ``,
             contextPayload,
-        ].join('\n');
+        ];
+
+        // Append MCP context resources when available (warm-start injection)
+        if (mcpResourceUris) {
+            const uriLines: string[] = [];
+
+            if (mcpResourceUris.implementationPlan) {
+                uriLines.push(`- Implementation Plan: ${mcpResourceUris.implementationPlan}`);
+            }
+            if (mcpResourceUris.parentHandoff) {
+                uriLines.push(`- Parent Phase Handoff: ${mcpResourceUris.parentHandoff}`);
+            }
+
+            if (uriLines.length > 0) {
+                sections.push(
+                    ``,
+                    `## MCP Context Resources`,
+                    `You have access to a local MCP server. Use these resource URIs to read context:`,
+                    ...uriLines,
+                    `DO NOT GUESS context. Read these resources to understand your task.`
+                );
+            }
+        }
+
+        return sections.join('\n');
     }
 }
 

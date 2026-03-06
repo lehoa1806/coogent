@@ -22,9 +22,11 @@ import { GitManager } from './git/GitManager.js';
 import { GitSandboxManager } from './git/GitSandboxManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
 import { PlannerAgent } from './planner/PlannerAgent.js';
-import { SessionManager, formatSessionDirName } from './session/SessionManager.js';
+import { SessionManager, formatSessionDirName, stripSessionDirPrefix } from './session/SessionManager.js';
 import { HandoffExtractor } from './context/HandoffExtractor.js';
 import { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
+import { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
+import { MCPClientBridge } from './mcp/MCPClientBridge.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  UUIDv7 — time-ordered session ID
@@ -61,6 +63,8 @@ let sessionManager: SessionManager | undefined;
 let handoffExtractor: HandoffExtractor | undefined;
 let consolidationAgent: ConsolidationAgent | undefined;
 let currentSessionDir: string | undefined;
+let mcpServer: CoogentMCPServer | undefined;
+let mcpBridge: MCPClientBridge | undefined;
 const workerOutputAccumulator = new Map<number, string>();
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -125,7 +129,15 @@ export function activate(context: vscode.ExtensionContext): void {
       }
       MissionControlPanel.createOrShow(
         context.extensionUri, engine, sessionManager, adkController,
-        () => preFlightGitCheck(gitSandbox)
+        () => preFlightGitCheck(gitSandbox),
+        // onReset callback: update module-level state when webview triggers a new session
+        (newDir, newDirName) => {
+          currentSessionDir = newDir;
+          plannerAgent?.setMasterTaskId(newDirName);
+          // Persist the new session
+          sessionManager?.setCurrentSessionId(newDirName.replace(/^\d{8}-\d{6}-/, ''), newDirName);
+          sessionManager?.saveCurrentSession().catch(log.onError);
+        }
       );
     })
   );
@@ -194,7 +206,8 @@ export function activate(context: vscode.ExtensionContext): void {
           currentSessionDir = newDir;
           const newSM = new StateManager(newDir);
           await engine.reset(newSM);
-          sessionManager = new SessionManager(workspaceRoot, newId);
+          sessionManager = new SessionManager(workspaceRoot, newId, newDirName);
+          sessionManager.saveCurrentSession().catch(log.onError);
           plannerAgent?.setMasterTaskId(newDirName);
         } else {
           await engine.reset();
@@ -232,12 +245,23 @@ export function activate(context: vscode.ExtensionContext): void {
     // Read extension configuration
     const config = vscode.workspace.getConfiguration('coogent');
     const tokenLimit = config.get<number>('tokenLimit', 100_000);
-    const workerTimeoutMs = config.get<number>('workerTimeoutMs', 300_000);
+    const workerTimeoutMs = config.get<number>('workerTimeoutMs', 900_000);
 
 
     // ─── Initialize services ───────────────────────────────────────────
-    const sessionId = uuidv7();
-    const sessionDirName = formatSessionDirName(sessionId);
+    // Try restoring the last active session before creating a new one
+    let sessionDirName: string;
+    let sessionId: string;
+    const lastSessionDirName = SessionManager.loadLastSessionSync(workspaceRoot);
+    if (lastSessionDirName) {
+      sessionDirName = lastSessionDirName;
+      sessionId = stripSessionDirPrefix(lastSessionDirName);
+      log.info(`[Coogent] Restoring previous session: ${sessionDirName}`);
+    } else {
+      sessionId = uuidv7();
+      sessionDirName = formatSessionDirName(sessionId);
+      log.info(`[Coogent] Creating fresh session: ${sessionDirName}`);
+    }
     const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', sessionDirName);
     currentSessionDir = sessionDir;
     log.info('[Coogent] Session dir:', sessionDir);
@@ -255,7 +279,9 @@ export function activate(context: vscode.ExtensionContext): void {
     gitSandbox = new GitSandboxManager(workspaceRoot);
 
 
-    sessionManager = new SessionManager(workspaceRoot, sessionId);
+    sessionManager = new SessionManager(workspaceRoot, sessionId, sessionDirName);
+    // Persist the current session so it survives extension restarts
+    sessionManager.saveCurrentSession().catch(log.onError);
 
 
     const adkAdapter = new AntigravityADKAdapter(workspaceRoot);
@@ -295,6 +321,13 @@ export function activate(context: vscode.ExtensionContext): void {
     // ─── Initialize HandoffExtractor & ConsolidationAgent ────────────
     handoffExtractor = new HandoffExtractor();
     consolidationAgent = new ConsolidationAgent();
+
+    // ─── Initialize MCP Server & Client Bridge ──────────────────────
+    mcpServer = new CoogentMCPServer(workspaceRoot);
+    mcpBridge = new MCPClientBridge(mcpServer, workspaceRoot);
+    mcpBridge.connect()
+      .then(() => log.info('[Coogent] MCP Client Bridge connected.'))
+      .catch(err => log.error('[Coogent] MCP Client Bridge connection failed:', err));
 
 
     // ─── Wire Engine → Webview ─────────────────────────────────────────
@@ -412,7 +445,22 @@ export function activate(context: vscode.ExtensionContext): void {
         const accumulatedOutput = workerOutputAccumulator.get(phaseId) ?? '';
         workerOutputAccumulator.delete(phaseId);
         handoffExtractor.extractHandoff(phaseId, accumulatedOutput, workspaceRoot)
-          .then(report => handoffExtractor!.saveHandoff(phaseId, report, currentSessionDir!))
+          .then(report => {
+            // File-based handoff save (existing)
+            handoffExtractor!.saveHandoff(phaseId, report, currentSessionDir!);
+
+            // MCP: Also store the handoff in MCP state (gradual migration)
+            if (mcpBridge && report) {
+              const phaseIdStr = `phase-${String(phaseId).padStart(3, '0')}-00000000-0000-0000-0000-000000000000`;
+              mcpBridge.submitPhaseHandoff(
+                sessionDirName,
+                phaseIdStr,
+                report.decisions ?? [],
+                report.modified_files ?? [],
+                report.unresolved_issues ?? []
+              ).catch(err => log.error('[Coogent] Failed to store handoff in MCP:', err));
+            }
+          })
           .catch(err => log.error('[Coogent] Handoff extraction error:', err));
       } else {
         workerOutputAccumulator.delete(phaseId);
@@ -485,6 +533,13 @@ export function activate(context: vscode.ExtensionContext): void {
           ))
           .then(() => log.info('[Coogent] implementation_plan.md written to session dir.'))
           .catch(err => log.error('[Coogent] Failed to write implementation_plan.md:', err));
+
+        // MCP: Also store the plan in the MCP state (gradual migration)
+        if (mcpBridge) {
+          mcpBridge.submitImplementationPlan(sessionDirName, implPlanContent)
+            .then(() => log.info('[Coogent] Implementation plan stored in MCP state.'))
+            .catch(err => log.error('[Coogent] Failed to store implementation plan in MCP:', err));
+        }
       }
     });
 
@@ -554,6 +609,13 @@ export function activate(context: vscode.ExtensionContext): void {
             type: 'CONSOLIDATION_REPORT',
             payload: { report: markdown },
           });
+
+          // MCP: Also store the consolidation report in MCP state (gradual migration)
+          if (mcpBridge) {
+            mcpBridge.submitConsolidationReport(sessionDirName, markdown)
+              .then(() => log.info('[Coogent] Consolidation report stored in MCP state.'))
+              .catch(err => log.error('[Coogent] Failed to store consolidation report in MCP:', err));
+          }
         })
         .catch(err => {
           log.error('[Coogent] Consolidation error:', err);
@@ -625,7 +687,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
         const updated = vscode.workspace.getConfiguration('coogent');
         const newTokenLimit = updated.get<number>('tokenLimit', 100_000);
-        const newWorkerTimeoutMs = updated.get<number>('workerTimeoutMs', 300_000);
+        const newWorkerTimeoutMs = updated.get<number>('workerTimeoutMs', 900_000);
         const newMaxRetries = updated.get<number>('maxRetries', 3);
 
         // Propagate to ContextScoper
@@ -683,6 +745,14 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.showWarningMessage(
           'Coogent: Recovered from an interrupted session. Review state before continuing.'
         );
+      } else if (lastSessionDirName) {
+        // Restored a previous session — hydrate engine with its runbook
+        try {
+          await engine?.loadRunbook();
+          log.info('[Coogent] Loaded runbook from restored session.');
+        } catch (err) {
+          log.info('[Coogent] No runbook in restored session (may be idle).');
+        }
       }
     }).catch(log.onError);
 
@@ -704,6 +774,7 @@ export async function deactivate(): Promise<void> {
     engine?.abort().catch(log.onError),
     adkController?.killAllWorkers().catch(log.onError),
     plannerAgent?.abort().catch(log.onError),
+    mcpBridge?.disconnect().catch(log.onError),
   ]);
 
   // Flush any remaining output buffers
@@ -726,6 +797,8 @@ export async function deactivate(): Promise<void> {
   handoffExtractor = undefined;
   consolidationAgent = undefined;
   currentSessionDir = undefined;
+  mcpServer = undefined;
+  mcpBridge = undefined;
   workerOutputAccumulator.clear();
   // Note: log is already disposed at this point, so this line is silent
   // log.info('[Coogent] Extension deactivated.');
