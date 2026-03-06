@@ -5,9 +5,10 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { ContextResult, Phase } from '../types/index.js';
-import { ExplicitFileResolver } from './FileResolver.js';
+import { ExplicitFileResolver, ASTFileResolver } from './FileResolver.js';
 import type { FileResolver } from '../types/index.js';
 import { TokenPruner, type PrunableEntry } from './TokenPruner.js';
+import { TiktokenEncoder } from './TiktokenEncoder.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -55,9 +56,23 @@ export class ContextScoper {
     private readonly resolver: FileResolver;
 
     constructor(options?: { encoder?: TokenEncoder; tokenLimit?: number; resolver?: FileResolver }) {
-        this.encoder = options?.encoder ?? new CharRatioEncoder();
+        this.encoder = options?.encoder ?? ContextScoper.createDefaultEncoder();
         this.tokenLimit = options?.tokenLimit ?? 100_000;
-        this.resolver = options?.resolver ?? new ExplicitFileResolver();
+        this.resolver = options?.resolver ?? new ASTFileResolver({ maxDepth: 2 });
+    }
+
+    /**
+     * Create the default token encoder.
+     * Tries TiktokenEncoder first; falls back to CharRatioEncoder if it
+     * fails to load (e.g. js-tiktoken not installed or WASM error).
+     */
+    private static createDefaultEncoder(): TokenEncoder {
+        try {
+            return new TiktokenEncoder();
+        } catch {
+            log.warn('[ContextScoper] TiktokenEncoder unavailable, falling back to CharRatioEncoder');
+            return new CharRatioEncoder();
+        }
     }
 
     /**
@@ -152,8 +167,24 @@ export class ContextScoper {
         const pruner = new TokenPruner(this.encoder, this.tokenLimit);
         const pruneResult = pruner.prune(entries);
 
-        // Guard: token budget
+        // Guard: token budget — over-budget fallback strategy
         if (!pruneResult.withinBudget) {
+            // If we were using ASTFileResolver (expanded deps), retry with only
+            // the user's explicit context_files via ExplicitFileResolver.
+            if (this.resolver instanceof ASTFileResolver) {
+                log.warn(
+                    `[ContextScoper] AST-expanded context (${pruneResult.totalTokens} tokens) exceeds budget ` +
+                    `(${pruneResult.limit}). Retrying with explicit files only.`
+                );
+                const fallbackScoper = new ContextScoper({
+                    encoder: this.encoder,
+                    tokenLimit: this.tokenLimit,
+                    resolver: new ExplicitFileResolver(),
+                });
+                return fallbackScoper.assemble(phase, workspaceRoot);
+            }
+
+            // ExplicitFileResolver was already used — nothing left to fall back to.
             return {
                 ok: false,
                 totalTokens: pruneResult.totalTokens,
