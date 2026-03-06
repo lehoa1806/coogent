@@ -19,3 +19,4 @@ Thumbs.db
 .vscode/settings.json
 !.vscode/launch.json
 !.vscode/tasks.json
+src/mcp/sql-wasm.wasm

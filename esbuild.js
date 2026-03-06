@@ -1,8 +1,33 @@
 // @ts-check
 const esbuild = require('esbuild');
+const fs = require('fs');
+const path = require('path');
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
+
+/**
+ * esbuild plugin that copies sql-wasm.wasm into the out/ directory.
+ * sql.js requires the WASM binary at runtime next to the extension bundle.
+ * @type {import('esbuild').Plugin}
+ */
+const copyWasmPlugin = {
+    name: 'copy-sql-wasm',
+    setup(build) {
+        build.onStart(() => {
+            const src = path.join(__dirname, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+            const outDir = path.join(__dirname, 'out');
+            const dest = path.join(outDir, 'sql-wasm.wasm');
+
+            if (!fs.existsSync(outDir)) {
+                fs.mkdirSync(outDir, { recursive: true });
+            }
+
+            fs.copyFileSync(src, dest);
+            console.log('[copy-sql-wasm] Copied sql-wasm.wasm → out/');
+        });
+    },
+};
 
 /** @type {import('esbuild').BuildOptions} */
 const buildOptions = {
@@ -16,6 +41,7 @@ const buildOptions = {
     sourcemap: !production,
     minify: production,
     logLevel: 'info',
+    plugins: [copyWasmPlugin],
 };
 
 async function main() {

@@ -31,6 +31,9 @@ const VALID_PHASE_ID_2 =
  */
 async function createConnectedPair(workspaceRoot: string) {
     const server = new CoogentMCPServer(workspaceRoot);
+    // Initialise the SQLite-backed ArtifactDB before wiring MCP transports
+    await server.init(workspaceRoot);
+
     const client = new Client(
         { name: 'test-client', version: '0.1.0' },
         { capabilities: {} }
@@ -46,6 +49,7 @@ async function createConnectedPair(workspaceRoot: string) {
 async function teardown(client: Client, server: CoogentMCPServer) {
     await client.close();
     await server.getServer().close();
+    server.dispose();
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -155,7 +159,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
     // ── Task-Level Resources ─────────────────────────────────────────────
 
     it('reading task summary returns the summary', async () => {
-        // Seed state: submit a plan to create the task, then manually add summary
+        // Seed state: submit a plan to create the task
         await client.callTool({
             name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
             arguments: {
@@ -163,9 +167,10 @@ describe('CoogentMCPServer — Resource Handlers', () => {
                 markdown_content: '# Plan',
             },
         });
-        // Directly set the summary on the state for testing
-        const task = server.getTaskState(VALID_MASTER_TASK_ID)!;
-        task.summary = 'This is the task summary';
+        // Set the summary via the DB layer (the TaskState from getTaskState
+        // is now a fresh snapshot from SQLite, not a mutable reference).
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (server as any).db.upsertTask(VALID_MASTER_TASK_ID, { summary: 'This is the task summary' });
 
         const result = await client.readResource({
             uri: RESOURCE_URIS.taskSummary(VALID_MASTER_TASK_ID),
@@ -629,6 +634,88 @@ describe('CoogentMCPServer — ListResources', () => {
         expect(uris).toContain(RESOURCE_URIS.taskReport(VALID_MASTER_TASK_ID));
         expect(uris).toContain(RESOURCE_URIS.phasePlan(VALID_MASTER_TASK_ID, VALID_PHASE_ID));
         expect(uris).toContain(RESOURCE_URIS.phaseHandoff(VALID_MASTER_TASK_ID, VALID_PHASE_ID));
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  Persistence-across-restart Tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('CoogentMCPServer — Persistence across restart', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-persist-test-'));
+    });
+
+    afterEach(async () => {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('handoff data survives dispose + re-init with the same directory', async () => {
+        // ── Session 1: submit a handoff ──────────────────────────────────
+        const { server: srv1, client: cli1 } = await createConnectedPair(tmpDir);
+
+        await cli1.callTool({
+            name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                phaseId: VALID_PHASE_ID,
+                decisions: ['Persisted decision'],
+                modified_files: ['src/persisted.ts'],
+                blockers: [],
+            },
+        });
+
+        await teardown(cli1, srv1);
+
+        // ── Session 2: new server instance, same tmpDir ─────────────────
+        const { server: srv2, client: cli2 } = await createConnectedPair(tmpDir);
+
+        try {
+            // The handoff should be readable from the new server instance
+            const result = await cli2.readResource({
+                uri: RESOURCE_URIS.phaseHandoff(VALID_MASTER_TASK_ID, VALID_PHASE_ID),
+            });
+
+            const handoff = JSON.parse((result.contents[0] as any).text as string) as PhaseHandoff;
+            expect(handoff.phaseId).toBe(VALID_PHASE_ID);
+            expect(handoff.masterTaskId).toBe(VALID_MASTER_TASK_ID);
+            expect(handoff.decisions).toEqual(['Persisted decision']);
+            expect(handoff.modifiedFiles).toEqual(['src/persisted.ts']);
+            expect(handoff.blockers).toEqual([]);
+            expect(typeof handoff.completedAt).toBe('number');
+        } finally {
+            await teardown(cli2, srv2);
+        }
+    });
+
+    it('implementation plan data survives dispose + re-init', async () => {
+        // ── Session 1: submit a plan ────────────────────────────────────
+        const { server: srv1, client: cli1 } = await createConnectedPair(tmpDir);
+
+        await cli1.callTool({
+            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                markdown_content: '# Persisted Plan',
+            },
+        });
+
+        await teardown(cli1, srv1);
+
+        // ── Session 2 ───────────────────────────────────────────────────
+        const { server: srv2, client: cli2 } = await createConnectedPair(tmpDir);
+
+        try {
+            const result = await cli2.readResource({
+                uri: RESOURCE_URIS.taskPlan(VALID_MASTER_TASK_ID),
+            });
+
+            expect((result.contents[0] as any).text).toBe('# Persisted Plan');
+        } finally {
+            await teardown(cli2, srv2);
+        }
     });
 });
 

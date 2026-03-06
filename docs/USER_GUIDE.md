@@ -87,6 +87,8 @@ The primary workflow for most tasks.
    - Type a description: "Refactor the auth module to use JWT tokens"
    - The PlannerAgent scans your workspace and generates a phased runbook
 
+   ![Mission Control — Planning Phase](images/mission-control-planning.png)
+
 3. **Review the plan**
    - Read the implementation plan in the Mission Control panel
    - Each phase shows: prompt, target files, success criteria, and dependencies
@@ -100,6 +102,8 @@ The primary workflow for most tasks.
    - Phase status updates in real-time (pending → running → completed/failed)
    - Parallel phases run concurrently when dependencies allow
    - Failed phases retry automatically (up to `maxRetries`)
+
+   ![Mission Control — Execution Phase](images/mission-control-execution.png)
 
 6. **Review results**
    - A consolidated report summarizes all decisions and changes

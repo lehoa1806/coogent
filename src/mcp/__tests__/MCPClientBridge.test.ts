@@ -33,11 +33,13 @@ describe('MCPClientBridge — Connection Lifecycle', () => {
     beforeEach(async () => {
         tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-bridge-test-'));
         server = new CoogentMCPServer(tmpDir);
+        await server.init(tmpDir);
         bridge = new MCPClientBridge(server, tmpDir);
     });
 
     afterEach(async () => {
         await bridge.disconnect();
+        server.dispose();
         await fs.rm(tmpDir, { recursive: true, force: true });
     });
 
@@ -102,12 +104,14 @@ describe('MCPClientBridge — Core Operations', () => {
     beforeEach(async () => {
         tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-bridge-test-'));
         server = new CoogentMCPServer(tmpDir);
+        await server.init(tmpDir);
         bridge = new MCPClientBridge(server, tmpDir);
         await bridge.connect();
     });
 
     afterEach(async () => {
         await bridge.disconnect();
+        server.dispose();
         await fs.rm(tmpDir, { recursive: true, force: true });
     });
 
@@ -158,6 +162,7 @@ describe('MCPClientBridge — buildWarmStartPrompt', () => {
     beforeEach(async () => {
         tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-bridge-test-'));
         const server = new CoogentMCPServer(tmpDir);
+        await server.init(tmpDir);
         bridge = new MCPClientBridge(server, tmpDir);
     });
 
@@ -261,12 +266,14 @@ describe('MCPClientBridge — Convenience Methods', () => {
     beforeEach(async () => {
         tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-bridge-test-'));
         server = new CoogentMCPServer(tmpDir);
+        await server.init(tmpDir);
         bridge = new MCPClientBridge(server, tmpDir);
         await bridge.connect();
     });
 
     afterEach(async () => {
         await bridge.disconnect();
+        server.dispose();
         await fs.rm(tmpDir, { recursive: true, force: true });
     });
 
