@@ -717,6 +717,28 @@ describe('CoogentMCPServer — Persistence across restart', () => {
             await teardown(cli2, srv2);
         }
     });
+
+    it('upsertSummary persists the original prompt across restart', async () => {
+        // ── Session 1: persist summary via upsertSummary ────────────────
+        const { server: srv1, client: cli1 } = await createConnectedPair(tmpDir);
+
+        srv1.upsertSummary(VALID_MASTER_TASK_ID, 'Build a REST API for user auth');
+
+        await teardown(cli1, srv1);
+
+        // ── Session 2 ───────────────────────────────────────────────────
+        const { server: srv2, client: cli2 } = await createConnectedPair(tmpDir);
+
+        try {
+            const result = await cli2.readResource({
+                uri: RESOURCE_URIS.taskSummary(VALID_MASTER_TASK_ID),
+            });
+
+            expect((result.contents[0] as any).text).toBe('Build a REST API for user auth');
+        } finally {
+            await teardown(cli2, srv2);
+        }
+    });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════

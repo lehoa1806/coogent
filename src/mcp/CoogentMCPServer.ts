@@ -238,6 +238,16 @@ export class CoogentMCPServer {
     }
 
     /**
+     * Persist the user's original prompt as the task summary.
+     * Called directly by the extension host (not via MCP tool protocol)
+     * to ensure the prompt survives extension restarts.
+     */
+    upsertSummary(masterTaskId: string, summary: string): void {
+        this.db.upsertTask(masterTaskId, { summary });
+        log.info(`[CoogentMCPServer] Task summary saved: ${masterTaskId}`);
+    }
+
+    /**
      * Register a listener for the `phaseCompleted` event.
      * Fires whenever `submit_phase_handoff` is called successfully.
      */
