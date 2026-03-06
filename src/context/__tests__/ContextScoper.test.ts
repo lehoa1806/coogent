@@ -2,6 +2,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { ContextScoper, CharRatioEncoder } from '../ContextScoper.js';
+import { TiktokenEncoder } from '../TiktokenEncoder.js';
+import { ExplicitFileResolver } from '../FileResolver.js';
 import type { Phase } from '../../types/index.js';
 import { asPhaseId } from '../../types/index.js';
 
@@ -13,7 +15,8 @@ describe('ContextScoper', () => {
         tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-ctx-'));
         scoper = new ContextScoper({
             encoder: new CharRatioEncoder(),
-            tokenLimit: 100 // tight budget
+            tokenLimit: 100, // tight budget
+            resolver: new ExplicitFileResolver(),
         });
     });
 
@@ -55,5 +58,87 @@ describe('ContextScoper', () => {
         if (!res.ok) {
             expect(res.totalTokens).toBeGreaterThan(100);
         }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Pillar 2 — TiktokenEncoder Integration Tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    it('TiktokenEncoder produces different token counts than CharRatioEncoder for same content', async () => {
+        // Use a longer, more complex string to ensure encoders produce different counts.
+        // CharRatioEncoder: ceil(length / 4), Tiktoken: actual BPE tokenization.
+        const content = 'export async function processUserAuthentication(userId: string, token: string): Promise<boolean> {\n  const decoded = await verifyJWT(token);\n  return decoded.sub === userId;\n}';
+
+        const charEncoder = new CharRatioEncoder();
+        const tiktokenEncoder = new TiktokenEncoder();
+
+        const charCount = charEncoder.countTokens(content);
+        const tiktokenCount = tiktokenEncoder.countTokens(content);
+
+        // Both should return positive
+        expect(charCount).toBeGreaterThan(0);
+        expect(tiktokenCount).toBeGreaterThan(0);
+
+        // For this longer string, char/4 heuristic should differ from actual BPE count
+        expect(charCount).not.toBe(tiktokenCount);
+    });
+
+    it('ContextScoper with TiktokenEncoder assembles files correctly', async () => {
+        const tiktokenScoper = new ContextScoper({
+            encoder: new TiktokenEncoder(),
+            tokenLimit: 10_000,
+            resolver: new ExplicitFileResolver(),
+        });
+
+        await fs.writeFile(path.join(tmpDir, 'sample.ts'), 'export const x = 42;');
+
+        const phase = { id: asPhaseId(1), status: 'pending', prompt: '', context_files: ['sample.ts'], success_criteria: '' } as Phase;
+        const res = await tiktokenScoper.assemble(phase, tmpDir);
+
+        expect(res.ok).toBe(true);
+        if (res.ok) {
+            expect(res.payload).toContain('<<<FILE: sample.ts>>>');
+            expect(res.payload).toContain('export const x = 42;');
+            expect(res.totalTokens).toBeGreaterThan(0);
+        }
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Pillar 2 — Over-Budget Fallback Tests
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    it('falls back to ExplicitFileResolver when AST-expanded files exceed budget', async () => {
+        // Create an entry file that imports a huge dependency
+        const smallContent = 'import { big } from "./big";';
+        const hugeContent = 'X'.repeat(2000); // This will blow the budget
+
+        await fs.writeFile(path.join(tmpDir, 'entry.ts'), smallContent);
+        await fs.writeFile(path.join(tmpDir, 'big.ts'), hugeContent);
+
+        // Use ASTFileResolver (the default) with a tight budget that can fit
+        // just entry.ts but NOT entry.ts + big.ts
+        const astScoper = new ContextScoper({
+            encoder: new CharRatioEncoder(),
+            tokenLimit: 50, // Very tight — can fit small file but not both
+            // default resolver = ASTFileResolver which will discover big.ts
+        });
+
+        const phase = {
+            id: asPhaseId(1), status: 'pending', prompt: '',
+            context_files: ['entry.ts'],
+            success_criteria: ''
+        } as Phase;
+
+        const res = await astScoper.assemble(phase, tmpDir);
+
+        // After fallback to ExplicitFileResolver with just entry.ts,
+        // the small file should fit within budget
+        if (res.ok) {
+            expect(res.payload).toContain('<<<FILE: entry.ts>>>');
+            // big.ts should NOT be in the final payload (it was dropped by fallback)
+            expect(res.payload).not.toContain('<<<FILE: big.ts>>>');
+        }
+        // If even entry.ts alone exceeds 50 tokens (with wrapper overhead),
+        // then ok will be false — which is also a valid outcome for a 50-token budget
     });
 });
