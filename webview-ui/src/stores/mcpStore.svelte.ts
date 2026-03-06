@@ -1,24 +1,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// stores/mcpStore.ts — Svelte store factory for on-demand MCP resource fetching
+// stores/mcpStore.svelte.ts — Svelte 5 Runes factory for MCP resource fetching
 //
-// Creates isolated stores that dispatch MCP_FETCH_RESOURCE IPC messages to the
-// Extension Host and resolve responses via requestId-based correlation.
+// Creates reactive $state objects that dispatch MCP_FETCH_RESOURCE IPC messages
+// to the Extension Host and resolve responses via requestId-based correlation.
 //
 // Usage:
 //   const plan = createMCPResource<string>('coogent://tasks/.../implementation_plan');
-//   $plan.loading  → true while fetching
-//   $plan.data     → the resolved string/object content
-//   $plan.error    → error message on failure
+//   plan.state.loading  → true while fetching
+//   plan.state.data     → the resolved string/object content
+//   plan.state.error    → error message on failure
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { writable, type Readable } from 'svelte/store';
-import { postMessage } from './vscode.js';
+import { postMessage } from './vscode.svelte.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Types
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** The reactive state exposed by each MCP resource store. */
+/** The reactive state exposed by each MCP resource handle. */
 export interface MCPResourceState<T = unknown> {
     /** Whether a fetch is currently in-flight. */
     loading: boolean;
@@ -28,8 +27,10 @@ export interface MCPResourceState<T = unknown> {
     error: string | null;
 }
 
-/** Extended readable store with a refresh() method for manual re-fetching. */
-export interface MCPResourceStore<T = unknown> extends Readable<MCPResourceState<T>> {
+/** Reactive handle returned by createMCPResource(). */
+export interface MCPResourceHandle<T = unknown> {
+    /** The reactive $state object — read properties directly in templates. */
+    readonly state: MCPResourceState<T>;
     /** Re-fetch the resource from the MCP state store. */
     refresh: () => void;
     /** Remove the global message listener (cleanup). */
@@ -52,9 +53,9 @@ function generateRequestId(): string {
 }
 
 /**
- * Create a reactive Svelte store that fetches an MCP resource by URI.
+ * Create a reactive Svelte 5 $state object that fetches an MCP resource by URI.
  *
- * On creation, the store immediately dispatches an `MCP_FETCH_RESOURCE`
+ * On creation, the handle immediately dispatches an `MCP_FETCH_RESOURCE`
  * IPC message to the Extension Host and listens for the matching
  * `MCP_RESOURCE_DATA` response via the global `message` event.
  *
@@ -63,26 +64,26 @@ function generateRequestId(): string {
  * component unmounts before a response arrives.
  *
  * @param uri - The `coogent://` URI to fetch (e.g., `coogent://tasks/{id}/implementation_plan`).
- * @returns A readable store with `{ loading, data, error }` plus `refresh()` and `destroy()`.
+ * @returns A handle with `{ state, refresh, destroy }`.
  *
  * @example
  * ```svelte
  * <script>
- *   import { createMCPResource } from '../stores/mcpStore.js';
+ *   import { createMCPResource } from '../stores/mcpStore.svelte.js';
  *   const plan = createMCPResource<string>('coogent://tasks/abc/implementation_plan');
  * </script>
  *
- * {#if $plan.loading}
+ * {#if plan.state.loading}
  *   <p>Loading…</p>
- * {:else if $plan.error}
- *   <p class="error">{$plan.error}</p>
+ * {:else if plan.state.error}
+ *   <p class="error">{plan.state.error}</p>
  * {:else}
- *   <pre>{$plan.data}</pre>
+ *   <pre>{plan.state.data}</pre>
  * {/if}
  * ```
  */
-export function createMCPResource<T = string>(uri: string): MCPResourceStore<T> {
-    const { subscribe, set } = writable<MCPResourceState<T>>({
+export function createMCPResource<T = string>(uri: string): MCPResourceHandle<T> {
+    const resourceState: MCPResourceState<T> = $state({
         loading: true,
         data: null,
         error: null,
@@ -108,9 +109,13 @@ export function createMCPResource<T = string>(uri: string): MCPResourceStore<T> 
         activeRequestId = null;
 
         if (msg.payload.error) {
-            set({ loading: false, data: null, error: msg.payload.error });
+            resourceState.loading = false;
+            resourceState.data = null;
+            resourceState.error = msg.payload.error;
         } else {
-            set({ loading: false, data: msg.payload.data as T, error: null });
+            resourceState.loading = false;
+            resourceState.data = msg.payload.data as T;
+            resourceState.error = null;
         }
     }
 
@@ -122,7 +127,9 @@ export function createMCPResource<T = string>(uri: string): MCPResourceStore<T> 
         }
 
         activeRequestId = generateRequestId();
-        set({ loading: true, data: null, error: null });
+        resourceState.loading = true;
+        resourceState.data = null;
+        resourceState.error = null;
 
         // Register the response listener
         window.addEventListener('message', onMessage);
@@ -145,9 +152,5 @@ export function createMCPResource<T = string>(uri: string): MCPResourceStore<T> 
     // Auto-fetch on creation
     fetchResource();
 
-    return {
-        subscribe,
-        refresh: fetchResource,
-        destroy,
-    };
+    return { state: resourceState, refresh: fetchResource, destroy };
 }

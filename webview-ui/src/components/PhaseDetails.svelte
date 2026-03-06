@@ -5,12 +5,12 @@
 <!-- and PhaseHandoff sub-components.                                       -->
 
 <script lang="ts">
-    import { appState } from "../stores/vscode.js";
+    import { appState } from "../stores/vscode.svelte.js";
     import {
         createMCPResource,
-        type MCPResourceStore,
+        type MCPResourceHandle,
         type MCPResourceState,
-    } from "../stores/mcpStore.js";
+    } from "../stores/mcpStore.svelte.js";
     import type { Phase } from "../types.js";
     import MarkdownRenderer from "./MarkdownRenderer.svelte";
     import ViewModeTabs from "./ViewModeTabs.svelte";
@@ -28,26 +28,26 @@
     let showMCPArtifacts = $state(false);
 
     /** Original prompt the user submitted */
-    let lastPrompt = $derived($appState.lastPrompt ?? "");
+    let lastPrompt = $derived(appState.lastPrompt ?? "");
 
     let selectedPhase = $derived(
-        $appState.phases.find((p) => p.id === $appState.selectedPhaseId) as
+        appState.phases.find((p) => p.id === appState.selectedPhaseId) as
             | Phase
             | undefined,
     );
 
     let phaseIndex = $derived(
-        selectedPhase ? $appState.phases.indexOf(selectedPhase) : -1,
+        selectedPhase ? appState.phases.indexOf(selectedPhase) : -1,
     );
     let phaseNumber = $derived(phaseIndex >= 0 ? phaseIndex + 1 : 0);
 
     let phaseOutput = $derived(
-        selectedPhase ? $appState.phaseOutputs[selectedPhase.id] || "" : "",
+        selectedPhase ? appState.phaseOutputs[selectedPhase.id] || "" : "",
     );
 
     let tokenBudget = $derived(
         selectedPhase
-            ? $appState.phaseTokenBudgets[selectedPhase.id]
+            ? appState.phaseTokenBudgets[selectedPhase.id]
             : undefined,
     );
 
@@ -76,7 +76,7 @@
             return;
         }
 
-        const frozen = $appState.phaseElapsedMs[phase.id];
+        const frozen = appState.phaseElapsedMs[phase.id];
         if (frozen != null && frozen > 0) {
             if (_phaseTimerInterval) {
                 clearInterval(_phaseTimerInterval);
@@ -86,7 +86,7 @@
             return;
         }
 
-        const startMs = $appState.phaseStartTimes[phase.id];
+        const startMs = appState.phaseStartTimes[phase.id];
         if (startMs && phase.status === "running") {
             liveElapsedMs = Date.now() - startMs;
             if (!_phaseTimerInterval) {
@@ -113,7 +113,7 @@
     /** Find phases that depend on this phase (reverse lookup). */
     let dependents = $derived(
         selectedPhase
-            ? $appState.phases.filter(
+            ? appState.phases.filter(
                   (p) =>
                       p.depends_on && p.depends_on.includes(selectedPhase!.id),
               )
@@ -121,11 +121,11 @@
     );
 
     // ── MCP resource fetching ────────────────────────────────────────────
-    let handoffStore: MCPResourceStore<object> | null = $state(null);
-    let phasePlanStore: MCPResourceStore<string> | null = $state(null);
+    let handoffStore: MCPResourceHandle<object> | null = $state(null);
+    let phasePlanStore: MCPResourceHandle<string> | null = $state(null);
 
     // Parent handoff stores
-    let _parentHandoffStores: MCPResourceStore<object>[] = [];
+    let _parentHandoffStores: MCPResourceHandle<object>[] = [];
     let parentHandoffs: Record<number, MCPResourceState<object>> = $state({});
 
     // Derived state piped from store subscriptions
@@ -150,7 +150,7 @@
         /^\d{8}-\d{6}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
     $effect(() => {
-        const masterTaskId = $appState.masterTaskId;
+        const masterTaskId = appState.masterTaskId;
         const newPhaseId = selectedPhase?.id;
         const newStatus = selectedPhase?.status;
         const newMcpPhaseId = selectedPhase?.mcpPhaseId;
@@ -191,12 +191,8 @@
                 `coogent://tasks/${masterTaskId}/phases/${phaseIdStr}/implementation_plan`,
             );
 
-            handoffStore.subscribe((v) => {
-                handoffData = v;
-            });
-            phasePlanStore.subscribe((v) => {
-                planData = v;
-            });
+            handoffData = handoffStore.state;
+            planData = phasePlanStore.state;
         }
 
         _parentHandoffStores.forEach((s) => s.destroy());
@@ -211,9 +207,7 @@
             selectedPhase.depends_on.length > 0
         ) {
             for (const depId of selectedPhase.depends_on) {
-                const parentPhase = $appState.phases.find(
-                    (p) => p.id === depId,
-                );
+                const parentPhase = appState.phases.find((p) => p.id === depId);
                 if (
                     parentPhase &&
                     parentPhase.status === "completed" &&
@@ -223,9 +217,10 @@
                         `coogent://tasks/${masterTaskId}/phases/${parentPhase.mcpPhaseId}/handoff`,
                     );
                     _parentHandoffStores.push(store);
-                    store.subscribe((v) => {
-                        parentHandoffs = { ...parentHandoffs, [depId]: v };
-                    });
+                    parentHandoffs = {
+                        ...parentHandoffs,
+                        [depId]: store.state,
+                    };
                 }
             }
         }
@@ -238,7 +233,7 @@
     });
 
     function getDepLabel(depId: number): string | number {
-        const idx = $appState.phases.findIndex((p) => p.id === depId);
+        const idx = appState.phases.findIndex((p) => p.id === depId);
         return idx >= 0 ? idx + 1 : depId;
     }
 </script>

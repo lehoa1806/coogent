@@ -3,7 +3,7 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
-    import { appState, postMessage, patchState } from "../stores/vscode.js";
+    import { appState, postMessage, patchState } from "../stores/vscode.svelte.js";
     import type { EngineState } from "../types.js";
     import { DEFAULT_APP_STATE } from "../types.js";
 
@@ -31,10 +31,10 @@
     }
 
     let canNewChat = $derived(
-        $appState.engineState === "IDLE" ||
-            $appState.engineState === "READY" ||
-            $appState.engineState === "COMPLETED" ||
-            $appState.engineState === "ERROR_PAUSED",
+        appState.engineState === "IDLE" ||
+            appState.engineState === "READY" ||
+            appState.engineState === "COMPLETED" ||
+            appState.engineState === "ERROR_PAUSED",
     );
 </script>
 
@@ -45,12 +45,12 @@
 
     <h1>Coogent Mission Control</h1>
 
-    <span class="badge {badgeClass($appState.engineState)}">
-        {$appState.engineState}
+    <span class="badge {badgeClass(appState.engineState)}">
+        {appState.engineState}
     </span>
 
     <span class="badge badge-mode" title="Conversation mode">
-        {$appState.conversationMode}
+        {appState.conversationMode}
     </span>
 
     <span class="header-spacer"></span>

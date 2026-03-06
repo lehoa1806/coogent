@@ -6,21 +6,21 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
-    import { appState, patchState } from "../stores/vscode.js";
+    import { appState, patchState } from "../stores/vscode.svelte.js";
     import {
         createMCPResource,
-        type MCPResourceStore,
+        type MCPResourceHandle,
         type MCPResourceState,
-    } from "../stores/mcpStore.js";
+    } from "../stores/mcpStore.svelte.js";
     import MarkdownRenderer from "./MarkdownRenderer.svelte";
 
     // ── Legacy appState data (pushed via CONSOLIDATION_REPORT / IMPLEMENTATION_PLAN) ──
-    let legacyReport = $derived($appState.consolidationReport);
-    let legacyPlan = $derived($appState.implementationPlan);
+    let legacyReport = $derived(appState.consolidationReport);
+    let legacyPlan = $derived(appState.implementationPlan);
 
     // ── MCP resource stores ──────────────────────────────────────────────
-    let reportStore: MCPResourceStore<string> | null = $state(null);
-    let planStore: MCPResourceStore<string> | null = $state(null);
+    let reportStore: MCPResourceHandle<string> | null = $state(null);
+    let planStore: MCPResourceHandle<string> | null = $state(null);
 
     let reportData: MCPResourceState<string> = $state({
         loading: false,
@@ -45,25 +45,21 @@
 
     // ── Create MCP stores when modal becomes visible ─────────────────────
     $effect(() => {
-        const taskId = $appState.masterTaskId;
+        const taskId = appState.masterTaskId;
         if (visible && taskId) {
             // Create report store on demand
             if (showReport && !reportStore) {
                 reportStore = createMCPResource<string>(
                     `coogent://tasks/${taskId}/consolidation_report`,
                 );
-                reportStore.subscribe((v) => {
-                    reportData = v;
-                });
+                reportData = reportStore.state;
             }
             // Create plan store on demand
             if (showPlan && !planStore) {
                 planStore = createMCPResource<string>(
                     `coogent://tasks/${taskId}/implementation_plan`,
                 );
-                planStore.subscribe((v) => {
-                    planMcpData = v;
-                });
+                planMcpData = planStore.state;
             }
         }
 
@@ -84,8 +80,8 @@
 
     let isLoading = $derived(
         showReport
-            ? (reportData.loading && !legacyReport)
-            : (planMcpData.loading && !legacyPlan),
+            ? reportData.loading && !legacyReport
+            : planMcpData.loading && !legacyPlan,
     );
 
     let fetchError = $derived(

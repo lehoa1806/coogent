@@ -6,8 +6,7 @@
 // Replaces the inline switch/case in webview-ui/main.js.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { get } from 'svelte/store';
-import { appState, appendPhaseOutput } from './vscode.js';
+import { appState, appendPhaseOutput } from './vscode.svelte.js';
 import type { HostToWebviewMessage, Phase } from '../types.js';
 
 /**
@@ -66,25 +65,24 @@ function handleMessage(msg: HostToWebviewMessage): void {
         // ── Full state snapshot from Extension Host ──────────────────────
         case 'STATE_SNAPSHOT': {
             const { runbook, engineState, masterTaskId } = msg.payload;
-            appState.update((s) => ({
-                ...s,
-                engineState,
-                projectId: runbook.project_id,
-                // Only update masterTaskId when the incoming value passes the strict
-                // YYYYMMDD-HHMMSS-uuid format check. Human-readable project_id slugs
-                // (e.g. "coogent-context-management-audit") must NOT be used here,
-                // as they would produce malformed coogent:// URIs in PhaseDetails.svelte.
-                masterTaskId: isValidMasterTaskId(masterTaskId) ? masterTaskId : s.masterTaskId,
-                // Merge phases: preserve runtime fields (mcpPhaseId) that the
-                // Extension Host doesn't include in the runbook snapshot.
-                phases: (runbook.phases as Phase[]).map((incoming) => {
-                    const existing = s.phases.find((p) => p.id === incoming.id);
-                    return existing
-                        ? { ...incoming, mcpPhaseId: existing.mcpPhaseId ?? (incoming as Phase).mcpPhaseId }
-                        : (incoming as Phase);
-                }),
-                masterSummary: runbook.summary || s.masterSummary,
-            }));
+            appState.engineState = engineState;
+            appState.projectId = runbook.project_id;
+            // Only update masterTaskId when the incoming value passes the strict
+            // YYYYMMDD-HHMMSS-uuid format check. Human-readable project_id slugs
+            // (e.g. "coogent-context-management-audit") must NOT be used here,
+            // as they would produce malformed coogent:// URIs in PhaseDetails.svelte.
+            if (isValidMasterTaskId(masterTaskId)) {
+                appState.masterTaskId = masterTaskId;
+            }
+            // Merge phases: preserve runtime fields (mcpPhaseId) that the
+            // Extension Host doesn't include in the runbook snapshot.
+            appState.phases = (runbook.phases as Phase[]).map((incoming) => {
+                const existing = appState.phases.find((p) => p.id === incoming.id);
+                return existing
+                    ? { ...incoming, mcpPhaseId: existing.mcpPhaseId ?? (incoming as Phase).mcpPhaseId }
+                    : (incoming as Phase);
+            });
+            if (runbook.summary) appState.masterSummary = runbook.summary;
             break;
         }
 
@@ -92,30 +90,15 @@ function handleMessage(msg: HostToWebviewMessage): void {
         case 'PHASE_STATUS': {
             const { phaseId, status, durationMs } = msg.payload;
             const now = Date.now();
-            appState.update((s) => {
-                const phaseStartTimes = { ...s.phaseStartTimes };
-                const phaseElapsedMs = { ...s.phaseElapsedMs };
-
-                if (status === 'running' && !phaseStartTimes[phaseId]) {
-                    // Record start time when phase begins
-                    phaseStartTimes[phaseId] = now;
-                } else if (status === 'completed' || status === 'failed') {
-                    // Freeze elapsed time when phase ends
-                    const startMs = phaseStartTimes[phaseId];
-                    if (startMs) {
-                        phaseElapsedMs[phaseId] = durationMs ?? (now - startMs);
-                    }
+            if (status === 'running' && !appState.phaseStartTimes[phaseId]) {
+                appState.phaseStartTimes = { ...appState.phaseStartTimes, [phaseId]: now };
+            } else if (status === 'completed' || status === 'failed') {
+                const startMs = appState.phaseStartTimes[phaseId];
+                if (startMs) {
+                    appState.phaseElapsedMs = { ...appState.phaseElapsedMs, [phaseId]: durationMs ?? (now - startMs) };
                 }
-
-                return {
-                    ...s,
-                    phases: s.phases.map((p) =>
-                        p.id === phaseId ? { ...p, status } : p,
-                    ),
-                    phaseStartTimes,
-                    phaseElapsedMs,
-                };
-            });
+            }
+            appState.phases = appState.phases.map(p => p.id === phaseId ? { ...p, status } : p);
             break;
         }
 
@@ -124,17 +107,10 @@ function handleMessage(msg: HostToWebviewMessage): void {
         case 'TOKEN_BUDGET': {
             const { phaseId, totalTokens, limit, breakdown } = msg.payload;
             if (phaseId != null) {
-                appState.update((s) => ({
-                    ...s,
-                    phaseTokenBudgets: {
-                        ...s.phaseTokenBudgets,
-                        [phaseId]: {
-                            totalTokens,
-                            limit,
-                            fileCount: breakdown.length,
-                        },
-                    },
-                }));
+                appState.phaseTokenBudgets = {
+                    ...appState.phaseTokenBudgets,
+                    [phaseId]: { totalTokens, limit, fileCount: breakdown.length },
+                };
             }
             break;
         }
@@ -142,11 +118,8 @@ function handleMessage(msg: HostToWebviewMessage): void {
         // ── Error from Extension Host ────────────────────────────────────
         case 'ERROR': {
             const { code, message } = msg.payload;
-            appState.update((s) => ({
-                ...s,
-                error: { code, message },
-                terminalOutput: s.terminalOutput + `[ERROR] ${message}\n`,
-            }));
+            appState.error = { code, message };
+            appState.terminalOutput += `[ERROR] ${message}\n`;
             break;
         }
 
@@ -159,14 +132,10 @@ function handleMessage(msg: HostToWebviewMessage): void {
             const LAST_PROMPT_PREFIX = '[LAST_PROMPT] ';
             if (message.startsWith(LAST_PROMPT_PREFIX)) {
                 const restoredPrompt = message.slice(LAST_PROMPT_PREFIX.length);
-                appState.update((s) => ({ ...s, lastPrompt: restoredPrompt }));
+                appState.lastPrompt = restoredPrompt;
                 break;
             }
-            appState.update((s) => ({
-                ...s,
-                terminalOutput:
-                    s.terminalOutput + `[${level.toUpperCase()}] ${message}\n`,
-            }));
+            appState.terminalOutput += `[${level.toUpperCase()}] ${message}\n`;
             break;
         }
 
@@ -174,29 +143,18 @@ function handleMessage(msg: HostToWebviewMessage): void {
         // ── Plan draft for review ────────────────────────────────────────
         case 'PLAN_DRAFT': {
             const { draft, fileTree } = msg.payload;
-            appState.update((s) => ({
-                ...s,
-                planDraft: draft,
-                planFileTree: fileTree,
-                planSlideIndex: 0,
-            }));
+            appState.planDraft = draft;
+            appState.planFileTree = fileTree;
+            appState.planSlideIndex = 0;
             break;
         }
 
         // ── Plan status update ───────────────────────────────────────────
         case 'PLAN_STATUS': {
             const { status, message } = msg.payload;
-            appState.update((s) => ({
-                ...s,
-                planStatus: { status, message },
-            }));
-            if (msg.payload.status === 'error') {
-                appState.update((s) => ({
-                    ...s,
-                    terminalOutput:
-                        s.terminalOutput +
-                        `[PLAN ERROR] ${msg.payload.message || 'Planning failed'}\n`,
-                }));
+            appState.planStatus = { status, message };
+            if (status === 'error') {
+                appState.terminalOutput += `[PLAN ERROR] ${message || 'Planning failed'}\n`;
             }
             break;
         }
@@ -204,37 +162,25 @@ function handleMessage(msg: HostToWebviewMessage): void {
 
         // ── Consolidation report ─────────────────────────────────────────
         case 'CONSOLIDATION_REPORT': {
-            appState.update((s) => ({
-                ...s,
-                consolidationReport: msg.payload.report,
-            }));
+            appState.consolidationReport = msg.payload.report;
             break;
         }
 
         // ── Implementation plan ──────────────────────────────────────────
         case 'IMPLEMENTATION_PLAN': {
-            appState.update((s) => ({
-                ...s,
-                implementationPlan: msg.payload.plan,
-            }));
+            appState.implementationPlan = msg.payload.plan;
             break;
         }
 
         // ── Conversation mode sync ───────────────────────────────────────
         case 'CONVERSATION_MODE': {
-            appState.update((s) => ({
-                ...s,
-                conversationMode: msg.payload.mode,
-            }));
+            appState.conversationMode = msg.payload.mode;
             break;
         }
 
         // ── Plan summary (master task description) ───────────────────────
         case 'PLAN_SUMMARY': {
-            appState.update((s) => ({
-                ...s,
-                masterSummary: msg.payload.summary,
-            }));
+            appState.masterSummary = msg.payload.summary;
             break;
         }
 
@@ -261,29 +207,20 @@ function handleMessage(msg: HostToWebviewMessage): void {
 
         // ── Suggestion data from Extension Host ─────────────────────────
         case 'SUGGESTION_DATA': {
-            appState.update((s) => ({
-                ...s,
-                mentionItems: msg.payload.mentions as { label: string; description: string; insert: string }[],
-                workflowItems: msg.payload.workflows as { label: string; description: string; insert: string }[],
-            }));
+            appState.mentionItems = msg.payload.mentions as { label: string; description: string; insert: string }[];
+            appState.workflowItems = msg.payload.workflows as { label: string; description: string; insert: string }[];
             break;
         }
 
         // ── Session list (response to CMD_LIST_SESSIONS) ─────────────────
         case 'SESSION_LIST': {
-            appState.update((s) => ({
-                ...s,
-                sessions: msg.payload.sessions,
-            }));
+            appState.sessions = msg.payload.sessions;
             break;
         }
 
         // ── Session search results (response to CMD_SEARCH_SESSIONS) ──────
         case 'SESSION_SEARCH_RESULTS': {
-            appState.update((s) => ({
-                ...s,
-                sessions: msg.payload.sessions,
-            }));
+            appState.sessions = msg.payload.sessions;
             break;
         }
 
