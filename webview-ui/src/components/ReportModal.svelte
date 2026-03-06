@@ -83,7 +83,9 @@
     );
 
     let isLoading = $derived(
-        showReport ? reportData.loading : planMcpData.loading,
+        showReport
+            ? (reportData.loading && !legacyReport)
+            : (planMcpData.loading && !legacyPlan),
     );
 
     let fetchError = $derived(
