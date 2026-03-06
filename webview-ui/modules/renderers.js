@@ -11,7 +11,7 @@
 
 import { getAppState, setAppState, postMessage } from './store.js';
 import { startTimer, stopTimer, resetTimer } from './timer.js';
-import { renderPhaseList, updatePhaseItemStatus } from './phaseNavigator.js';
+import { renderPhaseList, updatePhaseItemStatus, highlightActivePhase } from './phaseNavigator.js';
 import { renderPhaseDetails } from './phaseDetails.js';
 import { escapeHtml } from './utils.js';
 import { renderMarkdown, createMarkdownContainer, attachMarkdownToggleHandlers, renderMermaidBlocks } from './markdown.js';
@@ -95,14 +95,24 @@ export function renderState(state) {
         // Dashboard zone 3 — Phase Navigator sidebar via phaseNavigator module
         renderPhaseList(state.runbook.phases);
 
-        // Auto-select: prefer first running phase, then first pending, then first
+        // Auto-select: prefer first running phase, then first pending, then first.
+        // BUT: only auto-select if the user hasn't manually clicked a phase.
+        // This prevents state snapshots from overriding the user's navigation.
         const phases = state.runbook.phases;
-        const runningPhase = phases.find(p => p.status === 'running');
-        const pendingPhase = phases.find(p => p.status === 'pending');
-        const autoPhase = runningPhase || pendingPhase || phases[0];
-        if (autoPhase) {
-            setAppState({ selectedPhaseId: autoPhase.id });
-            renderPhaseDetails(autoPhase.id);
+        if (getAppState().userSelectedPhaseId == null) {
+            const runningPhase = phases.find(p => p.status === 'running');
+            const pendingPhase = phases.find(p => p.status === 'pending');
+            const autoPhase = runningPhase || pendingPhase || phases[0];
+            if (autoPhase) {
+                setAppState({ selectedPhaseId: autoPhase.id });
+                renderPhaseDetails(autoPhase.id);
+                highlightActivePhase(autoPhase.id);
+            }
+        } else {
+            // User has a manual selection — just re-render details for that phase
+            // in case its status changed
+            renderPhaseDetails(getAppState().userSelectedPhaseId);
+            highlightActivePhase(getAppState().userSelectedPhaseId);
         }
     }
 }
@@ -394,6 +404,7 @@ export function resetUI() {
         engineState: 'IDLE',
         phases: [],
         selectedPhaseId: null,
+        userSelectedPhaseId: null,
         projectId: '',
         planDraft: null,
         planSlideIndex: 0,

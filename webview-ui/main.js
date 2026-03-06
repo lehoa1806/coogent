@@ -85,9 +85,19 @@ window.addEventListener('message', (event) => {
                     appendPhaseOutput(msg.payload.phaseId, msg.payload.chunk);
                     // Live-update the phase detail terminal if this phase is selected
                     if (getAppState().selectedPhaseId === msg.payload.phaseId) {
-                        const $phaseTerminal = document.getElementById('phase-output-terminal');
-                        if ($phaseTerminal) {
-                            $phaseTerminal.textContent += msg.payload.chunk;
+                        // New markdown container (has output already)
+                        const $mdContainer = document.querySelector(`#phase-output-md-${msg.payload.phaseId}`);
+                        if ($mdContainer) {
+                            const $rawPre = $mdContainer.querySelector('.md-raw pre');
+                            if ($rawPre) $rawPre.textContent = getAppState().phaseOutputs[msg.payload.phaseId] || '';
+                            // Mark rendered view as stale so it refreshes on next toggle
+                            $mdContainer.setAttribute('data-stale', 'true');
+                        } else {
+                            // Fallback: old-style pre element (placeholder state)
+                            const $phaseTerminal = document.getElementById('phase-output-terminal');
+                            if ($phaseTerminal) {
+                                $phaseTerminal.textContent += msg.payload.chunk;
+                            }
                         }
                     }
                 }
@@ -204,9 +214,16 @@ window.addEventListener('message', (event) => {
             try {
                 appendPhaseOutput(msg.payload.phaseId, msg.payload.chunk);
                 if (getAppState().selectedPhaseId === msg.payload.phaseId) {
-                    const $phaseTerminal = document.getElementById('phase-output-terminal');
-                    if ($phaseTerminal) {
-                        $phaseTerminal.textContent += msg.payload.chunk;
+                    const $mdContainer = document.querySelector(`#phase-output-md-${msg.payload.phaseId}`);
+                    if ($mdContainer) {
+                        const $rawPre = $mdContainer.querySelector('.md-raw pre');
+                        if ($rawPre) $rawPre.textContent = getAppState().phaseOutputs[msg.payload.phaseId] || '';
+                        $mdContainer.setAttribute('data-stale', 'true');
+                    } else {
+                        const $phaseTerminal = document.getElementById('phase-output-terminal');
+                        if ($phaseTerminal) {
+                            $phaseTerminal.textContent += msg.payload.chunk;
+                        }
                     }
                 }
             } catch (err) { console.error('[main] PHASE_OUTPUT handler error:', err); }

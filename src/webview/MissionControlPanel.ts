@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import type { HostToWebviewMessage, WebviewToHostMessage } from '../types/index.js';
 import type { Engine } from '../engine/Engine.js';
 import type { SessionManager } from '../session/SessionManager.js';
+import { formatSessionDirName } from '../session/SessionManager.js';
 import type { ADKController } from '../adk/ADKController.js';
 import { StateManager } from '../state/StateManager.js';
 import { isValidWebviewMessage } from './ipcValidator.js';
@@ -16,6 +17,9 @@ import log from '../logger/log.js';
 
 /** Signature for the injected pre-flight Git check function. */
 type PreFlightGitCheckFn = () => Promise<{ blocked: true; message: string } | { blocked: false }>;
+
+/** Callback invoked when CMD_RESET creates a new session. */
+type OnResetFn = (newSessionDir: string, newSessionDirName: string) => void;
 
 /**
  * Manages the Mission Control Webview panel.
@@ -45,7 +49,8 @@ export class MissionControlPanel {
     engine: Engine,
     sessionManager?: SessionManager,
     adkController?: ADKController,
-    preFlightGitCheck?: PreFlightGitCheckFn
+    preFlightGitCheck?: PreFlightGitCheckFn,
+    onReset?: OnResetFn
   ): void {
     const column = vscode.window.activeTextEditor?.viewColumn;
 
@@ -71,7 +76,8 @@ export class MissionControlPanel {
       engine,
       sessionManager,
       adkController,
-      preFlightGitCheck
+      preFlightGitCheck,
+      onReset
     );
   }
 
@@ -85,7 +91,8 @@ export class MissionControlPanel {
     private readonly engine: Engine,
     private readonly sessionManager?: SessionManager,
     private readonly adkController?: ADKController,
-    private readonly preFlightGitCheck?: PreFlightGitCheckFn
+    private readonly preFlightGitCheck?: PreFlightGitCheckFn,
+    private readonly onReset?: OnResetFn
   ) {
     this.panel = panel;
     this.panel.webview.html = this.getHtmlForWebview();
@@ -246,14 +253,17 @@ export class MissionControlPanel {
       case 'CMD_RESET': {
         // Create a fresh session so loadRunbook() won't reload the old data
         const newSessionId = randomUUID();
+        const newSessionDirName = formatSessionDirName(newSessionId);
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (workspaceRoot) {
           const newSessionDir = path.join(
-            workspaceRoot, '.coogent', 'ipc', newSessionId
+            workspaceRoot, '.coogent', 'ipc', newSessionDirName
           );
           const freshStateManager = new StateManager(newSessionDir);
           this.engine.reset(freshStateManager).catch(err => this.handleError(err));
           this.sessionManager?.setCurrentSessionId(newSessionId);
+          // Notify extension.ts to update currentSessionDir and plannerAgent
+          this.onReset?.(newSessionDir, newSessionDirName);
         } else {
           this.engine.reset().catch(err => this.handleError(err));
         }
@@ -391,22 +401,35 @@ export class MissionControlPanel {
   private handleRequestPlan(): void {
     const stateManager = (this.engine as unknown as { stateManager: { getSessionDir?: () => string } }).stateManager;
     const sessionDir = stateManager?.getSessionDir?.();
-    if (!sessionDir) return;
+    log.info(`[MissionControl] handleRequestPlan: sessionDir=${sessionDir ?? 'undefined'}`);
+    if (!sessionDir) {
+      this.sendToWebview({
+        type: 'ERROR',
+        payload: {
+          code: 'COMMAND_ERROR',
+          message: 'No session directory available. Cannot load implementation plan.',
+        },
+      });
+      return;
+    }
 
     const planPath = path.join(sessionDir, 'implementation_plan.md');
+    log.info(`[MissionControl] handleRequestPlan: reading planPath=${planPath}`);
     fs.readFile(planPath, 'utf-8')
       .then(plan => {
+        log.info(`[MissionControl] handleRequestPlan: plan loaded (${plan.length} chars)`);
         this.sendToWebview({
           type: 'IMPLEMENTATION_PLAN',
           payload: { plan },
         });
       })
-      .catch(() => {
+      .catch((err) => {
+        log.warn(`[MissionControl] handleRequestPlan: failed to read plan at ${planPath}:`, err);
         this.sendToWebview({
           type: 'ERROR',
           payload: {
             code: 'COMMAND_ERROR',
-            message: 'No implementation plan available for this session.',
+            message: `No implementation plan available for this session. (path: ${planPath})`,
           },
         });
       });
@@ -549,8 +572,17 @@ export class MissionControlPanel {
     <section class="terminal-panel panel" role="log" aria-label="Worker output">
       <div class="terminal-header panel-header">
         <span>Worker Output</span>
+        <div class="md-toggle-bar terminal-toggle-bar">
+          <button class="md-toggle-btn" id="btn-terminal-preview" data-mode="preview" title="Rendered preview">
+            <span aria-hidden="true">👁</span> Preview
+          </button>
+          <button class="md-toggle-btn active" id="btn-terminal-raw" data-mode="raw" title="Raw output">
+            <span aria-hidden="true">{ }</span> Raw
+          </button>
+        </div>
         <button class="btn-icon" id="btn-clear-output" data-tooltip="Clear output" aria-label="Clear output">🗑</button>
       </div>
+      <div class="terminal-md-rendered" id="output-rendered" style="display:none;"></div>
       <pre class="terminal-output" id="output">Waiting for execution...\n</pre>
       <button class="btn-scroll-bottom" id="btn-scroll-bottom" data-tooltip="Scroll to bottom" aria-label="Scroll to bottom">↓</button>
     </section>

@@ -92,17 +92,89 @@ export class SessionManager {
     /** Absolute path to `.coogent/ipc/` within the workspace root. */
     private readonly ipcDir: string;
 
+    /** Absolute path to the workspace root. */
+    private readonly workspaceRoot: string;
+
     /** The current active session ID (excluded from history). */
     private currentSessionId: string;
 
-    constructor(workspaceRoot: string, currentSessionId: string) {
+    /** The current session dir name (YYYYMMDD-HHMMSS-<uuid>). */
+    private currentSessionDirName: string;
+
+    /** Path to the file that persists the current session dir name. */
+    private readonly currentSessionFile: string;
+
+    constructor(workspaceRoot: string, currentSessionId: string, currentSessionDirName?: string) {
+        this.workspaceRoot = workspaceRoot;
         this.ipcDir = path.join(workspaceRoot, '.coogent', 'ipc');
         this.currentSessionId = currentSessionId;
+        this.currentSessionDirName = currentSessionDirName ?? currentSessionId;
+        this.currentSessionFile = path.join(workspaceRoot, '.coogent', 'current-session');
     }
 
     /** Update the active session ID (e.g. after switching sessions). */
-    public setCurrentSessionId(id: string): void {
+    public setCurrentSessionId(id: string, dirName?: string): void {
         this.currentSessionId = id;
+        this.currentSessionDirName = dirName ?? id;
+    }
+
+    /** Get the current session dir name (YYYYMMDD-HHMMSS-<uuid>). */
+    public getCurrentSessionDirName(): string {
+        return this.currentSessionDirName;
+    }
+
+    /**
+     * Persist the current session dir name to `.coogent/current-session`.
+     * Called after session creation or switch so it survives extension restarts.
+     */
+    public async saveCurrentSession(): Promise<void> {
+        try {
+            await fs.mkdir(path.dirname(this.currentSessionFile), { recursive: true });
+            await fs.writeFile(this.currentSessionFile, this.currentSessionDirName, 'utf-8');
+            log.info(`[SessionManager] Saved current session: ${this.currentSessionDirName}`);
+        } catch (err) {
+            log.warn('[SessionManager] Failed to save current session:', err);
+        }
+    }
+
+    /**
+     * Load the last active session dir name from `.coogent/current-session`.
+     * Returns `null` if no persisted session exists or the directory is missing.
+     */
+    public static async loadLastSession(workspaceRoot: string): Promise<string | null> {
+        const filePath = path.join(workspaceRoot, '.coogent', 'current-session');
+        try {
+            const dirName = (await fs.readFile(filePath, 'utf-8')).trim();
+            if (!dirName) return null;
+
+            // Verify the session directory actually exists
+            const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', dirName);
+            await fs.access(sessionDir);
+            log.info(`[SessionManager] Restored last session: ${dirName}`);
+            return dirName;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
+     * Synchronous version of `loadLastSession` for use in `activate()`.
+     * Returns `null` if no persisted session exists or the directory is missing.
+     */
+    public static loadLastSessionSync(workspaceRoot: string): string | null {
+        const fsSync = require('node:fs') as typeof import('node:fs');
+        const filePath = path.join(workspaceRoot, '.coogent', 'current-session');
+        try {
+            const dirName = fsSync.readFileSync(filePath, 'utf-8').trim();
+            if (!dirName) return null;
+
+            // Verify the session directory actually exists
+            const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', dirName);
+            fsSync.accessSync(sessionDir);
+            return dirName;
+        } catch {
+            return null;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

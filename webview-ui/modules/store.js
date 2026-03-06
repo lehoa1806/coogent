@@ -10,6 +10,7 @@
  * @property {string} engineState
  * @property {Array<{ id: number, prompt: string, status: string, context_files: string[], success_criteria: string }>} phases
  * @property {number | null} selectedPhaseId
+ * @property {number | null} userSelectedPhaseId - set when user manually clicks a phase; prevents auto-selection override
  * @property {string} projectId
  * @property {any} planDraft
  * @property {number} elapsedSeconds
@@ -27,6 +28,7 @@ let _state = {
     engineState: 'IDLE',
     phases: [],
     selectedPhaseId: null,
+    userSelectedPhaseId: null,
     projectId: '',
     planDraft: null,
     elapsedSeconds: 0,
