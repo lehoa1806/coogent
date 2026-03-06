@@ -1,404 +1,151 @@
-# Coogent User Guide
+# User Guide
 
-> **Audience**: Developers using the Coogent extension in the Antigravity IDE.
+> Installation, configuration, and usage workflows for Coogent.
 
 ---
 
 ## Table of Contents
 
-1. [Quick Start](#quick-start)
-2. [The Mission Control UI](#the-mission-control-ui)
-3. [The Plan & Review Workflow](#the-plan--review-workflow)
-4. [Monitoring DAG Execution](#monitoring-dag-execution)
-5. [Session History](#session-history)
-6. [Writing a Runbook](#writing-a-runbook)
-7. [Settings & Configuration](#settings--configuration)
-8. [Logs & Debugging](#logs--debugging)
-9. [Tips & Best Practices](#tips--best-practices)
+1. [Prerequisites](#prerequisites)
+2. [Installation](#installation)
+3. [Configuration](#configuration)
+4. [Usage Workflows](#usage-workflows)
 
 ---
 
-## Quick Start
+## Prerequisites
 
-### 1. Install & Build
+- [Antigravity IDE](https://antigravity.dev) (VS Code ≥ 1.85)
+- Node.js 18+
+- Git
+
+---
+
+## Installation
+
+### From Marketplace
+
+Search for **"Coogent — Multi-Agent Engine"** in the Extensions panel and click Install.
+
+### From VSIX
+
+```
+Cmd+Shift+P → "Extensions: Install from VSIX…" → select coogent-0.1.0.vsix
+```
+
+Or via CLI:
+```bash
+code --install-extension coogent-0.1.0.vsix
+```
+
+### From Source
 
 ```bash
-git clone <repo-url> coogent && cd coogent
+git clone https://github.com/lehoa1806/coogent.git
+cd coogent
 npm install
 npm run build
 ```
 
-### 2. Launch
+Press **F5** in the IDE to launch the Extension Development Host.
 
-Press **F5** in the IDE (or `npm run watch` + Launch Extension from Debug panel).
+### Verify Installation
 
-### 3. Open Mission Control
-
-`Cmd+Shift+P` → **Coogent: Open Mission Control**
-
-### 4. Enter Your Goal
-
-Type a high-level implementation prompt and press **Submit**. The Planner Agent generates a multi-phase runbook for your approval.
-
-### 5. Approve & Execute
-
-Review the plan, click **Approve**, then **Start** — the engine handles the rest.
+1. Reload the IDE (`Cmd+Shift+P` → `Developer: Reload Window`)
+2. Check the Coogent icon in the Activity Bar (left sidebar)
+3. `Cmd+Shift+P` → `Coogent: Open Mission Control`
 
 ---
 
-## The Mission Control UI
+## Configuration
 
-The Mission Control dashboard is organized into **6 visual zones**, each with a distinct responsibility:
+All settings are under `coogent.*` in VS Code Settings (`Cmd+,`):
 
-### Zone 1: Global Controls (Top Bar)
-
-| Element | Purpose |
-|---|---|
-| **New Chat** button | Reset the engine to `IDLE`, clear the current session, and start fresh |
-| **Session History** drawer | Browse, search, and reload past sessions |
-| **Conversation Mode** toggle | Switch between `isolated` (default), `continuous`, or `smart` context modes |
-
-The global controls are always visible regardless of engine state.
-
-### Zone 2: Master Task (Prompt Area)
-
-The central prompt input area where you enter your high-level implementation goal.
-
-| State | Behavior |
-|---|---|
-| `IDLE` | Text input is enabled. Type your prompt and click **Submit** |
-| `PLANNING` | Spinner shows "Generating plan…" while the Planner Agent works |
-| `PLAN_REVIEW` | Prompt area is disabled — focus shifts to the Plan Review zone |
-| `EXECUTING` | Shows the project summary from the runbook |
-| `COMPLETED` | Shows final status with the consolidation report |
-
-### Zone 3: Phase Navigator (Left Sidebar)
-
-A vertical list of all phases in the runbook, each with a status indicator:
-
-| Icon | Status | Meaning |
-|---|---|---|
-| ⏳ | `pending` | Waiting for dependencies or turn |
-| 🔄 | `running` | Worker agent is actively executing |
-| ✅ | `completed` | Phase passed evaluation |
-| ❌ | `failed` | Phase failed after all retries |
-
-**Click any phase** to view its details in Zone 4. Phases with `depends_on` relationships display as a visual DAG — independent phases appear at the same level.
-
-### Zone 4: Phase Details (Main Content)
-
-When a phase is selected in the Navigator, this zone shows:
-
-| Section | Content |
-|---|---|
-| **Phase Prompt** | The exact instruction that will be injected into the worker agent |
-| **Context Files** | List of files scoped for this phase (with token counts) |
-| **Success Criteria** | How the phase will be evaluated (`exit_code:0`, `regex:...`, etc.) |
-| **Dependencies** | Which phases must complete before this one starts |
-| **Live Output** | Real-time stdout/stderr streaming from the active worker |
-| **Duration** | Elapsed time for the active or completed phase |
-
-### Zone 5: Action Bar (Bottom Controls)
-
-Context-sensitive buttons that change based on engine state:
-
-| State | Available Actions |
-|---|---|
-| `IDLE` | — (use the prompt area) |
-| `PLAN_REVIEW` | **Approve**, **Reject** (with feedback), **Edit Draft** |
-| `READY` | **Start** |
-| `EXECUTING_WORKER` | **Abort** |
-| `ERROR_PAUSED` | **Retry**, **Skip Phase**, **Abort** |
-| `COMPLETED` | **View Report**, **View Plan**, **Review Diff**, **New Chat** |
-
-### Zone 6: Consolidation Report (Post-Execution)
-
-After all phases complete, the Consolidation Agent aggregates:
-
-- **Phase Results** — status, decisions, and modified files per phase
-- **All Modified Files** — complete list of files touched across all phases
-- **All Decisions** — architectural and implementation decisions made by workers
-- **Unresolved Issues** — any flagged concerns from phase handoffs
-
-The report is saved as `consolidation-report.md` in the session directory and rendered as formatted Markdown in the UI.
-
----
-
-## The Plan & Review Workflow
-
-Coogent uses a **"Plan & Review" gate** to ensure the AI's decomposition strategy is sound before committing execution resources.
-
-### Step 1: Submit Your Prompt
-
-Enter a high-level goal in the Master Task area. Example:
-
-```
-Add JWT authentication to the Express API: middleware, login/register endpoints,
-password hashing with bcrypt, and protected route guards.
-```
-
-### Step 2: Planner Agent Generates the Runbook
-
-The engine transitions to `PLANNING` state. The Planner Agent:
-
-1. Scans your workspace file tree
-2. Analyzes the codebase structure
-3. Decomposes the goal into sequential/parallel micro-tasks
-4. Assigns context files, success criteria, and dependencies to each phase
-5. Generates a `.task-runbook.json` and an `implementation_plan.md`
-
-### Step 3: Review the Plan
-
-The engine transitions to `PLAN_REVIEW` state. You see:
-
-- **Implementation Plan** — A detailed Markdown document describing the approach, architecture decisions, and phase-by-phase walkthrough
-- **Phase List** — Each phase with its prompt, context files, evaluator type, and dependency graph
-- **File Tree** — Which workspace files the planner identified as relevant
-
-### Step 4: Approve, Reject, or Edit
-
-| Action | What Happens |
-|---|---|
-| **Approve** | Engine transitions to `PARSING` → `READY` → auto-starts execution |
-| **Reject** (with feedback) | Engine returns to `PLANNING`. The Planner re-generates with your feedback injected as constraints |
-| **Edit Draft** | Modify phase prompts, context files, or dependencies directly in the UI before approving |
-
-### Step 5: Git Sandbox Setup
-
-Before execution begins, the engine performs a **pre-flight check**:
-
-1. Verifies the Git working tree is clean (no uncommitted changes)
-2. Records your current branch name
-3. Creates a sandbox branch: `coogent/<sanitized-task-slug>`
-4. Checks out the sandbox branch
-
-> **If the working tree is dirty**, execution is blocked with a `GIT_DIRTY` error. Commit or stash your changes first.
-
-### Step 6: Monitor Execution
-
-See [Monitoring DAG Execution](#monitoring-dag-execution) below.
-
-### Step 7: Review the Git Diff
-
-When all phases complete:
-
-1. The engine transitions to `COMPLETED`
-2. Click **Review Diff** to open the VS Code Source Control panel
-3. The native Git diff shows all changes made by AI workers on the `coogent/*` branch vs. your original branch
-4. Merge, cherry-pick, or discard as needed using standard Git workflows
-
----
-
-## Monitoring DAG Execution
-
-### Sequential vs. Parallel Phases
-
-| Mode | Trigger | Behavior |
-|---|---|---|
-| **Sequential** | No `depends_on` fields | Phases execute in array order, one at a time |
-| **DAG (Parallel)** | Any phase has `depends_on` | Independent phases run concurrently (up to `MAX_CONCURRENT_WORKERS`, default 4) |
-
-### Tracking Progress
-
-During execution:
-
-- The **Phase Navigator** (Zone 3) updates in real-time as phases transition through `pending → running → completed/failed`
-- Click any phase to see its **Live Output** in Phase Details
-- Each completed phase receives a Git snapshot commit: `coogent: auto-checkpoint phase <id>`
-
-### Self-Healing Retries
-
-If a phase fails and `max_retries > 0`:
-
-1. The engine captures stderr from the failure
-2. Builds an augmented prompt: original instruction + error context
-3. After exponential backoff delay (2s → 4s → 8s…), spawns a fresh worker
-4. If all retries exhaust → `ERROR_PAUSED` state
-
-### Handling Errors
-
-When execution pauses on error:
-
-| Action | Effect |
-|---|---|
-| **Retry** | Re-spawn the worker with the same prompt (or augmented prompt if self-healing) |
-| **Skip** | Mark the phase as skipped, advance to the next ready phase |
-| **Abort** | Terminate all workers, return to `IDLE` |
-
----
-
-## Session History
-
-Coogent persists every session in `.coogent/ipc/<YYYYMMDD-HHMMSS-uuid>/`.
-
-### Browsing Past Sessions
-
-1. Click the **Session History** button in the Global Controls
-2. Browse sessions sorted by most recent first
-3. Each session shows: project ID, phase count, completion status, first prompt
-
-### Searching Sessions
-
-Use the search bar to filter sessions by project ID or phase prompt text (case-insensitive).
-
-### Loading a Past Session
-
-Click any session to reload its runbook state into Mission Control. The engine transitions to the session's last known state.
-
-### Session Pruning
-
-Sessions beyond the configured maximum are automatically pruned (oldest first) to prevent disk bloat.
-
----
-
-## Writing a Runbook
-
-A runbook is a JSON file defining a sequence of micro-tasks. You can create one manually or let the Planner Agent generate it.
-
-### Minimal Example (Sequential)
-
-```json
-{
-  "project_id": "my-feature",
-  "status": "idle",
-  "current_phase": 0,
-  "phases": [
-    {
-      "id": 0,
-      "status": "pending",
-      "prompt": "Create src/models/User.ts with a TypeScript interface.",
-      "context_files": [],
-      "success_criteria": "exit_code:0"
-    },
-    {
-      "id": 1,
-      "status": "pending",
-      "prompt": "Create src/services/UserService.ts implementing CRUD.",
-      "context_files": ["src/models/User.ts"],
-      "success_criteria": "exit_code:0"
-    }
-  ]
-}
-```
-
-### DAG Example (Parallel Execution)
-
-Use `depends_on` to define dependencies. Independent phases run in parallel:
-
-```json
-{
-  "project_id": "parallel-build",
-  "status": "idle",
-  "current_phase": 0,
-  "phases": [
-    {
-      "id": 0,
-      "status": "pending",
-      "prompt": "Create shared data models.",
-      "context_files": [],
-      "success_criteria": "exit_code:0"
-    },
-    {
-      "id": 1,
-      "status": "pending",
-      "prompt": "Build the API layer using the data models.",
-      "context_files": ["src/models/index.ts"],
-      "success_criteria": "exit_code:0",
-      "depends_on": [0]
-    },
-    {
-      "id": 2,
-      "status": "pending",
-      "prompt": "Build the CLI tool using the data models.",
-      "context_files": ["src/models/index.ts"],
-      "success_criteria": "exit_code:0",
-      "depends_on": [0]
-    },
-    {
-      "id": 3,
-      "status": "pending",
-      "prompt": "Write integration tests covering API and CLI.",
-      "context_files": ["src/api/index.ts", "src/cli/index.ts"],
-      "success_criteria": "exit_code:0",
-      "depends_on": [1, 2]
-    }
-  ]
-}
-```
-
-Phases 1 and 2 run in parallel (both depend only on 0). Phase 3 waits for both.
-
-### Phase Fields Reference
-
-| Field | Type | Required | Description |
+| Setting | Type | Default | Description |
 |---|---|---|---|
-| `id` | `integer` | ✅ | Unique phase identifier |
-| `status` | `string` | ✅ | `pending`, `running`, `completed`, or `failed` |
-| `prompt` | `string` | ✅ | Instruction injected into the worker agent |
-| `context_files` | `string[]` | ✅ | Files to inject (relative to workspace root) |
-| `success_criteria` | `string` | ✅ | How to verify success (see Evaluators below) |
-| `depends_on` | `integer[]` | ❌ | Phase IDs that must complete first (enables DAG mode) |
-| `context_summary` | `string` | ❌ | Semantic summary for downstream phase handoffs |
-| `evaluator` | `string` | ❌ | `exit_code` (default), `regex`, `toolchain`, `test_suite` |
-| `max_retries` | `integer` | ❌ | Auto-retry count (default: from settings) |
-
-### Evaluator Types
-
-| Type | `success_criteria` Format | Example |
-|---|---|---|
-| `exit_code` | `exit_code:<N>` | `"exit_code:0"` |
-| `regex` | `regex:<pattern>` | `"regex:BUILD SUCCEEDED"` |
-| `toolchain` | `toolchain:<command>` | `"toolchain:npm run build"` |
-| `test_suite` | `test_suite:<command>` | `"test_suite:npm test"` |
-
-> **Security**: `toolchain` and `test_suite` evaluators only allow whitelisted binaries: `make`, `npm`, `npx`, `yarn`, `pnpm`, `tsc`, `cargo`, `go`, `python`, `pytest`, `jest`, `xcodebuild`, `swift`, `gradle`, `mvn`.
+| `coogent.tokenLimit` | number | `100,000` | Maximum token count for context injection per phase. If exceeded, execution halts and you're asked to decompose the phase further. |
+| `coogent.workerTimeoutMs` | number | `900,000` | Time (ms) before force-killing a worker agent. Default: 15 minutes. |
+| `coogent.maxRetries` | number | `3` | Maximum automatic retries when a phase fails. |
+| `coogent.logDirectory` | string | `.coogent/logs` | Session log directory, relative to workspace root. |
+| `coogent.logLevel` | enum | `info` | Minimum log verbosity. Options: `trace`, `debug`, `info`, `warn`, `error`, `off`. |
+| `coogent.logMaxSizeMB` | number | `5` | Log file size limit before rotation (1–100 MB). |
+| `coogent.logMaxBackups` | number | `2` | Number of rotated backup files to keep (0–10). |
 
 ---
 
-## Settings & Configuration
+## Usage Workflows
 
-Configure via **Settings** → **Extensions** → **Coogent**, or in `settings.json`:
+### Workflow 1: Plan → Review → Execute
 
-| Setting | Default | Description |
-|---|---|---|
-| `coogent.tokenLimit` | `100000` | Max tokens per phase context injection |
-| `coogent.workerTimeoutMs` | `900000` | Worker timeout (15 min default) |
-| `coogent.maxRetries` | `3` | Default auto-retry count per phase |
-| `coogent.logDirectory` | `.coogent/logs` | Session log directory |
+The primary workflow for most tasks.
 
----
+1. **Open Mission Control**
+   - `Cmd+Shift+P` → `Coogent: Open Mission Control`
+   - Or click the Coogent rocket icon in the Activity Bar
 
-## Logs & Debugging
+2. **Enter your objective**
+   - Type a description: "Refactor the auth module to use JWT tokens"
+   - The PlannerAgent scans your workspace and generates a phased runbook
 
-Session logs are written as JSONL to `<workspace>/.coogent/logs/`:
+3. **Review the plan**
+   - Read the implementation plan in the Mission Control panel
+   - Each phase shows: prompt, target files, success criteria, and dependencies
+   - **Approve** to proceed, or **regenerate** with feedback
 
-```
-session_<timestamp>.jsonl
-```
+4. **Start execution**
+   - Click "Start Execution" or `Cmd+Shift+P` → `Coogent: Start Execution`
+   - Watch live output streaming for each phase
 
-Each line is a JSON object:
-```json
-{"timestamp": 1709456789000, "level": "info", "event": "state_changed", "data": {...}}
-```
+5. **Monitor progress**
+   - Phase status updates in real-time (pending → running → completed/failed)
+   - Parallel phases run concurrently when dependencies allow
+   - Failed phases retry automatically (up to `maxRetries`)
 
-View live output in the Mission Control dashboard's Phase Details panel.
+6. **Review results**
+   - A consolidated report summarizes all decisions and changes
+   - Use `Coogent: Open Diff Review` to inspect Git changes
 
-### Crash Recovery
+### Workflow 2: Load an Existing Runbook
 
-If the IDE crashes mid-execution:
-- On restart, the extension detects the write-ahead log (WAL)
-- Replays the WAL to restore the last known state
-- Cleans stale lockfiles (PID-checked)
-- Transitions to `ERROR_PAUSED` — review state before continuing
+For resuming work or using a hand-crafted runbook.
 
----
+1. `Cmd+Shift+P` → `Coogent: Load Runbook`
+2. Select a `.task-runbook.json` file from the file picker
+3. The engine validates the schema and transitions to `READY`
+4. Click "Start Execution" to begin
 
-## Tips & Best Practices
+### Workflow 3: Git Sandbox Execution
 
-- **Keep phases atomic** — one clear task per phase. If a prompt is doing 2 things, split it.
-- **Scope context tightly** — only inject files the worker actually needs. Less context = better output.
-- **Use `depends_on` for independent work** — parallel execution saves significant time.
-- **Set `max_retries: 2`** for phases with external toolchain checks — compiler errors often self-resolve on retry.
-- **Commit before running** — Coogent requires a clean Git working tree. Always commit or stash first.
-- **Review the diff, not the output** — The real value is the native Git diff after execution. Agent output is informational only.
-- **Use context_summary** — For long pipelines, add `context_summary` to phases so downstream agents know what previous phases accomplished without needing the raw code.
+Coogent isolates changes on a dedicated Git branch.
+
+1. **Pre-Flight Check** — Coogent checks for uncommitted changes
+2. **Clean tree** → A `coogent/<task-slug>` sandbox branch is created automatically
+3. **Dirty tree** → You'll see a prompt:
+   - **"Continue on Current Branch"** — Bypass the sandbox
+   - **"Cancel"** — Stop and commit/stash first
+4. After execution, review changes via `Coogent: Open Diff Review` or create a PR from the sandbox branch
+
+### Workflow 4: Session Management
+
+Manage multiple orchestration sessions:
+
+- `Coogent: New Orchestration Session` — Start a fresh session
+- `Coogent: Load Session` — Resume a previous session
+- `Coogent: Delete Session` — Remove a session from history
+- `Coogent: Reset Session` — Clear in-memory state and return to `IDLE`
+
+### Available Commands
+
+| Command | Description |
+|---|---|
+| `Coogent: Open Mission Control` | Open the dashboard UI |
+| `Coogent: New Orchestration Session` | Start a new session |
+| `Coogent: Load Runbook` | Load a `.task-runbook.json` |
+| `Coogent: Start Execution` | Begin phase execution |
+| `Coogent: Pause Execution` | Pause the current run |
+| `Coogent: Reset Session` | Reset engine to IDLE |
+| `Coogent: Pre-Flight Git Check` | Check for uncommitted changes |
+| `Coogent: Create Git Sandbox Branch` | Manually create a sandbox branch |
+| `Coogent: Open Diff Review` | View changes since sandbox creation |
+| `Coogent: Load Session` | Resume a previous session |
+| `Coogent: Delete Session` | Remove a session |
