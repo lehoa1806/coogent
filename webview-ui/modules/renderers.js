@@ -73,6 +73,19 @@ export function renderState(state) {
     // Dashboard zone 2 — Mission Overview
     renderMissionOverview(state.runbook?.project_id, state.runbook?.phases);
 
+    // During PLAN_REVIEW the plan carousel is the primary view — skip phase
+    // navigator rendering, progress sidebar, and auto-selection so the plan
+    // review panel has full focus.
+    if (s === 'PLAN_REVIEW') {
+        // Store phases from draft for later use, but don't render them yet
+        if (state.runbook?.phases) {
+            setAppState({ phases: state.runbook.phases });
+        }
+        const $progressSidebar = document.getElementById('progress-sidebar');
+        if ($progressSidebar) $progressSidebar.style.display = 'none';
+        return;
+    }
+
     // Show/hide progress sidebar based on whether we have phases
     const hasPhases = state.runbook?.phases?.length > 0;
     const $progressSidebar = document.getElementById('progress-sidebar');
@@ -150,11 +163,12 @@ function updatePanelVisibility(state) {
         }
     }
 
-    // App body (phase navigator + details) — ensure it stays visible during
-    // COMPLETED state so users can review phase details after execution (#BUG-1).
+    // App body (phase navigator + details) — hide during PLAN_REVIEW so the
+    // plan carousel has full focus; otherwise keep visible (#BUG-1).
+    const isPlanReview = state === 'PLAN_REVIEW';
     const $appBody = document.querySelector('.app-body');
     if ($appBody) {
-        /** @type {HTMLElement} */ ($appBody).style.display = 'flex';
+        /** @type {HTMLElement} */ ($appBody).style.display = isPlanReview ? 'none' : 'flex';
     }
 }
 
@@ -196,6 +210,22 @@ function updateControlState(s) {
 
     const $btnViewPlan = document.getElementById('btn-view-plan');
     if ($btnViewPlan) $btnViewPlan.style.display = (!isIdle) ? 'inline-block' : 'none';
+
+    // Plan review buttons — re-enable when entering PLAN_REVIEW so that
+    // buttons disabled by a prior approve/reject click are reset.
+    const isPlanReview = s === 'PLAN_REVIEW';
+    const $btnPlanApprove = /** @type {HTMLButtonElement} */ (document.getElementById('btn-plan-approve'));
+    const $btnPlanReject = /** @type {HTMLButtonElement} */ (document.getElementById('btn-plan-reject'));
+    if (isPlanReview) {
+        if ($btnPlanApprove) {
+            $btnPlanApprove.disabled = false;
+            $btnPlanApprove.textContent = '✓ Approve';
+        }
+        if ($btnPlanReject) {
+            $btnPlanReject.disabled = false;
+            $btnPlanReject.textContent = '↻ Revise Plan';
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

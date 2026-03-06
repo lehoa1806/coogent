@@ -358,6 +358,15 @@ export class Engine extends EventEmitter {
                 message: 'Session reset. Ready for a new chat.',
             },
         });
+
+        // Emit a clean STATE_SNAPSHOT so the webview re-renders to IDLE
+        this.emitUIMessage({
+            type: 'STATE_SNAPSHOT',
+            payload: {
+                runbook: { project_id: '', status: 'idle', current_phase: 0, phases: [] },
+                engineState: this.state,
+            },
+        });
     }
 
     /**

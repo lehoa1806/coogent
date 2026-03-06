@@ -45,6 +45,7 @@ export function initControls() {
     $('btn-reset')?.addEventListener('click', () => {
         clearOutput();
         resetTimer();
+        resetUI();
         postMessage({ type: 'CMD_RESET' });
     });
 
