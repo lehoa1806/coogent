@@ -3,7 +3,7 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
-    import { postMessage } from "../stores/vscode.js";
+    import { postMessage } from "../stores/vscode.svelte.js";
     import type { Phase } from "../types.js";
 
     interface Props {

@@ -4,7 +4,7 @@
 
 <script lang="ts">
     import type { Phase } from "../types.js";
-    import type { MCPResourceState } from "../stores/mcpStore.js";
+    import type { MCPResourceState } from "../stores/mcpStore.svelte.js";
     import MarkdownRenderer from "./MarkdownRenderer.svelte";
 
     interface Props {

@@ -3,7 +3,7 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
-    import { appState, patchState } from "../stores/vscode.js";
+    import { appState, patchState } from "../stores/vscode.svelte.js";
     import MarkdownRenderer from "./MarkdownRenderer.svelte";
     import ViewModeTabs from "./ViewModeTabs.svelte";
 
@@ -17,14 +17,14 @@
         onclosePlanModal?: () => void;
     } = $props();
 
-    let visible = $derived($appState.engineState === "PLAN_REVIEW");
-    let draft = $derived($appState.planDraft);
+    let visible = $derived(appState.engineState === "PLAN_REVIEW");
+    let draft = $derived(appState.planDraft);
     let phases = $derived(draft?.phases ?? []);
-    let slideIndex = $derived($appState.planSlideIndex);
+    let slideIndex = $derived(appState.planSlideIndex);
     let currentPhase = $derived(phases[slideIndex]);
 
     /** Original prompt the user submitted before planning started */
-    let originalPrompt = $derived($appState.lastPrompt ?? "");
+    let originalPrompt = $derived(appState.lastPrompt ?? "");
 
     // ── View-All modal ───────────────────────────────────────────────────
     // showAllModal is true when locally toggled OR externally forced via prop

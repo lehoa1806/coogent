@@ -3,7 +3,7 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
-    import { appState, postMessage } from "../stores/vscode.js";
+    import { appState, postMessage } from "../stores/vscode.svelte.js";
 
     interface Props {
         /** Called when user clicks the 📋 View Plan button. */
@@ -21,14 +21,14 @@
         return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
     }
 
-    let isReady = $derived($appState.engineState === "READY");
+    let isReady = $derived(appState.engineState === "READY");
     let isRunning = $derived(
-        $appState.engineState === "EXECUTING_WORKER" ||
-            $appState.engineState === "EVALUATING",
+        appState.engineState === "EXECUTING_WORKER" ||
+            appState.engineState === "EVALUATING",
     );
-    let isIdle = $derived($appState.engineState === "IDLE");
-    let isCompleted = $derived($appState.engineState === "COMPLETED");
-    let hasPhases = $derived($appState.phases.length > 0);
+    let isIdle = $derived(appState.engineState === "IDLE");
+    let isCompleted = $derived(appState.engineState === "COMPLETED");
+    let hasPhases = $derived(appState.phases.length > 0);
 
     // Timer management — using plain var avoids $effect loop caused by $state timerInterval
     $effect(() => {

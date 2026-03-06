@@ -3,7 +3,7 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
-  import { appState, patchState } from "./stores/vscode.js";
+  import { appState, patchState } from "./stores/vscode.svelte.js";
   import { initMarkdown } from "./lib/markdown.js";
   import { initMermaid, refreshMermaidTheme } from "./lib/mermaid.js";
 
@@ -38,7 +38,7 @@
     showPlanModal = false;
   }
 
-  let isPlanning = $derived($appState.engineState === "PLANNING");
+  let isPlanning = $derived(appState.engineState === "PLANNING");
 
   /**
    * BUG FIX: Auto-select the currently running (or first pending) phase
@@ -48,13 +48,13 @@
    */
   $effect(() => {
     // Respect explicit user selection
-    if ($appState.userSelectedPhaseId !== null) return;
-    const phases = $appState.phases;
+    if (appState.userSelectedPhaseId !== null) return;
+    const phases = appState.phases;
     if (phases.length === 0) return;
     const running = phases.find((p) => p.status === "running");
     const pending = phases.find((p) => p.status === "pending");
     const target = running ?? pending ?? phases[0];
-    if (target && $appState.selectedPhaseId !== target.id) {
+    if (target && appState.selectedPhaseId !== target.id) {
       patchState({ selectedPhaseId: target.id });
     }
   });
@@ -97,14 +97,14 @@
       <div class="planning-view">
         <div class="planning-spinner"></div>
         <p class="planning-label">Planning…</p>
-        {#if $appState.lastPrompt}
+        {#if appState.lastPrompt}
           <div class="planning-prompt">
             <span class="prompt-label">Your prompt</span>
-            <p class="prompt-text">{$appState.lastPrompt}</p>
+            <p class="prompt-text">{appState.lastPrompt}</p>
           </div>
         {/if}
       </div>
-    {:else if $appState.engineState !== "PLAN_REVIEW"}
+    {:else if appState.engineState !== "PLAN_REVIEW"}
       <div class="app-body">
         <PhaseNavigator />
         <PhaseDetails />

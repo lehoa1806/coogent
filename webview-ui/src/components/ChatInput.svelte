@@ -3,7 +3,7 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
-    import { appState, postMessage, patchState } from "../stores/vscode.js";
+    import { appState, postMessage, patchState } from "../stores/vscode.svelte.js";
     import type { ConversationMode } from "../types.js";
 
     let prompt = $state("");
@@ -11,8 +11,8 @@
 
     // ── Suggestion popup state ──────────────────────────────────────────
     // Use dynamic suggestions from the store (populated by Extension Host)
-    let mentionItems = $derived($appState.mentionItems);
-    let workflowItems = $derived($appState.workflowItems);
+    let mentionItems = $derived(appState.mentionItems);
+    let workflowItems = $derived(appState.workflowItems);
 
     type SuggestionKind = "mention" | "workflow" | null;
     interface SuggestionItem {
@@ -42,7 +42,7 @@
     }
 
     // ── Derived state from engine ───────────────────────────────────────
-    let engineState = $derived($appState.engineState);
+    let engineState = $derived(appState.engineState);
     let isIdle = $derived(engineState === "IDLE");
     let isPlanning = $derived(engineState === "PLANNING");
     let isErrorPaused = $derived(engineState === "ERROR_PAUSED");
@@ -371,7 +371,7 @@
             {#if !isPlanReview}
                 <select
                     class="mode-select"
-                    value={$appState.conversationMode}
+                    value={appState.conversationMode}
                     onchange={handleModeChange}
                     id="chat-mode-select"
                 >

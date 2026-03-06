@@ -1,11 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// stores/vscode.ts — Svelte writable store + VS Code API bridge
+// stores/vscode.svelte.ts — Svelte 5 Runes global state + VS Code API bridge
 //
-// Replaces webview-ui/modules/store.js with a reactive Svelte store.
-// Auto-persists to vscode.setState() on every update.
+// Replaces the legacy writable<AppState> store with a $state object.
+// Auto-persists to vscodeApi.setState() via $effect.root().
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { writable, get } from 'svelte/store';
 import type { AppState, WebviewToHostMessage } from '../types.js';
 import { DEFAULT_APP_STATE } from '../types.js';
 
@@ -29,7 +28,7 @@ declare function acquireVsCodeApi(): VsCodeApi;
 const vscodeApi: VsCodeApi = acquireVsCodeApi();
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  App State Store
+//  App State ($state)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -65,25 +64,33 @@ function hydrateInitialState(): AppState {
 }
 
 /**
- * The central reactive store for the entire webview UI.
- * Components subscribe via `$appState` (Svelte auto-subscription syntax).
+ * The central reactive state object for the entire webview UI.
+ * Components import this directly and read/write properties.
+ * Svelte 5's fine-grained reactivity tracks individual property access.
  */
-export const appState = writable<AppState>(hydrateInitialState());
+export const appState: AppState = $state(hydrateInitialState());
 
-// Auto-persist every store update to VS Code's state API.
-// This ensures state survives webview panel visibility toggles.
-// QUAL-02: Store the unsubscribe handle so test teardown can call destroyStore()
-// to prevent leaked subscriptions when the module is loaded in a test environment.
-const _unsubscribePersist = appState.subscribe((state) => {
-    vscodeApi.setState(state);
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Auto-Persistence via $effect.root()
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Module-level effect that persists state to VS Code on every mutation.
+ * $effect.root() is required because this runs outside any component context.
+ * The returned cleanup function is called by destroyStore() for test teardown.
+ */
+const _cleanupPersist = $effect.root(() => {
+    $effect(() => {
+        // Spread to read all top-level properties, triggering reactivity tracking
+        const snapshot = { ...appState };
+        vscodeApi.setState(snapshot);
+    });
 });
 
-/** Cancel the auto-persist subscription. Only needed for test teardown. */
+/** Cancel the auto-persist effect. Only needed for test teardown. */
 export function destroyStore(): void {
-    _unsubscribePersist();
+    _cleanupPersist();
 }
-
-
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Helpers
@@ -99,28 +106,25 @@ export function postMessage(msg: WebviewToHostMessage): void {
 /**
  * Explicitly persist the current store state. Useful when you want to
  * guarantee persistence at a specific point (e.g., before navigation).
- * In normal usage, the `subscribe` auto-persist handles this.
+ * In normal usage, the `$effect` auto-persist handles this.
  */
 export function persistState(): void {
-    vscodeApi.setState(get(appState));
+    vscodeApi.setState({ ...appState });
 }
 
 /**
  * Apply a partial patch to the app state (convenience wrapper).
  */
 export function patchState(patch: Partial<AppState>): void {
-    appState.update((current) => ({ ...current, ...patch }));
+    Object.assign(appState, patch);
 }
 
 /**
  * Append text to a phase's accumulated output.
  */
 export function appendPhaseOutput(phaseId: number, text: string): void {
-    appState.update((state) => ({
-        ...state,
-        phaseOutputs: {
-            ...state.phaseOutputs,
-            [phaseId]: (state.phaseOutputs[phaseId] || '') + text,
-        },
-    }));
+    appState.phaseOutputs = {
+        ...appState.phaseOutputs,
+        [phaseId]: (appState.phaseOutputs[phaseId] || '') + text,
+    };
 }

@@ -9,7 +9,7 @@ import './styles/global.css';
 import { mount } from 'svelte';
 import App from './App.svelte';
 import { initMessageHandler } from './stores/messageHandler.js';
-import { postMessage } from './stores/vscode.js';
+import { postMessage } from './stores/vscode.svelte.js';
 
 try {
   // 1. Register the global message handler (Extension Host → Webview)

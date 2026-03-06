@@ -3,7 +3,7 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
-    import { appState, patchState } from "../stores/vscode.js";
+    import { appState, patchState } from "../stores/vscode.svelte.js";
     import type { Phase, PhaseStatus } from "../types.js";
 
     const STATUS_TEXT: Record<string, string> = {
@@ -42,7 +42,7 @@
     // Build a status map reactively
     let statusMap = $derived(
         new Map(
-            $appState.phases.map((p) => [
+            appState.phases.map((p) => [
                 p.id,
                 (p.status || "pending").toLowerCase(),
             ]),
@@ -51,7 +51,7 @@
 
     // Compute effective statuses
     let phasesWithStatus = $derived(
-        $appState.phases.map((phase, index) => {
+        appState.phases.map((phase, index) => {
             const statusKey = (phase.status || "pending").toLowerCase();
             const ready = isPhaseReady(phase, statusMap);
             const effectiveStatus = ready ? "ready" : statusKey;
@@ -72,7 +72,7 @@
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <div
             class="phase-item"
-            class:active={$appState.selectedPhaseId === phase.id}
+            class:active={appState.selectedPhaseId === phase.id}
             class:ready
             data-phase-id={phase.id}
             role="listitem"
@@ -98,7 +98,7 @@
                         class="phase-deps-row"
                         aria-label="Depends on phases: {phase.depends_on
                             .map((d) => {
-                                const depIdx = $appState.phases.findIndex(
+                                const depIdx = appState.phases.findIndex(
                                     (p) => p.id === d,
                                 );
                                 return depIdx >= 0 ? depIdx + 1 : d;
@@ -106,7 +106,7 @@
                             .join(', ')}"
                     >
                         {#each phase.depends_on as depId}
-                            {@const depIndex = $appState.phases.findIndex(
+                            {@const depIndex = appState.phases.findIndex(
                                 (p) => p.id === depId,
                             )}
                             <span

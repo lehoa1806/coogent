@@ -3,7 +3,7 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
-    import { appState, patchState } from "../stores/vscode.js";
+    import { appState, patchState } from "../stores/vscode.svelte.js";
     import MarkdownRenderer from "./MarkdownRenderer.svelte";
     import ViewModeTabs from "./ViewModeTabs.svelte";
 
@@ -19,7 +19,7 @@
     // Auto-scroll on new output when user is near the bottom
     $effect(() => {
         // Track terminal output to trigger re-run
-        $appState.terminalOutput;
+        appState.terminalOutput;
         if (outputEl && mode === "raw") {
             const atBottom =
                 outputEl.scrollHeight -
@@ -53,7 +53,7 @@
         }
     }
 
-    let isCompleted = $derived($appState.engineState === "COMPLETED");
+    let isCompleted = $derived(appState.engineState === "COMPLETED");
 </script>
 
 {#if visible}
@@ -92,13 +92,11 @@
             {#if mode === "raw"}
                 <pre
                     class="terminal-output"
-                    bind:this={outputEl}>{$appState.terminalOutput ||
+                    bind:this={outputEl}>{appState.terminalOutput ||
                         "Consolidation report will appear here when all phases complete.\n"}</pre>
             {:else}
                 <div class="terminal-output rendered">
-                    <MarkdownRenderer
-                        content={$appState.terminalOutput || ""}
-                    />
+                    <MarkdownRenderer content={appState.terminalOutput || ""} />
                 </div>
             {/if}
         </div>
