@@ -32,6 +32,7 @@
 │       ├─── phase:execute ──► ┌──────────────┐                         │
 │       │                      │ ADKController │ ──► Ephemeral Workers   │
 │       │                      │ (Spawn/Kill)  │     (AI Agent Sessions) │
+│       │                      │ OutputBuffer  │     (100ms / 4KB batch) │
 │       │                      └──────────────┘                         │
 │       │                                                                │
 │       ├─── ui:message ─────► ┌──────────────────────────────────────┐  │
@@ -43,6 +44,9 @@
 │                              │ CoogentMCPServer (In-Process)        │  │
 │                              │   Resources: coogent://tasks/...     │  │
 │                              │   Tools: submit_phase_handoff, etc.  │  │
+│                              │   ┌────────────────────────────────┐ │  │
+│                              │   │ ArtifactDB (SQLite via sql.js) │ │  │
+│                              │   └────────────────────────────────┘ │  │
 │                              └──────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
                     │ IPC (postMessage)
@@ -52,18 +56,26 @@
 │                                                                        │
 │  ┌──────────────┐  ┌─────────────┐  ┌───────────────────────────────┐  │
 │  │  appState     │  │  mcpStore   │  │  Components                   │  │
-│  │  (writable)   │  │  (factory)  │  │  PlanReview, PhaseDetail,     │  │
-│  │               │  │             │  │  TerminalOutput, Markdown     │  │
+│  │  (writable)   │  │  (factory)  │  │  PlanReview, PhaseDetails,    │  │
+│  │               │  │             │  │  PhaseHeader, PhaseActions,   │  │
+│  │               │  │             │  │  PhaseHandoff, Terminal, ...   │  │
 │  └──────────────┘  └─────────────┘  └───────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Component Wiring (`extension.ts`)
+### Component Wiring (Decomposed Architecture)
 
-During `activate()`, all services are cross-wired via dependency injection:
+`extension.ts` (~270 lines) delegates to four extracted modules:
+
+- **`ServiceContainer`** — Typed registry holding all service instances (replaces 18 module-level `let` variables)
+- **`CommandRegistry`** — Registers all 14 VS Code commands via `registerAll()`
+- **`EngineWiring`** — Connects Engine ↔ ADK ↔ MCP ↔ Consolidation events
+- **`PlannerWiring`** — Connects PlannerAgent ↔ Engine events
+
+Key event flows:
 
 - **Engine → Webview**: Engine emits `ui:message` events that `MissionControlPanel` broadcasts to the UI
-- **Worker ↔ UI Piping**: ADK worker output chunks stream to the UI via `PHASE_OUTPUT` messages
+- **Worker ↔ UI Piping**: ADK worker output is batched via `OutputBufferRegistry` (100ms / 4KB) before broadcasting `PHASE_OUTPUT`
 - **Engine ↔ ADK**: `phase:execute` events trigger `ADKController.spawnWorker()`
 
 ### Hybrid State Distribution
@@ -149,18 +161,19 @@ Default: **4 simultaneous workers**. Prevents resource exhaustion.
 
 The `CoogentMCPServer` is the single source of truth for all runtime artifacts.
 
-### State Store
+### State Store (ArtifactDB)
+
+Artifacts are persisted in a **SQLite database** (via `sql.js` WASM) managed by `ArtifactDB`:
+
+- **Durability**: Database file (`artifacts.db`) stored at the workspace `.coogent/` root for cross-session access
+- **Schema**: Tasks table (masterTaskId, summary, implementationPlan, consolidationReport) + Phases table (phaseId, handoff data)
+- **In-Memory Cache**: Reads are served from an in-memory `sql.js` instance; writes flush to disk via `db.export()`
 
 ```typescript
-Map<masterTaskId, TaskState>
-
-interface TaskState {
-    masterTaskId: string;
-    summary?: string;
-    implementationPlan?: string;
-    consolidationReport?: string;
-    phases: Map<phaseId, PhaseArtifacts>;
-}
+// Dual-layer architecture:
+const db = await ArtifactDB.create(dbPath);    // SQLite via sql.js WASM
+await db.upsertTask(masterTaskId, { summary }); // Write → SQLite + in-memory
+const task = db.getTask(masterTaskId);          // Read ← in-memory cache
 ```
 
 ### Resources (Read)
@@ -189,17 +202,19 @@ Each phase follows a 5-step pipeline:
 
 The `ContextScoper` prepares minimal file payloads for workers:
 
-- **Discovery**: Reads paths from the runbook phase `context_files`
+- **Discovery**: Reads paths from the runbook phase `context_files` (with AST-based import resolution via `ASTFileResolver`)
 - **Guards**: File existence checks + binary detection (null-byte heuristic in first 8KB)
+- **Secrets Detection**: `SecretsGuard` scans file content for API keys, private keys, `.env` patterns, and high-entropy strings (Shannon entropy > 4.5). Findings are logged as warnings (non-blocking)
 - **Formatting**: Each file wrapped in `<<<FILE: path>>>\n{content}\n<<<END FILE>>>`
 - **Budget Enforcement**: If assembled payload exceeds `coogent.tokenLimit`, execution halts with user notification
+- **Output Batching**: Worker output streams through `OutputBufferRegistry` (100ms timer / 4KB buffer) to prevent IPC channel saturation
 
 ### Tokenizers
 
 | Version | Tokenizer | Method |
 |---|---|---|
-| V1 (current) | `CharRatioEncoder` | Fast, dependency-free (~4 chars/token) |
-| V2 (future) | `TiktokenEncoder` | Model-accurate via `js-tiktoken` WASM |
+| V1 (current, default) | `TiktokenEncoder` | Model-accurate via `js-tiktoken` WASM (`cl100k_base`), lazy-initialized |
+| V1 (fallback) | `CharRatioEncoder` | Fast, dependency-free (~4 chars/token) — used if tiktoken init fails |
 
 ---
 
@@ -256,6 +271,8 @@ Before execution, `GitSandboxManager` checks for uncommitted changes:
 | Runtime | Node.js 18+ (VS Code Extension Host) |
 | IDE | Antigravity IDE / VS Code ≥ 1.85 |
 | MCP | `@modelcontextprotocol/sdk` ^1.27 |
+| Persistence | `sql.js` (SQLite WASM) via `ArtifactDB` |
+| Tokenizer | `js-tiktoken` (`cl100k_base`) with `CharRatioEncoder` fallback |
 | Schema Validation | AJV ^8.18 (inlined) |
 | Markdown | `marked` ^17.0 |
 | Diagrams | `mermaid` ^11.12 |
