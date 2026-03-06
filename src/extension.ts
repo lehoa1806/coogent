@@ -4,9 +4,9 @@
 
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import * as fs from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
-import { RUNBOOK_FILENAME, asPhaseId, asTimestamp } from './types/index.js';
+
+import { randomUUID } from 'node:crypto';
+import { RUNBOOK_FILENAME, asPhaseId, asTimestamp, EngineState } from './types/index.js';
 import type { Phase, HostToWebviewMessage } from './types/index.js';
 import { StateManager } from './state/StateManager.js';
 import { Engine } from './engine/Engine.js';
@@ -21,28 +21,25 @@ import { parseLogLevel } from './logger/LogStream.js';
 import { GitManager } from './git/GitManager.js';
 import { GitSandboxManager } from './git/GitSandboxManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
+import { MissionControlViewProvider } from './webview/MissionControlViewProvider.js';
 import { PlannerAgent } from './planner/PlannerAgent.js';
 import { SessionManager, formatSessionDirName, stripSessionDirPrefix } from './session/SessionManager.js';
 import { HandoffExtractor } from './context/HandoffExtractor.js';
 import { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 import { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
 import { MCPClientBridge } from './mcp/MCPClientBridge.js';
+import { buildImplementationPlanMarkdown } from './utils/planMarkdown.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  UUIDv7 — time-ordered session ID
+//  Session ID — W-3: Uses spec-compliant crypto.randomUUID() (Node 19+)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function uuidv7(): string {
-  const now = Date.now();
-  const timeHex = now.toString(16).padStart(12, '0');
-  const rand = randomBytes(10).toString('hex');
-  return [
-    timeHex.slice(0, 8),
-    timeHex.slice(8, 12),
-    '7' + rand.slice(0, 3),
-    ((parseInt(rand.slice(3, 4), 16) & 0x3) | 0x8).toString(16) + rand.slice(4, 7),
-    rand.slice(7, 19),
-  ].join('-');
+/**
+ * Generate a standard UUID v4 for session identification.
+ * Chronological ordering is provided by `formatSessionDirName()`'s timestamp prefix.
+ */
+function generateSessionId(): string {
+  return randomUUID();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -137,7 +134,9 @@ export function activate(context: vscode.ExtensionContext): void {
           // Persist the new session
           sessionManager?.setCurrentSessionId(newDirName.replace(/^\d{8}-\d{6}-/, ''), newDirName);
           sessionManager?.saveCurrentSession().catch(log.onError);
-        }
+        },
+        mcpServer,
+        mcpBridge
       );
     })
   );
@@ -200,9 +199,13 @@ export function activate(context: vscode.ExtensionContext): void {
         // Create a fresh session for the reset
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (workspaceRoot) {
-          const newId = uuidv7();
+          const newId = generateSessionId();
           const newDirName = formatSessionDirName(newId);
           const newDir = path.join(workspaceRoot, '.coogent', 'ipc', newDirName);
+          // B-4: Purge old session from MCP store before switching
+          if (currentSessionDir && mcpServer) {
+            mcpServer.purgeTask(path.basename(currentSessionDir));
+          }
           currentSessionDir = newDir;
           const newSM = new StateManager(newDir);
           await engine.reset(newSM);
@@ -258,7 +261,7 @@ export function activate(context: vscode.ExtensionContext): void {
       sessionId = stripSessionDirPrefix(lastSessionDirName);
       log.info(`[Coogent] Restoring previous session: ${sessionDirName}`);
     } else {
-      sessionId = uuidv7();
+      sessionId = generateSessionId();
       sessionDirName = formatSessionDirName(sessionId);
       log.info(`[Coogent] Creating fresh session: ${sessionDirName}`);
     }
@@ -329,10 +332,50 @@ export function activate(context: vscode.ExtensionContext): void {
       .then(() => log.info('[Coogent] MCP Client Bridge connected.'))
       .catch(err => log.error('[Coogent] MCP Client Bridge connection failed:', err));
 
+    // ─── Wire MCP Server → Engine (phaseCompleted logging bridge) ───
+    // P2-1 / M-1: The MCP Server emits phaseCompleted when a worker submits
+    // a handoff via the submit_phase_handoff tool.
+    //
+    // ARCHITECTURE NOTE: Today, DAG advancement is driven by the ADK
+    // worker:exited event → Engine.onWorkerExited(). The MCP phaseCompleted
+    // event is currently logging-only. To migrate to MCP-first orchestration
+    // (where agents use tools instead of process exits), wire this listener
+    // to Engine.onWorkerExited() or a dedicated Engine.onPhaseHandoffReceived()
+    // method, and guard against double-advancing (exit code + MCP handoff).
+    mcpServer.onPhaseCompleted((handoff) => {
+      log.info(
+        `[Coogent] MCP phaseCompleted: masterTaskId=${handoff.masterTaskId}, ` +
+        `phaseId=${handoff.phaseId}`
+      );
+    });
+
+
+    // ─── Register Activity Bar sidebar provider ────────────────────────
+    const sidebarProvider = new MissionControlViewProvider(
+      context.extensionUri, engine, sessionManager, adkController,
+      () => preFlightGitCheck(gitSandbox),
+      (newDir, newDirName) => {
+        currentSessionDir = newDir;
+        plannerAgent?.setMasterTaskId(newDirName);
+        sessionManager?.setCurrentSessionId(newDirName.replace(/^\d{8}-\d{6}-/, ''), newDirName);
+        sessionManager?.saveCurrentSession().catch(log.onError);
+      },
+      mcpServer, mcpBridge
+    );
+    context.subscriptions.push(
+      vscode.window.registerWebviewViewProvider(
+        MissionControlViewProvider.viewType,
+        sidebarProvider,
+        { webviewOptions: { retainContextWhenHidden: true } }
+      )
+    );
+    log.info('[Coogent] Activity Bar sidebar provider registered.');
+
 
     // ─── Wire Engine → Webview ─────────────────────────────────────────
     engine.on('ui:message', (message: HostToWebviewMessage) => {
       MissionControlPanel.broadcast(message);
+      MissionControlViewProvider.broadcast(message);
     });
 
     // ─── Wire Engine → Webview (state:changed) ────────────────────────────
@@ -343,29 +386,44 @@ export function activate(context: vscode.ExtensionContext): void {
       // Bug 4: Auto-create sandbox branch on first EXECUTING_WORKER transition
       if (to === 'EXECUTING_WORKER' && !branchCreated && gitSandbox) {
         branchCreated = true;
-        const branchRb = engine?.getRunbook();
-        const slug = branchRb?.project_id || 'coogent-task';
-        gitSandbox.createSandboxBranch({ taskSlug: slug })
-          .then(result => {
-            if (result.success) {
-              MissionControlPanel.broadcast({
-                type: 'LOG_ENTRY',
-                payload: { timestamp: asTimestamp(), level: 'info', message: `🔀 ${result.message}` },
-              });
-            } else {
-              log.warn('[Coogent] Branch creation skipped:', result.message);
-            }
-          })
-          .catch(err => log.error('[Coogent] Auto-branch creation error:', err));
+
+        // Skip branch creation if the user chose "Continue on Current Branch"
+        if (MissionControlPanel.shouldSkipSandbox()) {
+          log.info('[Coogent] Sandbox branch skipped — user chose to continue on current branch.');
+        } else {
+          const branchRb = engine?.getRunbook() ?? null;
+          const slug = branchRb?.project_id || 'coogent-task';
+          gitSandbox.createSandboxBranch({ taskSlug: slug })
+            .then(result => {
+              if (result.success) {
+                MissionControlPanel.broadcast({
+                  type: 'LOG_ENTRY',
+                  payload: { timestamp: asTimestamp(), level: 'info', message: `🔀 ${result.message}` },
+                });
+              } else {
+                log.warn('[Coogent] Branch creation skipped:', result.message);
+              }
+            })
+            .catch(err => log.error('[Coogent] Auto-branch creation error:', err));
+        }
       }
 
       // Broadcast STATE_SNAPSHOT to webview on every state transition (Req §3)
-      const rb = engine?.getRunbook();
+      const rb = engine?.getRunbook() ?? null;
       MissionControlPanel.broadcast({
         type: 'STATE_SNAPSHOT',
         payload: {
           runbook: rb ?? { project_id: '', status: 'idle', current_phase: 0, phases: [] },
           engineState: to,
+          masterTaskId: sessionDirName,
+        },
+      });
+      MissionControlViewProvider.broadcast({
+        type: 'STATE_SNAPSHOT',
+        payload: {
+          runbook: rb ?? { project_id: '', status: 'idle', current_phase: 0, phases: [] },
+          engineState: to,
+          masterTaskId: sessionDirName,
         },
       });
     });
@@ -386,10 +444,24 @@ export function activate(context: vscode.ExtensionContext): void {
           message: `✅ Run completed: ${completedCount}/${phaseCount} phases for "${runbook.project_id}".`,
         },
       });
+      MissionControlViewProvider.broadcast({
+        type: 'LOG_ENTRY',
+        payload: {
+          timestamp: asTimestamp(),
+          level: 'info',
+          message: `✅ Run completed: ${completedCount}/${phaseCount} phases for "${runbook.project_id}".`,
+        },
+      });
     });
 
     // ─── Wire Engine → ADK (phase execution) ───────────────────────────
     engine.on('phase:execute', (phase: Phase) => {
+      // P1-1 fix: Generate a deterministic mcpPhaseId and assign it to the
+      // Phase object in-place. This mutation flows through STATE_SNAPSHOT to
+      // the frontend, enabling MCP resource lookups by real phase ID.
+      if (!phase.mcpPhaseId) {
+        phase.mcpPhaseId = `phase-${String(phase.id).padStart(3, '0')}-${generateSessionId()}`;
+      }
       executePhase(phase, workspaceRoot, workerTimeoutMs, sessionDirName).catch((err) => {
         log.error('[Coogent] Phase execution error:', err);
       });
@@ -397,7 +469,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ─── Wire Engine → SelfHealing (Pillar 3) ──────────────────────────
     engine.on('phase:heal', (phase: Phase, augmentedPrompt: string) => {
-      // Clone the phase and override prompt for the newly spawned worker
+      // Clone the phase and override prompt — carry over mcpPhaseId so the
+      // healed worker's handoff submission uses the same ID.
       const healPhase = { ...phase, prompt: augmentedPrompt };
       executePhase(healPhase, workspaceRoot, workerTimeoutMs, sessionDirName).catch((err) => {
         log.error('[Coogent] Self-healing phase execution error:', err);
@@ -414,26 +487,6 @@ export function activate(context: vscode.ExtensionContext): void {
           });
         }
       }).catch(log.onError);
-
-      // Issue 2: Update implementation_plan.md to mark completed phase
-      if (currentSessionDir) {
-        const planPath = path.join(currentSessionDir, 'implementation_plan.md');
-        fs.readFile(planPath, 'utf-8')
-          .then(content => {
-            // Replace the status marker for this phase from ⏳ to ✅
-            const updated = content
-              .replace(
-                new RegExp(`(Phase ${phaseId}[^\n]*?)⏳ Pending`, 'g'),
-                `$1✅ Done`
-              )
-              .replace(
-                new RegExp(`(Phase ${phaseId}[^\n]*?)🔄 Running`, 'g'),
-                `$1✅ Done`
-              );
-            return fs.writeFile(planPath, updated, 'utf-8');
-          })
-          .catch(() => { /* file may not exist yet — ignore */ });
-      }
     });
 
     // ─── Wire ADK → Engine (worker lifecycle) ──────────────────────────
@@ -446,19 +499,27 @@ export function activate(context: vscode.ExtensionContext): void {
         workerOutputAccumulator.delete(phaseId);
         handoffExtractor.extractHandoff(phaseId, accumulatedOutput, workspaceRoot)
           .then(report => {
-            // File-based handoff save (existing)
-            handoffExtractor!.saveHandoff(phaseId, report, currentSessionDir!);
-
-            // MCP: Also store the handoff in MCP state (gradual migration)
+            // Store the handoff in MCP state (canonical source)
+            // P1-1 fix: Use the real mcpPhaseId assigned during phase:execute
+            // instead of a synthetic zero-UUID that never matches MCP state keys.
             if (mcpBridge && report) {
-              const phaseIdStr = `phase-${String(phaseId).padStart(3, '0')}-00000000-0000-0000-0000-000000000000`;
-              mcpBridge.submitPhaseHandoff(
-                sessionDirName,
-                phaseIdStr,
-                report.decisions ?? [],
-                report.modified_files ?? [],
-                report.unresolved_issues ?? []
-              ).catch(err => log.error('[Coogent] Failed to store handoff in MCP:', err));
+              const runbook = engine?.getRunbook() ?? null;
+              const phaseObj = runbook?.phases.find(p => p.id === phaseId);
+              const phaseIdStr = phaseObj?.mcpPhaseId;
+              // B-3 fix: Skip handoff submission if mcpPhaseId is missing.
+              // Generating a random UUID would create an orphaned MCP key
+              // that no client can ever read.
+              if (!phaseIdStr) {
+                log.warn(`[Coogent] mcpPhaseId missing for phase ${phaseId} — skipping handoff submission.`);
+              } else {
+                mcpBridge.submitPhaseHandoff(
+                  sessionDirName,
+                  phaseIdStr,
+                  report.decisions ?? [],
+                  report.modified_files ?? [],
+                  report.unresolved_issues ?? []
+                ).catch(err => log.error('[Coogent] Failed to store handoff in MCP:', err));
+              }
             }
           })
           .catch(err => log.error('[Coogent] Handoff extraction error:', err));
@@ -490,10 +551,18 @@ export function activate(context: vscode.ExtensionContext): void {
         payload: { phaseId: asPhaseId(phaseId), stream, chunk },
       });
 
-      // Accumulate stdout for handoff extraction
+      // Accumulate stdout for handoff extraction (B-3: capped at 2MB)
+      // W-2 fix: Check combined size to prevent a single large chunk from bypassing the cap
       if (stream === 'stdout') {
         const existing = workerOutputAccumulator.get(phaseId) ?? '';
-        workerOutputAccumulator.set(phaseId, existing + chunk);
+        const MAX_ACCUMULATOR_SIZE = 2 * 1024 * 1024; // 2MB cap
+        if (existing.length + chunk.length <= MAX_ACCUMULATOR_SIZE) {
+          workerOutputAccumulator.set(phaseId, existing + chunk);
+        } else if (existing.length < MAX_ACCUMULATOR_SIZE) {
+          // Partial append to exactly fill the budget
+          const remaining = MAX_ACCUMULATOR_SIZE - existing.length;
+          workerOutputAccumulator.set(phaseId, existing + chunk.slice(0, remaining));
+        }
       }
     });
 
@@ -522,24 +591,12 @@ export function activate(context: vscode.ExtensionContext): void {
         },
       });
 
-      // Issue 1: Write implementation_plan.md to the session IPC directory
-      if (currentSessionDir) {
+      // Store the plan in the MCP state (canonical source)
+      if (mcpBridge) {
         const implPlanContent = buildImplementationPlanMarkdown(draft);
-        fs.mkdir(currentSessionDir, { recursive: true })
-          .then(() => fs.writeFile(
-            path.join(currentSessionDir!, 'implementation_plan.md'),
-            implPlanContent,
-            'utf-8',
-          ))
-          .then(() => log.info('[Coogent] implementation_plan.md written to session dir.'))
-          .catch(err => log.error('[Coogent] Failed to write implementation_plan.md:', err));
-
-        // MCP: Also store the plan in the MCP state (gradual migration)
-        if (mcpBridge) {
-          mcpBridge.submitImplementationPlan(sessionDirName, implPlanContent)
-            .then(() => log.info('[Coogent] Implementation plan stored in MCP state.'))
-            .catch(err => log.error('[Coogent] Failed to store implementation plan in MCP:', err));
-        }
+        mcpBridge.submitImplementationPlan(sessionDirName, implPlanContent)
+          .then(() => log.info('[Coogent] Implementation plan stored in MCP state.'))
+          .catch(err => log.error('[Coogent] Failed to store implementation plan in MCP:', err));
       }
     });
 
@@ -585,37 +642,37 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ─── Wire Engine → ConsolidationAgent ──────────────────────────────
     engine.on('run:consolidate', (evtSessionDir: string) => {
-      const runbook = engine?.getRunbook();
-      if (!consolidationAgent || !runbook) return;
+      const runbook = engine?.getRunbook() ?? null;
+      // W-12: Capture references before async chain to prevent use-after-nullify
+      const agent = consolidationAgent;
+      if (!agent || !runbook) return;
 
-      consolidationAgent.generateReport(evtSessionDir, runbook)
-        .then(report => {
-          return consolidationAgent!.saveReport(evtSessionDir, report)
-            .then(reportPath => ({ reportPath, report }));
+      agent.generateReport(evtSessionDir, runbook, mcpBridge, sessionDirName)
+        .then(async report => {
+          // W-10 fix: Await saveReport() so errors are observed instead of silently swallowed
+          try {
+            await agent.saveReport(evtSessionDir, report, mcpBridge, sessionDirName);
+          } catch (err) {
+            log.error('[Coogent] saveReport failed:', err);
+          }
+          return report;
         })
-        .then(({ reportPath, report }) => {
+        .then(report => {
           MissionControlPanel.broadcast({
             type: 'LOG_ENTRY',
             payload: {
               timestamp: asTimestamp(),
               level: 'info',
-              message: `Consolidation report saved: ${reportPath}`,
+              message: 'Consolidation report stored in MCP state.',
             },
           });
 
           // Auto-broadcast the report to the webview (#BUG-5)
-          const markdown = consolidationAgent!.formatAsMarkdown(report);
+          const markdown = agent.formatAsMarkdown(report);
           MissionControlPanel.broadcast({
             type: 'CONSOLIDATION_REPORT',
             payload: { report: markdown },
           });
-
-          // MCP: Also store the consolidation report in MCP state (gradual migration)
-          if (mcpBridge) {
-            mcpBridge.submitConsolidationReport(sessionDirName, markdown)
-              .then(() => log.info('[Coogent] Consolidation report stored in MCP state.'))
-              .catch(err => log.error('[Coogent] Failed to store consolidation report in MCP:', err));
-          }
         })
         .catch(err => {
           log.error('[Coogent] Consolidation error:', err);
@@ -633,8 +690,13 @@ export function activate(context: vscode.ExtensionContext): void {
     // ─── Git Sandbox commands ──────────────────────────────────────────
     context.subscriptions.push(
       vscode.commands.registerCommand('coogent.preFlightCheck', async () => {
+        // B-2 fix: Guard against undefined gitSandbox (no .git in workspace)
+        if (!gitSandbox) {
+          vscode.window.showWarningMessage('Coogent: Git not available in this workspace.');
+          return;
+        }
         try {
-          const result = await gitSandbox!.preFlightCheck();
+          const result = await gitSandbox.preFlightCheck();
           if (result.clean) {
             vscode.window.showInformationMessage(`Coogent: ${result.message}`);
           } else {
@@ -648,10 +710,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
       vscode.commands.registerCommand('coogent.createSandbox', async () => {
+        // B-2 fix: Guard against undefined gitSandbox
+        if (!gitSandbox) {
+          vscode.window.showWarningMessage('Coogent: Git not available in this workspace.');
+          return;
+        }
         const slug = await vscode.window.showInputBox({ prompt: 'Enter a task slug (e.g., feat-auth-flow)' });
         if (!slug) return;
         try {
-          const result = await gitSandbox!.createSandboxBranch({ taskSlug: slug });
+          const result = await gitSandbox.createSandboxBranch({ taskSlug: slug });
           if (result.success) {
             vscode.window.showInformationMessage(`Coogent: ${result.message}`);
           } else {
@@ -665,8 +732,13 @@ export function activate(context: vscode.ExtensionContext): void {
 
     context.subscriptions.push(
       vscode.commands.registerCommand('coogent.openDiffReview', async () => {
+        // B-2 fix: Guard against undefined gitSandbox
+        if (!gitSandbox) {
+          vscode.window.showWarningMessage('Coogent: Git not available in this workspace.');
+          return;
+        }
         try {
-          const result = await gitSandbox!.openDiffReview();
+          const result = await gitSandbox.openDiffReview();
           if (result.success) {
             vscode.window.showInformationMessage(`Coogent: ${result.message}`);
           } else {
@@ -787,8 +859,7 @@ export async function deactivate(): Promise<void> {
   contextScoper = undefined;
   logger = undefined;
 
-  // Dispose log stream LAST so all shutdown messages are captured
-  disposeLog();
+  // N-1: Release all remaining references BEFORE disposing the log stream
   gitManager = undefined;
   gitSandbox = undefined;
   outputRegistry = undefined;
@@ -800,8 +871,9 @@ export async function deactivate(): Promise<void> {
   mcpServer = undefined;
   mcpBridge = undefined;
   workerOutputAccumulator.clear();
-  // Note: log is already disposed at this point, so this line is silent
-  // log.info('[Coogent] Extension deactivated.');
+
+  // Dispose log stream LAST so all shutdown/teardown messages are captured
+  disposeLog();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -814,6 +886,12 @@ async function executePhase(
   timeoutMs: number,
   masterTaskId: string
 ): Promise<void> {
+  // W-4: Guard against stale healing timer fires after abort/reset
+  if (engine?.getState() !== EngineState.EXECUTING_WORKER) {
+    log.warn(`[Coogent] Skipping phase ${phase.id} execution — engine not in EXECUTING_WORKER (state: ${engine?.getState()})`);
+    return;
+  }
+
   if (!contextScoper || !adkController || !logger) {
     engine?.onWorkerFailed(phase.id, 'crash').catch(log.onError);
     return;
@@ -867,7 +945,7 @@ async function executePhase(
   await logger.logPhasePrompt(phase.id, phase.prompt);
 
   // Step 5: Initialize telemetry run (on first phase)
-  const runbook = engine?.getRunbook();
+  const runbook = engine?.getRunbook() ?? null;
   if (runbook && phase.id === 0) {
     await logger.initRun(runbook.project_id);
   }
@@ -897,50 +975,4 @@ async function executePhase(
   }
   const effectivePhase = { ...phase, prompt: effectivePrompt };
   await adkController.spawnWorker(effectivePhase, result.payload, timeoutMs, masterTaskId);
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Implementation Plan File Builder
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Build a walkthrough-style Markdown document from the plan draft.
- * Each phase is listed with a `⏳ Pending` status marker that will be
- * replaced with `✅ Done` by the `phase:checkpoint` handler.
- */
-function buildImplementationPlanMarkdown(draft: { project_id: string; summary?: string; implementation_plan?: string; phases: ReadonlyArray<{ id: number; prompt: string; context_files?: string[] | readonly string[]; success_criteria?: string; depends_on?: number[] | readonly number[] }> }): string {
-  const lines: string[] = [];
-
-  lines.push(`# Implementation Plan — ${draft.project_id}`);
-  lines.push('');
-  if (draft.summary) {
-    lines.push(`> ${draft.summary}`);
-    lines.push('');
-  }
-
-  // If the planner already produced a freeform implementation plan, include it
-  if (draft.implementation_plan) {
-    lines.push('## Detailed Plan');
-    lines.push('');
-    lines.push(draft.implementation_plan);
-    lines.push('');
-  }
-
-  lines.push('## Phases');
-  lines.push('');
-  lines.push('| # | Prompt | Files | Status |');
-  lines.push('|---|--------|-------|--------|');
-
-  for (const phase of draft.phases) {
-    const id = phase.id;
-    const prompt = (phase.prompt || '').replace(/\n/g, ' ').slice(0, 80);
-    const files = (phase.context_files || []).length;
-    lines.push(`| Phase ${id} | ${prompt} | ${files} | ⏳ Pending |`);
-  }
-
-  lines.push('');
-  lines.push(`_Generated at ${new Date().toISOString()}_`);
-  lines.push('');
-
-  return lines.join('\n');
 }

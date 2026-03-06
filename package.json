@@ -59,6 +59,24 @@
         "category": "Coogent"
       }
     ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "coogent-sidebar",
+          "title": "Coogent",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "coogent-sidebar": [
+        {
+          "type": "webview",
+          "id": "coogent.missionControlView",
+          "name": "Mission Control"
+        }
+      ]
+    },
     "configuration": {
       "title": "Coogent",
       "properties": {
@@ -127,15 +145,15 @@
   "scripts": {
     "clean": "rm -rf out",
     "compile": "node esbuild.js",
-    "compile:webview": "node esbuild-webview.js",
     "watch": "npm run compile -- --watch",
-    "watch:webview": "node esbuild-webview.js --watch",
-    "build": "npm run compile && npm run compile:webview",
+    "build:webview": "cd webview-ui && npm run build",
+    "dev:webview": "cd webview-ui && npm run dev",
+    "build": "npm run compile && npm run build:webview",
     "lint": "tsc --noEmit",
     "pretest": "npm run lint",
-    "prepackage": "npm run compile -- --minify && node esbuild-webview.js --production",
+    "prepackage": "npm run compile -- --minify && npm run build:webview",
     "package": "npx -y @vscode/vsce package",
-    "test": "jest",
+    "test": "jest --runInBand --detectOpenHandles",
     "ci": "npm run lint && npm test && npm audit --audit-level=high"
   },
   "devDependencies": {

@@ -75,5 +75,13 @@ export function isValidWebviewMessage(raw: unknown): raw is WebviewToHostMessage
         return typeof payload === 'object' && payload !== null && typeof payload.sessionId === 'string';
     }
 
+    if (msg.type === 'MCP_FETCH_RESOURCE') {
+        const payload = msg.payload as Record<string, unknown> | undefined;
+        return typeof payload === 'object' && payload !== null
+            && typeof payload.uri === 'string'
+            && payload.uri.startsWith('coogent://') // W-9: Validate URI scheme
+            && typeof payload.requestId === 'string';
+    }
+
     return false;
 }

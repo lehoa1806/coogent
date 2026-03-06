@@ -2,7 +2,7 @@
 // src/engine/Scheduler.ts — DAG-based phase scheduling with parallel dispatch
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Phase } from '../types/index.js';
+import type { Phase, PhaseId } from '../types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Scheduler
@@ -19,6 +19,7 @@ import type { Phase } from '../types/index.js';
  * - Multiple phases can be ready simultaneously for parallel dispatch.
  * - Respects `MAX_CONCURRENT_WORKERS` to limit parallelism.
  */
+
 export class Scheduler {
     private readonly maxConcurrent: number;
 
@@ -40,6 +41,8 @@ export class Scheduler {
      * 1. Status is `pending`.
      * 2. All phases in `depends_on` are `completed`.
      * 3. Does not exceed `maxConcurrent` when combined with currently `running` phases.
+     *
+     * W-6: Uses O(1) Map-based lookups instead of O(n) find().
      */
     getReadyPhases(phases: readonly Phase[]): Phase[] {
         const currentlyRunning = phases.filter(p => p.status === 'running').length;
@@ -53,12 +56,15 @@ export class Scheduler {
             return next ? [next] : [];
         }
 
+        // W-6: Build O(1) lookup map
+        const phaseMap = new Map(phases.map(p => [p.id, p]));
+
         // DAG mode: Find all pending phases whose deps are satisfied
         const ready = phases.filter(p => {
             if (p.status !== 'pending') return false;
             const deps = p.depends_on ?? [];
             return deps.every(depId => {
-                const dep = phases.find(d => d.id === depId);
+                const dep = phaseMap.get(depId);
                 return dep?.status === 'completed';
             });
         });
@@ -83,13 +89,49 @@ export class Scheduler {
 
     /**
      * Validate the DAG for cycles (returns cycle members or empty array).
-     * Uses Kahn's algorithm (topological sort detection).
+     * N-3: Uses shared kahnSort() helper.
      */
-    detectCycles(phases: readonly Phase[]): number[] {
+    detectCycles(phases: readonly Phase[]): PhaseId[] {
         if (!this.isDAGMode(phases)) return [];
 
-        const inDegree = new Map<number, number>();
-        const adjacency = new Map<number, number[]>();
+        const { processed, inDegree } = this.kahnSort(phases);
+
+        // If not all nodes were processed, there's a cycle
+        if (processed === phases.length) return [];
+
+        // Return IDs that are part of cycles (those with remaining in-degree > 0)
+        const cycleMemberIds: PhaseId[] = [];
+        for (const [id, degree] of inDegree) {
+            if (degree > 0) cycleMemberIds.push(id);
+        }
+        return cycleMemberIds;
+    }
+
+    /**
+     * Get the execution order for display (topological sort).
+     * Returns phase IDs in dependency-respecting order.
+     * N-3: Uses shared kahnSort() helper.
+     */
+    getExecutionOrder(phases: readonly Phase[]): PhaseId[] {
+        if (!this.isDAGMode(phases)) {
+            return phases.map(p => p.id);
+        }
+
+        const { order } = this.kahnSort(phases);
+        return order;
+    }
+
+    /**
+     * N-3: Shared Kahn's algorithm implementation.
+     * Returns the topological order and processing metadata.
+     */
+    private kahnSort(phases: readonly Phase[]): {
+        order: PhaseId[];
+        processed: number;
+        inDegree: Map<PhaseId, number>;
+    } {
+        const inDegree = new Map<PhaseId, number>();
+        const adjacency = new Map<PhaseId, PhaseId[]>();
 
         // Initialize
         for (const phase of phases) {
@@ -106,15 +148,18 @@ export class Scheduler {
             }
         }
 
-        // Kahn's algorithm
-        const queue: number[] = [];
+        // Kahn's algorithm — B-5 fix: use index-based queue to avoid O(n) shift()
+        const queue: PhaseId[] = [];
+        let head = 0;
         for (const [id, degree] of inDegree) {
             if (degree === 0) queue.push(id);
         }
 
+        const order: PhaseId[] = [];
         let processed = 0;
-        while (queue.length > 0) {
-            const nodeId = queue.shift()!;
+        while (head < queue.length) {
+            const nodeId = queue[head++];
+            order.push(nodeId);
             processed++;
             for (const neighbor of (adjacency.get(nodeId) ?? [])) {
                 const newDegree = (inDegree.get(neighbor) ?? 1) - 1;
@@ -123,57 +168,6 @@ export class Scheduler {
             }
         }
 
-        // If not all nodes were processed, there's a cycle
-        if (processed === phases.length) return [];
-
-        // Return IDs that are part of cycles (those with remaining in-degree > 0)
-        const cycleMemberIds: number[] = [];
-        for (const [id, degree] of inDegree) {
-            if (degree > 0) cycleMemberIds.push(id);
-        }
-        return cycleMemberIds;
-    }
-
-    /**
-     * Get the execution order for display (topological sort).
-     * Returns phase IDs in dependency-respecting order.
-     */
-    getExecutionOrder(phases: readonly Phase[]): number[] {
-        if (!this.isDAGMode(phases)) {
-            return phases.map(p => p.id);
-        }
-
-        const inDegree = new Map<number, number>();
-        const adjacency = new Map<number, number[]>();
-
-        for (const phase of phases) {
-            inDegree.set(phase.id, 0);
-            adjacency.set(phase.id, []);
-        }
-
-        for (const phase of phases) {
-            for (const dep of (phase.depends_on ?? [])) {
-                adjacency.get(dep)?.push(phase.id);
-                inDegree.set(phase.id, (inDegree.get(phase.id) ?? 0) + 1);
-            }
-        }
-
-        const queue: number[] = [];
-        for (const [id, degree] of inDegree) {
-            if (degree === 0) queue.push(id);
-        }
-
-        const order: number[] = [];
-        while (queue.length > 0) {
-            const nodeId = queue.shift()!;
-            order.push(nodeId);
-            for (const neighbor of (adjacency.get(nodeId) ?? [])) {
-                const newDegree = (inDegree.get(neighbor) ?? 1) - 1;
-                inDegree.set(neighbor, newDegree);
-                if (newDegree === 0) queue.push(neighbor);
-            }
-        }
-
-        return order;
+        return { order, processed, inDegree };
     }
 }

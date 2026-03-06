@@ -37,7 +37,7 @@ The result: every agent operates in a **clean room** — maximum signal, zero no
 
 ### Pillar 1 — Core Engine (MVP) ✅
 - **9-State Deterministic FSM** — `IDLE → PLANNING → PLAN_REVIEW → PARSING → READY → EXECUTING → EVALUATING → ERROR_PAUSED → COMPLETED`
-- **Mission Control Dashboard** — React-based Webview UI showing phase status, live agent output, and token budgets
+- **Mission Control Dashboard** — Svelte-based Webview UI showing phase status, live agent output, and token budgets
 - **Plan & Review Workflow** — AI-generated runbook with human approval gate before execution
 - **Persistent State** — `.task-runbook.json` with crash recovery via write-ahead log (WAL)
 - **Git Sandboxing** — Isolated `coogent/*` branches via native VS Code Git API with pre-flight dirty-tree checks
@@ -187,7 +187,7 @@ coogent/
 ├── tsconfig.json
 ├── jest.config.js
 ├── esbuild.js                     # Extension bundler
-├── esbuild-webview.js             # Webview bundler
+├── esbuild-webview.js             # Webview bundler (legacy)
 ├── docs/
 │   ├── PRD.md                     # Product requirements
 │   ├── ARCHITECTURE.md            # System architecture (Mermaid diagrams)
@@ -231,21 +231,20 @@ coogent/
 │   └── webview/
 │       ├── MissionControlPanel.ts # Webview lifecycle + IPC bridge
 │       └── ipcValidator.ts        # Typed IPC message validation
-├── webview-ui/
-│   ├── main.js                    # Mission Control frontend entry
-│   ├── styles.css                 # Mission Control styles
-│   └── modules/                   # UI components (11 modules)
-│       ├── controls.js            # Global action buttons
-│       ├── phaseNavigator.js      # Phase list with status indicators
-│       ├── phaseDetails.js        # Per-phase detail view with output
-│       ├── planReview.js          # Plan approval/rejection UI
-│       ├── renderers.js           # State-driven rendering engine
-│       ├── markdown.js            # Markdown-to-HTML renderer
-│       ├── sessionList.js         # Session history drawer
-│       ├── store.js               # Client-side state store
-│       ├── terminal.js            # Terminal output component
-│       ├── timer.js               # Phase duration timer
-│       └── utils.js               # UI utilities
+├── webview-ui/                    # ⚠️ DEPRECATED — legacy Vanilla JS webview
+│   └── DEPRECATED.md
+├── webview-ui-svelte/             # Active Svelte webview (Vite-built)
+│   ├── src/
+│   │   ├── components/            # Svelte UI components
+│   │   ├── lib/                   # Stores, IPC bridge, utilities
+│   │   ├── App.svelte             # Root component
+│   │   └── main.ts                # Entry point
+│   ├── dist/                      # Compiled assets (committed)
+│   │   └── assets/
+│   │       ├── index.js           # Single JS bundle
+│   │       └── style.css          # Single CSS bundle
+│   ├── vite.config.ts             # Vite build config
+│   └── package.json
 └── .coogent/                      # All runtime state (gitignored)
     ├── ipc/<session-id>/          # Session-scoped runbook + WAL + lock
     ├── logs/                      # JSONL session logs
@@ -272,14 +271,25 @@ coogent/
 
 ```bash
 npm run compile          # One-time TypeScript build
-npm run compile:webview  # One-time Webview build
-npm run build            # Both
+npm run build:webview    # Build Svelte webview (one-time)
+npm run dev:webview      # Svelte webview dev mode (HMR)
+npm run build            # Both (TypeScript + Svelte)
 npm run watch            # TypeScript watch mode
-npm run watch:webview    # Webview watch mode
 npm run lint             # Type-check (no emit)
 npm test                 # Run test suite (Jest — 14 suites, 100+ tests)
 npm run package          # Create .vsix extension package
 ```
+
+### Svelte Migration
+
+The Mission Control webview has been migrated from Vanilla JS (`webview-ui/`) to Svelte 5 (`webview-ui-svelte/`). The Svelte app is built with Vite into a single JS + CSS bundle for CSP compliance in VS Code webviews.
+
+- **Source**: `webview-ui-svelte/src/`
+- **Output**: `webview-ui-svelte/dist/assets/` (single `index.js` + `style.css`)
+- **Build**: `npm run build:webview`
+- **Dev**: `npm run dev:webview` (Vite dev server for rapid iteration)
+
+The legacy `webview-ui/` directory is preserved for rollback but is no longer active. See `webview-ui/DEPRECATED.md`.
 
 ---
 

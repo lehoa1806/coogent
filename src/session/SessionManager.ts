@@ -92,9 +92,6 @@ export class SessionManager {
     /** Absolute path to `.coogent/ipc/` within the workspace root. */
     private readonly ipcDir: string;
 
-    /** Absolute path to the workspace root. */
-    private readonly workspaceRoot: string;
-
     /** The current active session ID (excluded from history). */
     private currentSessionId: string;
 
@@ -105,7 +102,6 @@ export class SessionManager {
     private readonly currentSessionFile: string;
 
     constructor(workspaceRoot: string, currentSessionId: string, currentSessionDirName?: string) {
-        this.workspaceRoot = workspaceRoot;
         this.ipcDir = path.join(workspaceRoot, '.coogent', 'ipc');
         this.currentSessionId = currentSessionId;
         this.currentSessionDirName = currentSessionDirName ?? currentSessionId;

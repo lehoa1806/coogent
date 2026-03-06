@@ -9,6 +9,17 @@ jest.config.js
 webview-ui/main.js
 webview-ui/modules/**
 
+# ── Svelte webview source (bundled into webview-ui/dist/) ──────────────
+# NOTE: webview-ui/dist/** is NOT listed — it must be in the VSIX.
+webview-ui/node_modules/**
+webview-ui/src/**
+webview-ui/.svelte-kit/**
+webview-ui/tsconfig.json
+webview-ui/vite.config.ts
+webview-ui/svelte.config.js
+webview-ui/package.json
+webview-ui/package-lock.json
+
 # ── Dependencies (already bundled) ────────────────────────────────────────────
 node_modules/**
 package-lock.json

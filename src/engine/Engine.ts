@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { EventEmitter } from 'node:events';
+import * as path from 'node:path';
 import log from '../logger/log.js';
 import {
     EngineState,
@@ -99,6 +100,13 @@ export class Engine extends EventEmitter {
     private stallWatchdog: ReturnType<typeof setInterval> | null = null;
     private readonly STALL_CHECK_INTERVAL_MS = 30_000;
 
+    /**
+     * Serialization mutex for onWorkerExited.
+     * Prevents two concurrent calls from both seeing activeWorkerCount === 0
+     * and double-firing the FSM transition (B-1 fix).
+     */
+    private workerExitLock: Promise<void> = Promise.resolve();
+
     // ── Pillar 2+3 subsystems ────────────────────────────────────────────
     private readonly scheduler: Scheduler;
     private readonly healer: SelfHealingController;
@@ -132,6 +140,19 @@ export class Engine extends EventEmitter {
     /** Get the loaded runbook (or null). */
     public getRunbook(): Runbook | null {
         return this.runbook;
+    }
+
+    /**
+     * B-4: Public accessor for the active session directory basename.
+     * Removes the need for unsafe cast-through-unknown in MissionControlPanel.
+     */
+    public getSessionDirName(): string | undefined {
+        try {
+            const dir = this.stateManager.getSessionDir();
+            return dir ? path.basename(dir) : undefined;
+        } catch {
+            return undefined;
+        }
     }
 
     /** Update the global max retries at runtime (delegates to SelfHealingController). */
@@ -183,7 +204,8 @@ export class Engine extends EventEmitter {
      * Load and validate a runbook from disk.
      */
     public async loadRunbook(_filePath?: string): Promise<void> {
-        this.transition(EngineEvent.LOAD_RUNBOOK);
+        const transResult = this.transition(EngineEvent.LOAD_RUNBOOK);
+        if (transResult === null) return; // B-5: Guard against invalid state
 
         try {
             // Use StateManager to load + validate
@@ -311,13 +333,16 @@ export class Engine extends EventEmitter {
         // Reset worker count — all workers should be terminated by phase:stop listeners
         this.activeWorkerCount = 0;
 
-        this.emitUIMessage({
-            type: 'STATE_SNAPSHOT',
-            payload: {
-                runbook: this.runbook!,
-                engineState: this.state,
-            },
-        });
+        // W-10: Guard against null runbook when aborting before any runbook is loaded
+        if (this.runbook) {
+            this.emitUIMessage({
+                type: 'STATE_SNAPSHOT',
+                payload: {
+                    runbook: this.runbook,
+                    engineState: this.state,
+                },
+            });
+        }
     }
 
     /**
@@ -790,30 +815,32 @@ export class Engine extends EventEmitter {
         stdout = '',
         stderr = ''
     ): Promise<void> {
-        if (!this.runbook) return;
+        // B-1: Serialize through workerExitLock to prevent race condition
+        // where two concurrent calls both decrement activeWorkerCount to 0
+        // and both fire the FSM transition.
+        this.workerExitLock = this.workerExitLock.then(async () => {
+            if (!this.runbook) return;
 
-        // Guard: skip if phase is no longer running (e.g., already handled by
-        // onWorkerFailed due to a timeout/crash race)
-        const phase = this.runbook.phases.find(p => p.id === phaseId);
-        if (!phase || phase.status !== 'running') return;
+            // Guard: skip if phase is no longer running (e.g., already handled by
+            // onWorkerFailed due to a timeout/crash race)
+            const phase = this.runbook.phases.find(p => p.id === phaseId);
+            if (!phase || phase.status !== 'running') return;
 
-        this.activeWorkerCount = Math.max(0, this.activeWorkerCount - 1);
+            this.activeWorkerCount = Math.max(0, this.activeWorkerCount - 1);
+            const isLastWorker = this.activeWorkerCount === 0;
 
-        // CRITICAL: Capture isLastWorker BEFORE the async evaluation to prevent
-        // race condition where two workers both see activeWorkerCount === 0
-        // after their respective await calls.
-        const isLastWorker = this.activeWorkerCount === 0;
+            const passed = await this.evaluatePhaseResult(phase, exitCode, stdout, stderr);
 
-        const passed = await this.evaluatePhaseResult(phase, exitCode, stdout, stderr);
-
-        if (isLastWorker) {
-            // Last worker exited — do full FSM transition
-            this.transition(EngineEvent.WORKER_EXITED);
-            await this.applyVerdict(phase, passed, exitCode, stderr);
-        } else {
-            // Other workers still running — evaluate in-place without FSM transition
-            await this.applyVerdictInPlace(phase, passed, exitCode, stderr);
-        }
+            if (isLastWorker) {
+                // Last worker exited — do full FSM transition
+                this.transition(EngineEvent.WORKER_EXITED);
+                await this.applyVerdict(phase, passed, exitCode, stderr);
+            } else {
+                // Other workers still running — evaluate in-place without FSM transition
+                await this.applyVerdictInPlace(phase, passed, exitCode, stderr);
+            }
+        });
+        return this.workerExitLock;
     }
 
     /**
@@ -1020,7 +1047,6 @@ export class Engine extends EventEmitter {
             });
             return;
         }
-
         this.dispatchReadyPhases();
     }
 
@@ -1028,48 +1054,55 @@ export class Engine extends EventEmitter {
      * Called when a worker times out or crashes.
      * AB-1: In parallel mode, mark the phase as failed but only transition
      * the FSM to ERROR_PAUSED when no other workers are still running.
+     *
+     * B-1 fix: Serialize through workerExitLock to prevent race condition
+     * where concurrent onWorkerFailed + onWorkerExited calls both see
+     * activeWorkerCount === 0 and double-fire the FSM transition.
      */
     public async onWorkerFailed(phaseId: number, reason: 'timeout' | 'crash'): Promise<void> {
-        if (!this.runbook) return;
+        this.workerExitLock = this.workerExitLock.then(async () => {
+            if (!this.runbook) return;
 
-        const phase = this.runbook.phases.find(p => p.id === phaseId);
-        // Guard: skip if phase is no longer running (race with onWorkerExited)
-        if (!phase || phase.status !== 'running') return;
+            const phase = this.runbook.phases.find(p => p.id === phaseId);
+            // Guard: skip if phase is no longer running (race with onWorkerExited)
+            if (!phase || phase.status !== 'running') return;
 
-        this.activeWorkerCount = Math.max(0, this.activeWorkerCount - 1);
-        phase.status = 'failed';
+            this.activeWorkerCount = Math.max(0, this.activeWorkerCount - 1);
+            phase.status = 'failed';
 
-        // Emit PHASE_STATUS so UI reflects the failure immediately
-        this.emitUIMessage({
-            type: 'PHASE_STATUS',
-            payload: { phaseId: asPhaseId(phaseId), status: 'failed' },
+            // Emit PHASE_STATUS so UI reflects the failure immediately
+            this.emitUIMessage({
+                type: 'PHASE_STATUS',
+                payload: { phaseId: asPhaseId(phaseId), status: 'failed' },
+            });
+
+            if (this.activeWorkerCount === 0) {
+                // Last worker — transition FSM
+                const event = reason === 'timeout'
+                    ? EngineEvent.WORKER_TIMEOUT
+                    : EngineEvent.WORKER_CRASH;
+                this.transition(event);
+                this.runbook.status = 'paused_error';
+                this.stopStallWatchdog();
+                await this.persist();
+            } else {
+                // Other workers still running — record failure but don't transition FSM yet
+                await this.persist();
+
+                // Dispatch any phases that are ready and don't depend on the failed phase
+                this.dispatchReadyPhases();
+            }
+
+            this.emitUIMessage({
+                type: 'ERROR',
+                payload: {
+                    code: reason === 'timeout' ? 'WORKER_TIMEOUT' : 'WORKER_CRASH',
+                    message: `Worker for phase ${phaseId} ${reason === 'timeout' ? 'timed out' : 'crashed'}.`,
+                    phaseId: asPhaseId(phaseId),
+                },
+            });
         });
-
-        if (this.activeWorkerCount === 0) {
-            // Last worker — transition FSM
-            const event = reason === 'timeout'
-                ? EngineEvent.WORKER_TIMEOUT
-                : EngineEvent.WORKER_CRASH;
-            this.transition(event);
-            this.runbook.status = 'paused_error';
-            this.stopStallWatchdog();
-            await this.persist();
-        } else {
-            // Other workers still running — record failure but don't transition FSM yet
-            await this.persist();
-
-            // Dispatch any phases that are ready and don't depend on the failed phase
-            this.dispatchReadyPhases();
-        }
-
-        this.emitUIMessage({
-            type: 'ERROR',
-            payload: {
-                code: reason === 'timeout' ? 'WORKER_TIMEOUT' : 'WORKER_CRASH',
-                message: `Worker for phase ${phaseId} ${reason === 'timeout' ? 'timed out' : 'crashed'}.`,
-                phaseId: asPhaseId(phaseId),
-            },
-        });
+        return this.workerExitLock;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1108,10 +1141,11 @@ export class Engine extends EventEmitter {
     }
 
     /**
-     * Dispatch all ready phases (DAG-aware).
-     * Replaces sequential `current_phase++` with frontier-set dispatch.
-     */
-    private dispatchReadyPhases(): void {
+ * Dispatch all ready phases (DAG-aware).
+ * Replaces sequential `current_phase++` with frontier-set dispatch.
+ * W-6 fix: Await persist() so disk-write failures surface as errors.
+ */
+    private async dispatchReadyPhases(): Promise<void> {
         if (!this.runbook) return;
 
         const readyPhases = this.scheduler.getReadyPhases(this.runbook.phases);
@@ -1131,15 +1165,15 @@ export class Engine extends EventEmitter {
             this.emit('phase:execute', phase);
         }
 
-        // Persist all status changes in one write
-        this.persist().catch(log.onError);
+        // W-6: Await persist so disk-write failures are observed
+        try {
+            await this.persist();
+        } catch (err) {
+            log.error('[Engine] dispatchReadyPhases persist failed:', err);
+        }
 
         // Emit a STATE_SNAPSHOT *after* phases are set to 'running' so the
-        // webview gets a full snapshot with the updated statuses.  The earlier
-        // snapshot fired by `state:changed` on the START transition still
-        // has phases in 'pending' because dispatchReadyPhases runs after
-        // transition().  Without this, fast workers can cause the UI to show
-        // pending → completed, skipping the 'running' state entirely.
+        // webview gets a full snapshot with the updated statuses.
         this.emitUIMessage({
             type: 'STATE_SNAPSHOT',
             payload: {
@@ -1150,13 +1184,18 @@ export class Engine extends EventEmitter {
     }
 
     /**
-     * Evaluate success criteria against a worker's exit code.
-     * V1: Simple exit code matching.
-     */
+ * Evaluate success criteria against a worker's exit code.
+ * V1: Simple exit code matching.
+ * W-4 fix: Log a warning when criteria format is unrecognized.
+ */
     private evaluateSuccess(criteria: string, exitCode: number): boolean {
         if (criteria.startsWith('exit_code:')) {
             const expected = parseInt(criteria.split(':')[1], 10);
             return exitCode === expected;
+        }
+        // W-4: Warn on unrecognized criteria format
+        if (criteria !== '' && !criteria.startsWith('exit_code:')) {
+            log.warn(`[Engine] Unrecognized success_criteria "${criteria}" — falling back to exit_code:0`);
         }
         // Default: exit 0
         return exitCode === 0;

@@ -5,6 +5,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { Phase, PhaseId } from '../types/index.js';
+import type { MCPClientBridge } from '../mcp/MCPClientBridge.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -110,13 +111,36 @@ export class HandoffExtractor {
     }
 
     /**
-     * Persist a handoff report as `handoffs/phase-{id}.json`.
+     * Persist a handoff report.
+     *
+     * MCP-first: submits to MCP state store when bridge is available.
+     * File fallback: writes to `handoffs/phase-{id}.json` for `buildNextContext()`.
      */
     async saveHandoff(
         phaseId: number,
         report: HandoffReport,
         sessionDir: string,
+        mcpBridge?: MCPClientBridge,
+        masterTaskId?: string,
     ): Promise<void> {
+        // MCP-first: submit to in-memory state
+        if (mcpBridge && masterTaskId) {
+            try {
+                const phaseIdStr = `phase-${String(phaseId).padStart(3, '0')}-00000000-0000-0000-0000-000000000000`;
+                await mcpBridge.submitPhaseHandoff(
+                    masterTaskId,
+                    phaseIdStr,
+                    report.decisions ?? [],
+                    report.modified_files ?? [],
+                    report.unresolved_issues ?? [],
+                );
+                log.info(`[HandoffExtractor] Phase ${phaseId} handoff submitted to MCP state.`);
+            } catch (err) {
+                log.warn(`[HandoffExtractor] Failed to submit phase ${phaseId} handoff to MCP:`, err);
+            }
+        }
+
+        // File fallback: still needed for buildNextContext()
         const handoffsDir = path.join(sessionDir, 'handoffs');
         await fs.mkdir(handoffsDir, { recursive: true });
         const filePath = path.join(handoffsDir, `phase-${phaseId}.json`);

@@ -132,8 +132,8 @@ describe('Scheduler — DAG-aware phase scheduling', () => {
                 makePhase({ id: 1, depends_on: [0] }),
             ];
             const order = scheduler.getExecutionOrder(phases);
-            expect(order.indexOf(0)).toBeLessThan(order.indexOf(1));
-            expect(order.indexOf(1)).toBeLessThan(order.indexOf(2));
+            expect(order.indexOf(asPhaseId(0))).toBeLessThan(order.indexOf(asPhaseId(1)));
+            expect(order.indexOf(asPhaseId(1))).toBeLessThan(order.indexOf(asPhaseId(2)));
         });
     });
 });
