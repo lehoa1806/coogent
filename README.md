@@ -71,6 +71,8 @@ You: "Refactor the authentication module to use JWT"
 - **Git Safety** — Automatic sandbox branches keep changes isolated from your working tree
 - **Self-Healing** — Failed phases retry automatically with error feedback injected into the next attempt
 - **Crash Recovery** — If the IDE crashes mid-execution, Coogent picks up where it left off
+- **SQLite Persistence** — Session artifacts stored in a durable SQLite database (via `sql.js` WASM) for cross-session access
+- **Secrets Detection** — Automatic scanning for API keys, private keys, and `.env` patterns before injecting files into AI workers
 - **Token Budgeting** — Prevents expensive failures by checking context size *before* calling the API
 - **post-Execution Reports** — Aggregated summary of all decisions and changes across phases
 
@@ -96,8 +98,18 @@ You: "Refactor the authentication module to use JWT"
 
 ### From VSIX
 
+```bash
+# Build the VSIX package first
+cd coogent
+npm install
+npm run prepackage    # Minified extension host + webview build
+npm run package       # Creates coogent-<version>.vsix
 ```
-Cmd+Shift+P → "Extensions: Install from VSIX…" → select coogent-0.1.0.vsix
+
+Then install in your IDE:
+
+```
+Cmd+Shift+P → "Extensions: Install from VSIX…" → select the generated .vsix file
 ```
 
 ### From Source

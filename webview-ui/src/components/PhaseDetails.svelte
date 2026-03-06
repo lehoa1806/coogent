@@ -1,9 +1,11 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
-<!-- PhaseDetails.svelte — Selected phase detail panel                       -->
+<!-- PhaseDetails.svelte — Composition root for phase detail panel          -->
 <!-- ─────────────────────────────────────────────────────────────────────── -->
+<!-- R3 refactor: UI sections delegated to PhaseHeader, PhaseActions,       -->
+<!-- and PhaseHandoff sub-components.                                       -->
 
 <script lang="ts">
-    import { appState, postMessage } from "../stores/vscode.js";
+    import { appState } from "../stores/vscode.js";
     import {
         createMCPResource,
         type MCPResourceStore,
@@ -12,6 +14,9 @@
     import type { Phase } from "../types.js";
     import MarkdownRenderer from "./MarkdownRenderer.svelte";
     import ViewModeTabs from "./ViewModeTabs.svelte";
+    import PhaseHeader from "./PhaseHeader.svelte";
+    import PhaseActions from "./PhaseActions.svelte";
+    import PhaseHandoff from "./PhaseHandoff.svelte";
 
     /** Toggle state for prompt view */
     let promptMode: "preview" | "raw" = $state("preview");
@@ -73,7 +78,6 @@
 
         const frozen = $appState.phaseElapsedMs[phase.id];
         if (frozen != null && frozen > 0) {
-            // Phase completed/failed: show frozen time
             if (_phaseTimerInterval) {
                 clearInterval(_phaseTimerInterval);
                 _phaseTimerInterval = null;
@@ -84,7 +88,6 @@
 
         const startMs = $appState.phaseStartTimes[phase.id];
         if (startMs && phase.status === "running") {
-            // Phase is running: tick live
             liveElapsedMs = Date.now() - startMs;
             if (!_phaseTimerInterval) {
                 _phaseTimerInterval = setInterval(() => {
@@ -107,14 +110,6 @@
         };
     });
 
-    function formatPhaseElapsed(ms: number): string {
-        if (ms <= 0) return "";
-        const totalSec = Math.floor(ms / 1000);
-        const m = Math.floor(totalSec / 60);
-        const s = totalSec % 60;
-        return m > 0 ? `${m}m ${s}s` : `${s}s`;
-    }
-
     /** Find phases that depend on this phase (reverse lookup). */
     let dependents = $derived(
         selectedPhase
@@ -129,11 +124,11 @@
     let handoffStore: MCPResourceStore<object> | null = $state(null);
     let phasePlanStore: MCPResourceStore<string> | null = $state(null);
 
-    // Parent handoff stores (Fix 6)
+    // Parent handoff stores
     let _parentHandoffStores: MCPResourceStore<object>[] = [];
     let parentHandoffs: Record<number, MCPResourceState<object>> = $state({});
 
-    // Derived state piped from store subscriptions (avoids $-subscribing to null)
+    // Derived state piped from store subscriptions
     let handoffData: MCPResourceState<object> = $state({
         loading: false,
         data: null,
@@ -145,43 +140,21 @@
         error: null,
     });
 
-    /**
-     * Semantic-equality guard variables for the MCP resource $effect below.
-     * Persist across effect re-runs so we can skip store teardown/recreation
-     * when appState object-reference churn gives selectedPhase a new reference
-     * with identical meaningful fields (id, status, mcpPhaseId, masterTaskId).
-     */
+    // Semantic-equality guard variables for the MCP resource $effect
     let _mcpLastPhaseId: number | undefined;
     let _mcpLastStatus: string | undefined;
     let _mcpLastMcpPhaseId: string | undefined;
     let _mcpLastMasterTaskId: string | undefined;
 
-    /**
-     * Regex matching the strict MCP masterTaskId format: YYYYMMDD-HHMMSS-<uuid>.
-     * Human-readable project_id slugs (e.g. "coogent-context-management-audit")
-     * must NOT be used to build coogent:// URIs — they fail parseResourceURI and
-     * produce "Unknown or malformed resource URI" errors in Mission Control.
-     */
     const MCP_MASTER_TASK_ID_RE =
         /^\d{8}-\d{6}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-    /**
-     * Reactively create MCP resource stores when a completed phase is selected
-     * and a valid projectId (masterTaskId) is available.
-     *
-     * Guard: skip teardown + recreation when only the phase object _reference_
-     * changed (due to spread in messageHandler.ts) but the meaningful fields
-     * (id, status, mcpPhaseId, masterTaskId) are identical. Without this guard
-     * every PHASE_OUTPUT / TOKEN_BUDGET / LOG_ENTRY message would restart the
-     * stores and fire a burst of duplicate MCP_FETCH_RESOURCE IPC calls.
-     */
     $effect(() => {
         const masterTaskId = $appState.masterTaskId;
         const newPhaseId = selectedPhase?.id;
         const newStatus = selectedPhase?.status;
         const newMcpPhaseId = selectedPhase?.mcpPhaseId;
 
-        // Bail out early — nothing semantically changed, keep existing stores.
         if (
             newPhaseId === _mcpLastPhaseId &&
             newStatus === _mcpLastStatus &&
@@ -191,13 +164,11 @@
             return;
         }
 
-        // Record the new key values before any async work.
         _mcpLastPhaseId = newPhaseId;
         _mcpLastStatus = newStatus;
         _mcpLastMcpPhaseId = newMcpPhaseId;
         _mcpLastMasterTaskId = masterTaskId;
 
-        // Clean up previous stores
         handoffStore?.destroy();
         phasePlanStore?.destroy();
         handoffStore = null;
@@ -208,7 +179,7 @@
         if (
             selectedPhase &&
             masterTaskId &&
-            MCP_MASTER_TASK_ID_RE.test(masterTaskId) && // guard: reject slugs like "coogent-context-management-audit"
+            MCP_MASTER_TASK_ID_RE.test(masterTaskId) &&
             selectedPhase.status === "completed" &&
             selectedPhase.mcpPhaseId
         ) {
@@ -220,7 +191,6 @@
                 `coogent://tasks/${masterTaskId}/phases/${phaseIdStr}/implementation_plan`,
             );
 
-            // Pipe store values into local reactive vars
             handoffStore.subscribe((v) => {
                 handoffData = v;
             });
@@ -229,7 +199,6 @@
             });
         }
 
-        // -- Parent handoff stores (Fix 6) --
         _parentHandoffStores.forEach((s) => s.destroy());
         _parentHandoffStores = [];
         parentHandoffs = {};
@@ -272,58 +241,17 @@
         const idx = $appState.phases.findIndex((p) => p.id === depId);
         return idx >= 0 ? idx + 1 : depId;
     }
-
-    function handleAction(action: string) {
-        if (!selectedPhase) return;
-        const phaseId = selectedPhase.id;
-        switch (action) {
-            case "retry":
-                postMessage({ type: "CMD_RETRY", payload: { phaseId } });
-                break;
-            case "restart":
-                postMessage({
-                    type: "CMD_RESTART_PHASE",
-                    payload: { phaseId },
-                });
-                break;
-            case "skip":
-                postMessage({ type: "CMD_SKIP_PHASE", payload: { phaseId } });
-                break;
-        }
-    }
-
-    function truncatePrompt(prompt: string): string {
-        if (!prompt) return "";
-        return prompt.length > 80 ? prompt.slice(0, 80) + "…" : prompt;
-    }
 </script>
 
 <div class="phase-details">
     {#if selectedPhase}
-        <!-- Persistent original prompt (collapsible) -->
-        {#if lastPrompt}
-            <details class="original-prompt-details">
-                <summary class="original-prompt-summary">
-                    <span class="summary-icon">💬</span>
-                    Your original prompt
-                </summary>
-                <div class="original-prompt-body">
-                    <p>{lastPrompt}</p>
-                </div>
-            </details>
-        {/if}
-
-        <div class="phase-title-row">
-            <h3>Phase {phaseNumber}: {truncatePrompt(selectedPhase.prompt)}</h3>
-            {#if liveElapsedMs > 0}
-                <span
-                    class="phase-elapsed-badge"
-                    class:running={selectedPhase.status === "running"}
-                >
-                    ⏱ {formatPhaseElapsed(liveElapsedMs)}
-                </span>
-            {/if}
-        </div>
+        <!-- Phase Header (title, elapsed badge, original prompt) -->
+        <PhaseHeader
+            {selectedPhase}
+            {phaseNumber}
+            {lastPrompt}
+            {liveElapsedMs}
+        />
 
         <!-- Prompt -->
         <div class="phase-detail-section">
@@ -390,138 +318,20 @@
             </div>
         {/if}
 
-        <!-- Action Buttons -->
-        {#if selectedPhase.status === "failed"}
-            <div class="phase-actions-bar">
-                <button
-                    class="phase-action-btn retry"
-                    onclick={() => handleAction("retry")}>↻ Retry</button
-                >
-                <button
-                    class="phase-action-btn restart"
-                    onclick={() => handleAction("restart")}>🔄 Restart</button
-                >
-                <button
-                    class="phase-action-btn skip"
-                    onclick={() => handleAction("skip")}>⏭ Skip</button
-                >
-            </div>
-        {:else if selectedPhase.status === "completed"}
-            <div class="phase-actions-bar">
-                <button
-                    class="phase-action-btn restart"
-                    onclick={() => handleAction("restart")}>🔄 Restart</button
-                >
-            </div>
-        {/if}
+        <!-- Action Buttons (retry / restart / skip) -->
+        <PhaseActions {selectedPhase} />
 
-        <!-- ═══ MCP Artifacts (completed phases only) ═══════════════════════ -->
-        {#if selectedPhase.status === "completed" && (handoffStore || phasePlanStore)}
-            <div class="phase-detail-section mcp-artifacts-section">
-                <button
-                    class="mcp-artifacts-toggle"
-                    onclick={() => (showMCPArtifacts = !showMCPArtifacts)}
-                    aria-expanded={showMCPArtifacts}
-                >
-                    <span class="toggle-icon"
-                        >{showMCPArtifacts ? "▾" : "▸"}</span
-                    >
-                    <h4>Artifacts</h4>
-                </button>
-
-                {#if showMCPArtifacts}
-                    <!-- Phase-level Implementation Plan -->
-                    {#if phasePlanStore}
-                        <div class="mcp-artifact-block">
-                            <h5>Phase Implementation Plan</h5>
-                            {#if planData.loading}
-                                <div class="mcp-loading">Loading plan…</div>
-                            {:else if planData.error}
-                                <div class="mcp-error">
-                                    {planData.error}
-                                </div>
-                            {:else if planData.data}
-                                <div class="mcp-rendered-content">
-                                    <MarkdownRenderer content={planData.data} />
-                                </div>
-                            {:else}
-                                <div class="mcp-empty">
-                                    No phase plan recorded.
-                                </div>
-                            {/if}
-                        </div>
-                    {/if}
-
-                    <!-- Phase Handoff -->
-                    {#if handoffStore}
-                        <div class="mcp-artifact-block">
-                            <h5>Phase Handoff</h5>
-                            {#if handoffData.loading}
-                                <div class="mcp-loading">Loading handoff…</div>
-                            {:else if handoffData.error}
-                                <div class="mcp-error">
-                                    {handoffData.error}
-                                </div>
-                            {:else if handoffData.data}
-                                {@const rawHandoff = handoffData.data}
-                                {@const handoff = (
-                                    typeof rawHandoff === "string"
-                                        ? JSON.parse(rawHandoff)
-                                        : rawHandoff
-                                ) as Record<string, unknown>}
-                                {#if Array.isArray(handoff.decisions) && handoff.decisions.length > 0}
-                                    <div class="handoff-group">
-                                        <span class="handoff-label"
-                                            >Decisions</span
-                                        >
-                                        <ul class="handoff-list">
-                                            {#each handoff.decisions as decision}
-                                                <li>{decision}</li>
-                                            {/each}
-                                        </ul>
-                                    </div>
-                                {/if}
-                                {#if Array.isArray(handoff.modifiedFiles) && handoff.modifiedFiles.length > 0}
-                                    <div class="handoff-group">
-                                        <span class="handoff-label"
-                                            >Modified Files</span
-                                        >
-                                        <div class="handoff-files">
-                                            {#each handoff.modifiedFiles as file}
-                                                <span class="file-chip"
-                                                    >{file}</span
-                                                >
-                                            {/each}
-                                        </div>
-                                    </div>
-                                {/if}
-                                {#if Array.isArray(handoff.blockers) && handoff.blockers.length > 0}
-                                    <div class="handoff-group">
-                                        <span class="handoff-label blockers"
-                                            >Blockers</span
-                                        >
-                                        <ul class="handoff-list blockers">
-                                            {#each handoff.blockers as blocker}
-                                                <li>{blocker}</li>
-                                            {/each}
-                                        </ul>
-                                    </div>
-                                {/if}
-                                {#if (!Array.isArray(handoff.decisions) || handoff.decisions.length === 0) && (!Array.isArray(handoff.modifiedFiles) || handoff.modifiedFiles.length === 0) && (!Array.isArray(handoff.blockers) || handoff.blockers.length === 0)}
-                                    <div class="mcp-empty">
-                                        Handoff recorded with no details.
-                                    </div>
-                                {/if}
-                            {:else}
-                                <div class="mcp-empty">
-                                    No handoff data recorded.
-                                </div>
-                            {/if}
-                        </div>
-                    {/if}
-                {/if}
-            </div>
-        {/if}
+        <!-- MCP Artifacts + Handoff Data -->
+        <PhaseHandoff
+            {selectedPhase}
+            {handoffData}
+            {planData}
+            {parentHandoffs}
+            bind:showMCPArtifacts
+            hasHandoffStore={!!handoffStore}
+            hasPlanStore={!!phasePlanStore}
+            {getDepLabel}
+        />
 
         <!-- Token Budget -->
         {#if tokenBudget}
@@ -539,78 +349,6 @@
                     </span>
                 </div>
             </div>
-        {/if}
-
-        <!-- Parent Handoff Context (from completed dependencies) -->
-        {#if selectedPhase.depends_on && selectedPhase.depends_on.length > 0}
-            {@const completedParents = selectedPhase.depends_on.filter(
-                (depId) => parentHandoffs[depId],
-            )}
-            {#if completedParents.length > 0}
-                <div class="phase-detail-section parent-handoff-section">
-                    <h4>Parent Handoff Context</h4>
-                    {#each completedParents as depId}
-                        {@const pd = parentHandoffs[depId]}
-                        <div class="parent-handoff-block">
-                            <span class="parent-handoff-label"
-                                >Phase #{getDepLabel(depId)}</span
-                            >
-                            {#if pd.loading}
-                                <div class="mcp-loading">Loading…</div>
-                            {:else if pd.error}
-                                <div class="mcp-error">{pd.error}</div>
-                            {:else if pd.data}
-                                {@const rawH = pd.data}
-                                {@const h = (
-                                    typeof rawH === "string"
-                                        ? JSON.parse(rawH)
-                                        : rawH
-                                ) as Record<string, unknown>}
-                                {#if Array.isArray(h.decisions) && h.decisions.length > 0}
-                                    <div class="handoff-group">
-                                        <span class="handoff-label"
-                                            >Decisions</span
-                                        >
-                                        <ul class="handoff-list">
-                                            {#each h.decisions as decision}
-                                                <li>{decision}</li>
-                                            {/each}
-                                        </ul>
-                                    </div>
-                                {/if}
-                                {#if Array.isArray(h.modifiedFiles) && h.modifiedFiles.length > 0}
-                                    <div class="handoff-group">
-                                        <span class="handoff-label"
-                                            >Modified Files</span
-                                        >
-                                        <div class="handoff-files">
-                                            {#each h.modifiedFiles as file}
-                                                <span class="file-chip"
-                                                    >{file}</span
-                                                >
-                                            {/each}
-                                        </div>
-                                    </div>
-                                {/if}
-                                {#if Array.isArray(h.blockers) && h.blockers.length > 0}
-                                    <div class="handoff-group">
-                                        <span class="handoff-label blockers"
-                                            >Blockers</span
-                                        >
-                                        <ul class="handoff-list blockers">
-                                            {#each h.blockers as blocker}
-                                                <li>{blocker}</li>
-                                            {/each}
-                                        </ul>
-                                    </div>
-                                {/if}
-                            {:else}
-                                <div class="mcp-empty">No handoff data.</div>
-                            {/if}
-                        </div>
-                    {/each}
-                </div>
-            {/if}
         {/if}
 
         <!-- Worker Output -->
@@ -660,13 +398,6 @@
         min-width: 0;
         background: var(--vscode-editor-background);
         border: 1px solid var(--vscode-contrastBorder, transparent);
-    }
-
-    h3 {
-        font-size: 13px;
-        font-weight: 600;
-        margin: 0;
-        color: var(--vscode-foreground);
     }
 
     .phase-detail-section {
@@ -775,72 +506,6 @@
         margin-bottom: 0;
     }
 
-    /* ── Original prompt collapsible ────────────────────────────────── */
-
-    .original-prompt-details {
-        margin-bottom: 4px;
-        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
-        border-radius: 5px;
-        overflow: hidden;
-        background: var(--vscode-editorWidget-background);
-    }
-
-    .original-prompt-summary {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 12px;
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--vscode-descriptionForeground);
-        cursor: pointer;
-        user-select: none;
-        list-style: none;
-    }
-
-    .original-prompt-summary::-webkit-details-marker {
-        display: none;
-    }
-
-    .original-prompt-summary::before {
-        content: "›";
-        font-size: 14px;
-        transition: transform 0.15s ease;
-        color: var(--vscode-descriptionForeground);
-        line-height: 1;
-    }
-
-    details[open] .original-prompt-summary::before {
-        transform: rotate(90deg);
-    }
-
-    .summary-icon {
-        font-size: 12px;
-    }
-
-    .original-prompt-body {
-        padding: 10px 14px;
-        border-top: 1px solid
-            var(--vscode-panel-border, rgba(128, 128, 128, 0.2));
-    }
-
-    .original-prompt-body p {
-        margin: 0;
-        font-size: 12px;
-        line-height: 1.6;
-        color: var(--vscode-foreground);
-        white-space: pre-wrap;
-        word-wrap: break-word;
-    }
-
-    /* ── Output mode row ─────────────────────────────────────────────── */
-
-    .output-mode-row {
-        display: flex;
-        justify-content: flex-end;
-        padding: 4px 0;
-    }
-
     .phase-prompt-rendered {
         font-size: 13px;
         line-height: 1.6;
@@ -855,53 +520,6 @@
         word-wrap: break-word;
         max-height: min(420px, 50vh);
         overflow-y: auto;
-    }
-
-    .phase-actions-bar {
-        display: flex;
-        gap: 8px;
-        padding-top: 12px;
-        margin-top: 4px;
-        border-top: 1px solid
-            var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-        flex-wrap: wrap;
-    }
-
-    .phase-action-btn {
-        font-family: var(--vscode-font-family);
-        font-size: 11px;
-        font-weight: 600;
-        padding: 5px 14px;
-        border-radius: 4px;
-        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-        background: var(--vscode-editorWidget-background);
-        color: var(--vscode-foreground);
-        cursor: pointer;
-        transition: all 0.15s ease;
-    }
-
-    .phase-action-btn:hover {
-        filter: brightness(1.15);
-    }
-
-    .phase-action-btn.retry {
-        background: var(--vscode-button-background);
-        color: var(--vscode-button-foreground, #fff);
-        border-color: transparent;
-    }
-
-    .phase-action-btn.restart {
-        background: color-mix(
-            in srgb,
-            var(--vscode-editorWarning-foreground, #cca700) 15%,
-            transparent
-        );
-        color: var(--vscode-editorWarning-foreground, #cca700);
-    }
-
-    .phase-action-btn.skip {
-        background: transparent;
-        color: var(--vscode-descriptionForeground);
     }
 
     .token-bar {
@@ -936,7 +554,11 @@
         color: var(--vscode-foreground);
     }
 
-    /* ── Toggle buttons: now provided by ViewModeTabs.svelte ────────── */
+    .output-mode-row {
+        display: flex;
+        justify-content: flex-end;
+        padding: 4px 0;
+    }
 
     .phase-output-section {
         flex: 1;
@@ -971,210 +593,9 @@
         word-wrap: break-word;
     }
 
-    /* ── Phase title row with elapsed badge ─────────────────────────── */
-
-    .phase-title-row {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        flex-wrap: wrap;
-    }
-
-    .phase-elapsed-badge {
-        font-size: 10px;
-        font-family: var(--vscode-editor-font-family, monospace);
-        font-weight: 600;
-        padding: 2px 8px;
-        border-radius: 10px;
-        color: var(--vscode-descriptionForeground);
-        background: var(--vscode-editorWidget-background);
-        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
-        white-space: nowrap;
-    }
-
-    .phase-elapsed-badge.running {
-        color: var(--vscode-focusBorder, #007fd4);
-        background: color-mix(
-            in srgb,
-            var(--vscode-focusBorder, #007fd4) 10%,
-            transparent
-        );
-        border-color: color-mix(
-            in srgb,
-            var(--vscode-focusBorder, #007fd4) 30%,
-            transparent
-        );
-        animation: elapsed-pulse 2s ease-in-out infinite;
-    }
-
-    @keyframes elapsed-pulse {
-        0%,
-        100% {
-            opacity: 1;
-        }
-        50% {
-            opacity: 0.65;
-        }
-    }
-
     .output-placeholder {
         color: var(--vscode-disabledForeground);
         font-style: italic;
-    }
-
-    /* ── MCP Artifacts Section ─────────────────────────────────────────── */
-
-    .mcp-artifacts-section {
-        border-top: 1px solid
-            var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-        padding-top: 12px;
-    }
-
-    .mcp-artifacts-toggle {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        background: none;
-        border: none;
-        padding: 0;
-        cursor: pointer;
-        color: var(--vscode-foreground);
-        width: 100%;
-        text-align: left;
-    }
-
-    .mcp-artifacts-toggle h4 {
-        margin: 0;
-    }
-
-    .toggle-icon {
-        font-size: 12px;
-        width: 14px;
-        text-align: center;
-        color: var(--vscode-descriptionForeground);
-    }
-
-    .mcp-artifact-block {
-        margin-top: 10px;
-        padding: 10px 12px;
-        background: var(
-            --vscode-editorWidget-background,
-            var(--vscode-sideBar-background)
-        );
-        border-radius: 4px;
-        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-    }
-
-    .mcp-artifact-block h5 {
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--vscode-foreground);
-        margin: 0 0 8px;
-    }
-
-    .mcp-loading {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        font-style: italic;
-        padding: 4px 0;
-    }
-
-    .mcp-error {
-        font-size: 11px;
-        color: var(--vscode-errorForeground, #f85149);
-        padding: 4px 0;
-    }
-
-    .mcp-empty {
-        font-size: 11px;
-        color: var(--vscode-disabledForeground);
-        font-style: italic;
-        padding: 4px 0;
-    }
-
-    .mcp-rendered-content {
-        font-size: 13px;
-        line-height: 1.6;
-        color: var(--vscode-editor-foreground);
-        word-wrap: break-word;
-        max-height: 300px;
-        overflow-y: auto;
-    }
-
-    .handoff-group {
-        margin-bottom: 8px;
-    }
-
-    .handoff-group:last-child {
-        margin-bottom: 0;
-    }
-
-    .handoff-label {
-        font-size: 10px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        color: var(--vscode-descriptionForeground);
-        display: block;
-        margin-bottom: 4px;
-    }
-
-    .handoff-label.blockers {
-        color: var(--vscode-editorWarning-foreground, #cca700);
-    }
-
-    .handoff-list {
-        margin: 0;
-        padding-left: 18px;
-        font-size: 12px;
-        line-height: 1.5;
-        color: var(--vscode-foreground);
-    }
-
-    .handoff-list.blockers li {
-        color: var(--vscode-editorWarning-foreground, #cca700);
-    }
-
-    .handoff-files {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 4px;
-    }
-
-    /* ── Parent Handoff Context ──────────────────────────────────────── */
-
-    .parent-handoff-section {
-        border-left: 3px solid
-            color-mix(
-                in srgb,
-                var(--vscode-editorInfo-foreground, #58a6ff) 40%,
-                transparent
-            );
-        padding-left: 12px;
-    }
-
-    .parent-handoff-block {
-        margin-bottom: 10px;
-        padding: 8px 10px;
-        background: var(
-            --vscode-editorWidget-background,
-            var(--vscode-sideBar-background)
-        );
-        border-radius: 4px;
-        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
-    }
-
-    .parent-handoff-block:last-child {
-        margin-bottom: 0;
-    }
-
-    .parent-handoff-label {
-        font-family: var(--vscode-editor-font-family, monospace);
-        font-size: 10px;
-        font-weight: 700;
-        color: var(--vscode-editorInfo-foreground, #58a6ff);
-        display: block;
-        margin-bottom: 6px;
     }
 
     .phase-details-placeholder {

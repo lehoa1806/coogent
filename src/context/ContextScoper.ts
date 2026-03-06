@@ -9,6 +9,7 @@ import { ExplicitFileResolver, ASTFileResolver } from './FileResolver.js';
 import type { FileResolver } from '../types/index.js';
 import { TokenPruner, type PrunableEntry } from './TokenPruner.js';
 import { TiktokenEncoder } from './TiktokenEncoder.js';
+import { SecretsGuard } from './SecretsGuard.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -152,6 +153,15 @@ export class ContextScoper {
             }
 
             const content = await fs.readFile(realPath, 'utf-8');
+
+            // Guard: secrets detection (non-blocking — warn only)
+            const scanResult = SecretsGuard.scan(content, relativePath);
+            if (!scanResult.safe) {
+                for (const finding of scanResult.findings) {
+                    log.warn(`[ContextScoper] ⚠ ${finding}`);
+                }
+            }
+
             const wrapperTokens = this.encoder.countTokens(`<<<FILE: ${relativePath}>>>\n\n<<<END FILE>>>`);
             const tokenCount = this.encoder.countTokens(content) + wrapperTokens;
 

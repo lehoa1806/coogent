@@ -63,14 +63,18 @@ npm run build              # Both targets in one command
 ```
 coogent/
 ├── src/
-│   ├── extension.ts              ← Activation entry point, service wiring hub
+│   ├── extension.ts              ← Activation entry point (~270 lines, delegates to modules below)
+│   ├── ServiceContainer.ts       ← Typed service registry (replaces module-level vars)
+│   ├── CommandRegistry.ts        ← VS Code command registrations (14 commands)
+│   ├── EngineWiring.ts           ← Engine ↔ ADK ↔ UI event subscriptions
+│   ├── PlannerWiring.ts          ← PlannerAgent ↔ Engine event wiring
 │   ├── types/index.ts            ← Universal type system (FSM, IPC, branded types)
 │   │
 │   ├── engine/                   ← Engine (FSM), Scheduler (DAG), SelfHealingController
 │   ├── state/                    ← StateManager (WAL + mutex + AJV validation)
-│   ├── mcp/                      ← CoogentMCPServer, MCPClientBridge, MCP types
-│   ├── adk/                      ← ADKController, AntigravityADKAdapter, OutputBuffer
-│   ├── context/                  ← ContextScoper, ASTFileResolver, TokenPruner
+│   ├── mcp/                      ← CoogentMCPServer, MCPClientBridge, ArtifactDB (SQLite)
+│   ├── adk/                      ← ADKController, ADKAdapter, OutputBuffer, OutputBufferRegistry
+│   ├── context/                  ← ContextScoper, ASTFileResolver, TokenPruner, TiktokenEncoder, SecretsGuard
 │   ├── evaluators/               ← CompilerEvaluator (exit_code, regex, toolchain, test_suite)
 │   ├── git/                      ← GitManager (execFile), GitSandboxManager (VS Code Git API)
 │   ├── consolidation/            ← ConsolidationAgent (phase aggregation → report)
@@ -83,7 +87,7 @@ coogent/
 │
 ├── webview-ui/                   ← Svelte 5 + Vite webview source
 │   ├── src/
-│   │   ├── components/           ← Modular UI components
+│   │   ├── components/           ← PhaseDetails, PhaseHeader, PhaseActions, PhaseHandoff, PlanReview, ...
 │   │   ├── stores/               ← appState, mcpStore (requestId correlation)
 │   │   └── types.ts              ← Frontend type definitions
 │   └── vite.config.ts            ← Deterministic filename build config
@@ -95,6 +99,7 @@ coogent/
 ├── tsconfig.json                 ← TypeScript configuration (strict)
 │
 └── .coogent/                     ← Runtime data directory (gitignored)
+    ├── artifacts.db              ← SQLite database (MCP state persistence)
     ├── ipc/<session-id>/         ← Runbook, WAL, lock files
     └── logs/<run-id>/            ← JSONL telemetry logs
 ```
@@ -150,7 +155,7 @@ The most common source of bugs. To trace:
 ### Run Tests
 
 ```bash
-npm test                           # All 268 tests (serial, leak detection)
+npm test                           # All tests (serial, leak detection) — run for current count
 npx jest --verbose                 # With detailed output
 npx jest src/engine                # Run specific module
 npx jest --watch                   # Watch mode
@@ -166,9 +171,12 @@ npx jest --watch                   # Watch mode
 | Scheduler | `src/engine/__tests__/` | DAG scheduling, cycle detection |
 | SelfHealing | `src/engine/__tests__/` | Retry counting, prompt augmentation |
 | ADKController | `src/adk/__tests__/` | Spawn/terminate, timeout race |
+| OutputBuffer | `src/adk/__tests__/` | Timer-based flush, buffer-size flush, dispose |
 | ContextScoper | `src/context/__tests__/` | Assembly, budget enforcement |
 | ASTFileResolver | `src/context/__tests__/` | Import crawling, cycle detection |
 | TokenPruner | `src/context/__tests__/` | 3-tier pruning |
+| TiktokenEncoder | `src/context/__tests__/` | Lazy init, fallback, cl100k_base encoding |
+| SecretsGuard | `src/context/__tests__/` | Secret patterns, entropy, false-positive resistance |
 | GitManager | `src/git/__tests__/` | Commit/rollback (mocked) |
 | TelemetryLogger | `src/logger/__tests__/` | JSONL logging |
 | MissionControlPanel | `src/webview/__tests__/` | IPC validation (17 cases) |

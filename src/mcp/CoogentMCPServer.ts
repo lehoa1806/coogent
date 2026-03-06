@@ -190,13 +190,15 @@ export class CoogentMCPServer {
      * Initialise the persistent SQLite store. Must be called after construction
      * and before any tool/resource calls.
      *
-     * @param sessionDir Absolute path to the session directory
-     *        (e.g. `/workspace/.coogent/ipc/20260307-000104-<uuid>`).
-     *        The database file will be created at `<sessionDir>/artifacts.db`.
+     * @param coogentDir Absolute path to the workspace-level `.coogent/` directory
+     *        (e.g. `/workspace/.coogent`).
+     *        The database file will be created at `<coogentDir>/artifacts.db`.
+     *        Data is keyed by masterTaskId so all sessions share one DB safely.
      */
-    async init(sessionDir: string): Promise<void> {
-        this.db = await ArtifactDB.create(path.join(sessionDir, 'artifacts.db'));
-        log.info('[CoogentMCPServer] ArtifactDB initialised at:', path.join(sessionDir, 'artifacts.db'));
+    async init(coogentDir: string): Promise<void> {
+        const dbPath = path.join(coogentDir, 'artifacts.db');
+        this.db = await ArtifactDB.create(dbPath);
+        log.info('[CoogentMCPServer] ArtifactDB initialised at:', dbPath);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
