@@ -22,12 +22,14 @@ export function wirePlanner(
     svc: ServiceContainer,
     sessionDirName: string
 ): void {
-    const { engine, plannerAgent, mcpBridge } = svc;
+    const { engine, plannerAgent, mcpBridge, mcpServer } = svc;
     if (!engine || !plannerAgent) return;
 
     // ── Engine → PlannerAgent ──────────────────────────────────────────
     engine.on('plan:request', (prompt: string) => {
         plannerAgent.plan(prompt).catch(log.onError);
+        // Persist the original prompt as the task summary in ArtifactDB
+        mcpServer?.upsertSummary(sessionDirName, prompt);
     });
 
     engine.on('plan:rejected', (prompt: string, feedback: string) => {
