@@ -52,7 +52,7 @@ export interface CoogentMCPServerEvents {
  *
  * @returns `null` if the URI is malformed or unrecognised.
  */
-function parseResourceURI(uri: string): ParsedResourceURI | null {
+export function parseResourceURI(uri: string): ParsedResourceURI | null {
     // Normalise: trim whitespace and trailing slashes
     const cleaned = uri.trim().replace(/\/+$/, '');
 
@@ -162,6 +162,15 @@ export class CoogentMCPServer {
     /** Get the full task state for internal use (e.g., from the engine). */
     getTaskState(masterTaskId: string): TaskState | undefined {
         return this.store.get(masterTaskId);
+    }
+
+    /**
+     * Remove a task from the in-memory store (B-4 fix).
+     * Call this on session reset to prevent unbounded memory growth.
+     */
+    purgeTask(masterTaskId: string): void {
+        this.store.delete(masterTaskId);
+        log.info(`[CoogentMCPServer] Purged task: ${masterTaskId}`);
     }
 
     /**
@@ -594,9 +603,16 @@ export class CoogentMCPServer {
         const phaseId = this.validatePhaseId(args['phaseId']);
         const filePath = this.validateString(args['file_path'], 'file_path');
 
-        // Resolve against workspace root, preventing path traversal
-        const resolved = path.resolve(this.workspaceRoot, filePath);
-        if (!resolved.startsWith(this.workspaceRoot)) {
+        // B-2: Resolve symlinks before boundary check to prevent symlink-based path traversal
+        let resolved: string;
+        let realWorkspaceRoot: string;
+        try {
+            resolved = await fs.realpath(path.resolve(this.workspaceRoot, filePath));
+            realWorkspaceRoot = await fs.realpath(this.workspaceRoot);
+        } catch {
+            throw new Error(`Cannot resolve path: "${filePath}"`);
+        }
+        if (!resolved.startsWith(realWorkspaceRoot + path.sep) && resolved !== realWorkspaceRoot) {
             throw new Error(
                 `Path traversal detected: "${filePath}" resolves outside the workspace root.`
             );

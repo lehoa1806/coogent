@@ -81,13 +81,6 @@ export class SelfHealingController {
         return attempts.length < phaseMaxRetries;
     }
 
-    /**
-     * Returns true if the phase has not yet exhausted its retry budget.
-     * Alias for `canRetry` — satisfies the `shouldRetry` contract.
-     */
-    shouldRetry(phaseId: number): boolean {
-        return this.canRetry(phaseId);
-    }
 
     /**
      * Check if a phase can be retried, respecting per-phase overrides.
@@ -105,12 +98,6 @@ export class SelfHealingController {
         return (this.attempts.get(phaseId) ?? []).length;
     }
 
-    /**
-     * Get the retry count for a phase (diagnostic alias for getAttemptCount).
-     */
-    getRetryCount(phaseId: number): number {
-        return this.getAttemptCount(phaseId);
-    }
 
     /**
      * Get the delay before the next retry (exponential backoff).

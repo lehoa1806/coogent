@@ -426,7 +426,7 @@ describe('CoogentMCPServer — Tool Handlers', () => {
                     file_path: 'does-not-exist.txt',
                 },
             })
-        ).rejects.toThrow(/File not found/);
+        ).rejects.toThrow(/Cannot resolve path/);
     });
 
     // ── Validation Errors ────────────────────────────────────────────────

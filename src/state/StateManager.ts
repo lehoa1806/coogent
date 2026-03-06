@@ -15,7 +15,6 @@ const runbookSchema = {
     title: 'Coogent Task Runbook',
     type: 'object',
     required: ['project_id', 'status', 'current_phase', 'phases'],
-    additionalProperties: false,
     properties: {
         project_id: { type: 'string', minLength: 1 },
         status: { type: 'string', enum: ['idle', 'running', 'paused_error', 'completed'] },
@@ -28,7 +27,6 @@ const runbookSchema = {
             items: {
                 type: 'object',
                 required: ['id', 'status', 'prompt', 'context_files', 'success_criteria'],
-                additionalProperties: false,
                 properties: {
                     id: { type: 'integer' },
                     status: { type: 'string', enum: ['pending', 'running', 'completed', 'failed'] },
@@ -315,10 +313,22 @@ export class StateManager {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Acquire an exclusive lock via lockfile (O_CREAT | O_EXCL).
+     * Acquire an **advisory** file lock via lockfile (O_CREAT | O_EXCL).
+     *
+     * **W-7 Design Note**: This lock only guards against *external* processes
+     * (e.g., another VS Code window or a text editor) modifying the runbook
+     * file concurrently. The primary write serialization within this process
+     * is the in-process `writeLock` async mutex (see L87), which prevents
+     * interleaving from concurrent async paths (worker exit + user pause).
+     *
+     * The 100ms busy-poll is acceptable because contention from external
+     * processes is rare and short-lived.
+     *
      * @param timeoutMs Maximum wait before throwing (default: 5000ms).
      */
     private async acquireLock(timeoutMs = 5000): Promise<void> {
+        // W-3 fix: Skip re-acquisition if we already hold the lock
+        if (this.isLocked) return;
         const deadline = Date.now() + timeoutMs;
         let staleLockCleaned = false;
 

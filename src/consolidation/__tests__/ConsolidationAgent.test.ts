@@ -246,7 +246,14 @@ describe('ConsolidationAgent', () => {
     // ─── saveReport ─────────────────────────────────────────────────────
 
     describe('saveReport', () => {
-        it('should save the report as consolidation-report.md and return the path', async () => {
+        function makeMockBridge() {
+            return {
+                submitConsolidationReport: jest.fn().mockResolvedValue(undefined),
+            } as unknown as import('../../mcp/MCPClientBridge.js').MCPClientBridge;
+        }
+
+        it('should submit the report to MCP via the bridge', async () => {
+            const mockBridge = makeMockBridge();
             const report: ConsolidationReport = {
                 projectId: 'save-test',
                 totalPhases: 1,
@@ -262,19 +269,23 @@ describe('ConsolidationAgent', () => {
                 generatedAt: Date.now(),
             };
 
-            const filePath = await agent.saveReport(tmpDir, report);
+            await agent.saveReport(tmpDir, report, mockBridge, 'master-task-001');
 
-            expect(filePath).toBe(path.join(tmpDir, 'consolidation-report.md'));
-
-            const content = await fs.readFile(filePath, 'utf-8');
-            expect(content).toContain('# Walkthrough');
-            expect(content).toContain('save-test');
-            expect(content).toContain('Initial implementation');
+            expect(mockBridge.submitConsolidationReport).toHaveBeenCalledTimes(1);
+            expect(mockBridge.submitConsolidationReport).toHaveBeenCalledWith(
+                'master-task-001',
+                expect.stringContaining('# Walkthrough'),
+            );
+            expect(mockBridge.submitConsolidationReport).toHaveBeenCalledWith(
+                'master-task-001',
+                expect.stringContaining('save-test'),
+            );
         });
 
-        it('should create the session directory if it does not exist', async () => {
+        it('should NOT write consolidation-report.md to disk (V1 purity)', async () => {
+            const mockBridge = makeMockBridge();
             const report: ConsolidationReport = {
-                projectId: 'dir-test',
+                projectId: 'no-disk-test',
                 totalPhases: 0,
                 successfulPhases: 0,
                 failedPhases: 0,
@@ -286,17 +297,40 @@ describe('ConsolidationAgent', () => {
                 generatedAt: Date.now(),
             };
 
-            const filePath = await agent.saveReport(tmpDir, report);
+            await agent.saveReport(tmpDir, report, mockBridge, 'master-task-002');
 
-            const stat = await fs.stat(filePath);
-            expect(stat.isFile()).toBe(true);
+            // The file must NOT exist on disk
+            const filePath = path.join(tmpDir, 'consolidation-report.md');
+            await expect(fs.stat(filePath)).rejects.toThrow();
+        });
+
+        it('should not throw when no MCP bridge is provided', async () => {
+            const report: ConsolidationReport = {
+                projectId: 'no-bridge-test',
+                totalPhases: 0,
+                successfulPhases: 0,
+                failedPhases: 0,
+                skippedPhases: 0,
+                allModifiedFiles: [],
+                allDecisions: [],
+                unresolvedIssues: [],
+                phaseResults: [],
+                generatedAt: Date.now(),
+            };
+
+            // Should complete without error (logs a warning internally)
+            await expect(agent.saveReport(tmpDir, report)).resolves.toBeUndefined();
         });
     });
 
     // ─── End-to-end integration ─────────────────────────────────────────
 
     describe('end-to-end', () => {
-        it('should generate, format, and save a complete report', async () => {
+        it('should generate, format, and submit a complete report via MCP', async () => {
+            const mockBridge = {
+                submitConsolidationReport: jest.fn().mockResolvedValue(undefined),
+            } as unknown as import('../../mcp/MCPClientBridge.js').MCPClientBridge;
+
             const runbook = makeRunbook();
             await writeHandoff(tmpDir, 0, makeHandoff(0, {
                 decisions: ['Created base module'],
@@ -310,15 +344,16 @@ describe('ConsolidationAgent', () => {
             }));
 
             const report = await agent.generateReport(tmpDir, runbook);
-            const filePath = await agent.saveReport(tmpDir, report);
-            const markdown = await fs.readFile(filePath, 'utf-8');
+            await agent.saveReport(tmpDir, report, mockBridge, 'e2e-master-task');
 
-            expect(markdown).toContain('Created base module');
-            expect(markdown).toContain('Added tests');
-            expect(markdown).toContain('+ src/base.ts');
-            expect(markdown).toContain('+ src/base.test.ts');
-            expect(markdown).toContain('Needs documentation');
-            expect(markdown).toContain('| **Successful** | 2 |');
+            expect(mockBridge.submitConsolidationReport).toHaveBeenCalledTimes(1);
+            const submittedMarkdown = (mockBridge.submitConsolidationReport as jest.Mock).mock.calls[0][1] as string;
+            expect(submittedMarkdown).toContain('Created base module');
+            expect(submittedMarkdown).toContain('Added tests');
+            expect(submittedMarkdown).toContain('+ src/base.ts');
+            expect(submittedMarkdown).toContain('+ src/base.test.ts');
+            expect(submittedMarkdown).toContain('Needs documentation');
+            expect(submittedMarkdown).toContain('| **Successful** | 2 |');
         });
     });
 });

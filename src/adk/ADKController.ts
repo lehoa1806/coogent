@@ -22,6 +22,15 @@ export interface IADKAdapter {
     createSession(options: ADKSessionOptions): Promise<ADKSessionHandle>;
     /** Terminate an agent session. */
     terminateSession(handle: ADKSessionHandle): Promise<void>;
+    /**
+     * W-9: Optional conversation mode helper.
+     * Determines whether a new conversation should be started based on mode and prompt size.
+     */
+    shouldStartNewConversation?(
+        mode: string,
+        promptLength: number,
+        smartSwitchTokenThreshold: number
+    ): boolean;
 }
 
 export interface ADKSessionOptions {
@@ -180,10 +189,10 @@ export class ADKController extends EventEmitter {
         const prompt = this.buildInjectionPrompt(phase, contextPayload, mcpResourceUris);
 
         // Determine if a new conversation should be started based on mode
+        // W-9 fix: Use typed optional interface method instead of `as any` cast
         let newConversation = false;
-        const adapterAny = this.adapter as any;
-        if (typeof adapterAny.shouldStartNewConversation === 'function') {
-            newConversation = adapterAny.shouldStartNewConversation(
+        if (typeof this.adapter.shouldStartNewConversation === 'function') {
+            newConversation = this.adapter.shouldStartNewConversation(
                 this._conversationSettings.mode,
                 prompt.length,
                 this._conversationSettings.smartSwitchTokenThreshold
@@ -352,41 +361,56 @@ export class ADKController extends EventEmitter {
     /**
      * Scan for stale PID files and terminate orphaned workers.
      * Called on extension activation.
+     * W-5: Parallelized — sends all SIGTERMs first, single 5s wait, then SIGKILL survivors.
      */
     async cleanupOrphanedWorkers(): Promise<void> {
         try {
             await fs.mkdir(this.pidDir, { recursive: true });
             const pidFiles = await fs.readdir(this.pidDir);
 
+            // Phase 0: Read all PID files and filter to live processes
+            const entries: { file: string; pid: number }[] = [];
             for (const file of pidFiles) {
                 const filePath = path.join(this.pidDir, file);
                 const pid = parseInt(await fs.readFile(filePath, 'utf-8'), 10);
-
                 if (isNaN(pid)) {
                     await fs.unlink(filePath).catch(() => { });
                     continue;
                 }
+                entries.push({ file, pid });
+            }
 
+            if (entries.length === 0) return;
+
+            // Phase 1: SIGTERM all live orphans
+            const liveOrphans: { file: string; pid: number }[] = [];
+            for (const { file, pid } of entries) {
                 try {
                     process.kill(pid, 0); // Check if process exists
-                    // #35: SIGTERM first for graceful shutdown
                     process.kill(pid, 'SIGTERM');
                     log.info(`[ADKController] Sent SIGTERM to orphaned worker PID ${pid}`);
-
-                    // Wait 5s then escalate to SIGKILL if still alive
-                    await new Promise<void>(resolve => setTimeout(resolve, 5000));
-                    try {
-                        process.kill(pid, 0); // Still alive?
-                        process.kill(pid, 'SIGKILL');
-                        log.info(`[ADKController] Escalated to SIGKILL for PID ${pid}`);
-                    } catch {
-                        // Process died from SIGTERM — good
-                    }
+                    liveOrphans.push({ file, pid });
                 } catch {
-                    // Process already dead — just clean up
+                    // Process already dead — just clean up PID file
+                    await fs.unlink(path.join(this.pidDir, file)).catch(() => { });
                 }
+            }
 
-                await fs.unlink(filePath).catch(() => { });
+            if (liveOrphans.length === 0) return;
+
+            // Phase 2: Single 5s wait for graceful shutdown
+            await new Promise<void>(resolve => setTimeout(resolve, 5000));
+
+            // Phase 3: SIGKILL survivors and clean up all PID files
+            for (const { file, pid } of liveOrphans) {
+                try {
+                    process.kill(pid, 0); // Still alive?
+                    process.kill(pid, 'SIGKILL');
+                    log.info(`[ADKController] Escalated to SIGKILL for PID ${pid}`);
+                } catch {
+                    // Process died from SIGTERM — good
+                }
+                await fs.unlink(path.join(this.pidDir, file)).catch(() => { });
             }
         } catch {
             // PID directory doesn't exist — nothing to clean

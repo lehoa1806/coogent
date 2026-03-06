@@ -79,8 +79,9 @@ export interface Phase {
     status: PhaseStatus;
     /** The explicit instruction to inject into the ephemeral worker agent. */
     prompt: string;
-    /** Exact file paths (relative to workspace root) to read and inject. */
-    context_files: readonly string[];
+    /** Exact file paths (relative to workspace root) to read and inject.
+     *  W-11: Not readonly — Engine mutates in-place. Immutability is by convention. */
+    context_files: string[];
     /**
      * The condition required to mark this phase as successful.
      * V1: `"exit_code:0"` — checks process exit code.
@@ -112,6 +113,12 @@ export interface Phase {
      * Overrides the global `maxRetries` setting.
      */
     max_retries?: number;
+    /**
+     * The real MCP-server phase ID string (format: `phase-NNN-<uuid>`).
+     * Set by the Engine when a phase is dispatched to a worker.
+     * Used by the Webview to construct valid `coogent://` resource URIs.
+     */
+    mcpPhaseId?: string;
 }
 
 /** Global status of the runbook execution. */
@@ -125,8 +132,9 @@ export interface Runbook {
     status: RunbookStatus;
     /** Index of the currently executing (or next-to-execute) phase. */
     current_phase: number;
-    /** Ordered collection of micro-tasks. */
-    readonly phases: readonly Phase[];
+    /** Ordered collection of micro-tasks.
+     *  W-11: Not readonly — Engine mutates phase status/fields in-place. Immutability is by convention. */
+    phases: Phase[];
     /** Short human-readable summary generated during the Task Planning phase. */
     summary?: string;
     /** Detailed implementation plan markdown generated during the Task Planning phase. */
@@ -267,6 +275,12 @@ export interface StateSnapshotMessage {
     readonly payload: {
         runbook: Runbook;
         engineState: EngineState;
+        /**
+         * The real session directory name used as the MCP task key.
+         * Populated from `path.basename(sessionDir)` by the Extension Host.
+         * The Webview uses this (not `runbook.project_id`) for URI construction.
+         */
+        masterTaskId?: string;
     };
 }
 
@@ -412,6 +426,19 @@ export interface ImplementationPlanMessage {
     };
 }
 
+/** MCP resource data response — Extension Host → Webview. */
+export interface MCPResourceDataMessage {
+    readonly type: 'MCP_RESOURCE_DATA';
+    readonly payload: {
+        /** Correlation ID matching the original fetch request. */
+        requestId: string;
+        /** The resolved resource content (string for Markdown/plain text, object for JSON). */
+        data: string | object;
+        /** Error message if the resource could not be resolved. */
+        error?: string;
+    };
+}
+
 /**
  * Discriminated union of all messages the Extension Host sends to the Webview.
  * Use `HostToWebviewMessageType` for the `type` string literal union.
@@ -431,7 +458,8 @@ export type HostToWebviewMessage =
     | ConsolidationReportMessage
     | PhaseOutputMessage
     | PlanSummaryMessage
-    | ImplementationPlanMessage;
+    | ImplementationPlanMessage
+    | MCPResourceDataMessage;
 
 // ── Webview → Host (user commands) ──────────────────────────────────────────
 
@@ -599,6 +627,17 @@ export interface CmdResumePendingMessage {
     readonly type: 'CMD_RESUME_PENDING';
 }
 
+/** Webview requests a specific MCP resource by URI. */
+export interface MCPFetchResourceMessage {
+    readonly type: 'MCP_FETCH_RESOURCE';
+    readonly payload: {
+        /** The `coogent://` URI to resolve. */
+        uri: string;
+        /** Unique correlation ID for async response matching. */
+        requestId: string;
+    };
+}
+
 /**
  * Discriminated union of all messages the Webview sends to the Extension Host.
  * Use `WebviewToHostMessageType` for the `type` string literal union.
@@ -629,7 +668,8 @@ export type WebviewToHostMessage =
     | CmdRequestPlanMessage
     | CmdDeleteSessionMessage
     | CmdReviewDiffMessage
-    | CmdResumePendingMessage;
+    | CmdResumePendingMessage
+    | MCPFetchResourceMessage;
 
 /** Helper: union of all Host → Webview message type string literals (#95). */
 export type HostToWebviewMessageType = HostToWebviewMessage['type'];

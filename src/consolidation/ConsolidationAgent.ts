@@ -245,33 +245,25 @@ export class ConsolidationAgent {
     }
 
     /**
-     * Save the formatted Markdown report to `consolidation-report.md`.
-     * Returns the file path.
+     * Submit the consolidation report to the MCP state store.
+     *
+     * V1 Purification: No longer writes `consolidation-report.md` to disk.
+     * The in-memory MCP Server is the single source of truth for artifacts.
      */
     async saveReport(
-        sessionDir: string,
+        _sessionDir: string,
         report: ConsolidationReport,
         mcpBridge?: MCPClientBridge,
         masterTaskId?: string,
-    ): Promise<string> {
+    ): Promise<void> {
         const markdown = this.formatAsMarkdown(report);
 
-        // Always write to filesystem
-        await fs.mkdir(sessionDir, { recursive: true });
-        const filePath = path.join(sessionDir, 'consolidation-report.md');
-        await fs.writeFile(filePath, markdown, 'utf-8');
-
-        // Also submit to MCP if bridge is available
         if (mcpBridge && masterTaskId) {
-            try {
-                await mcpBridge.submitConsolidationReport(masterTaskId, markdown);
-                log.info('[ConsolidationAgent] Report submitted to MCP state.');
-            } catch (err) {
-                log.warn('[ConsolidationAgent] Failed to submit report to MCP:', err);
-            }
+            await mcpBridge.submitConsolidationReport(masterTaskId, markdown);
+            log.info('[ConsolidationAgent] Report submitted to MCP state.');
+        } else {
+            log.warn('[ConsolidationAgent] No MCP bridge available — report NOT persisted.');
         }
-
-        return filePath;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
