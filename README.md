@@ -1,298 +1,133 @@
-# Coogent — Multi-Agent Orchestration Engine for Antigravity IDE
+# Coogent — Multi-Agent Engine
 
-> **Context Diffusion, Not Context Collision.**
-> Break massive implementation plans into surgically scoped micro-tasks, each executed by a fresh, zero-context AI agent.
+<p align="center">
+  <img src="icon.png" alt="Coogent Logo" width="128" />
+</p>
 
----
+<p align="center">
+  <strong>Context Diffusion engine for Antigravity IDE</strong><br/>
+  Break massive implementation plans into isolated, zero-context micro-tasks executed by ephemeral AI agents.
+</p>
 
-## The Problem: Context Collapse
-
-Single-instance AI agents hit a wall when working on dense, multi-layered codebases. As the token window fills with file history, irrelevant dependencies, and accumulated conversation, the model begins to:
-
-- **Hallucinate** — fabricating APIs or imports that don't exist.
-- **Forget constraints** — dropping critical requirements stated 50 messages ago.
-- **Truncate output** — silently cutting off generated code mid-function.
-
-This is **Context Collapse**: the point at which an agent's cognitive load exceeds its effective processing window.
-
-## The Solution: Context Diffusion
-
-Coogent shifts cognitive load from the LLM to a deterministic, local state machine. Instead of one overloaded agent, it **diffuses** the work:
-
-```
- ┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌────────────┐     ┌─────────┐
- │  Decompose  │────►│    Scope     │────►│   Execute    │────►│  Evaluate  │────►│ Advance │
- │  (Planner)  │     │ (ContextScoper)    │  (Worker)    │     │ (Evaluator)│     │  (DAG)  │
- └─────────────┘     └──────────────┘     └──────────────┘     └────────────┘     └─────────┘
-  AI breaks the       Each task gets       Ephemeral agent      Engine verifies     Fresh worker
-  goal into tasks     ONLY the files       spawns with zero     success criteria    for next task.
-                      it needs             prior history        (exit, regex, etc)  Zero bleed-over.
-```
-
-The result: every agent operates in a **clean room** — maximum signal, zero noise.
+<p align="center">
+  <a href="#installation">Installation</a> •
+  <a href="#how-it-works">How It Works</a> •
+  <a href="#features">Features</a> •
+  <a href="docs/SITE_MAP.md">Documentation</a> •
+  <a href="CONTRIBUTING.md">Contributing</a>
+</p>
 
 ---
 
-## Core Features
+## The Problem
 
-### Pillar 1 — Core Engine (MVP) ✅
-- **9-State Deterministic FSM** — `IDLE → PLANNING → PLAN_REVIEW → PARSING → READY → EXECUTING → EVALUATING → ERROR_PAUSED → COMPLETED`
-- **Mission Control Dashboard** — Svelte-based Webview UI showing phase status, live agent output, and token budgets
-- **Plan & Review Workflow** — AI-generated runbook with human approval gate before execution
-- **Persistent State** — `.task-runbook.json` with crash recovery via write-ahead log (WAL)
-- **Git Sandboxing** — Isolated `coogent/*` branches via native VS Code Git API with pre-flight dirty-tree checks
+AI coding assistants get worse the longer you use them. As conversation history grows, the model loses focus, forgets earlier decisions, and starts hallucinating — a phenomenon called **Context Collapse**. The bigger the task, the more likely you'll end up with broken code and wasted API calls.
 
-### Pillar 2 — Intelligent Context ✅
-- **AST Auto-Discovery** — Regex-based import/require/include crawling with cycle detection (`ASTFileResolver`)
-- **Token Pruning** — 3-tier heuristic reducer: drop discovered files → strip function bodies → proportional truncation (`TokenPruner`)
-- **DAG Execution** — Parallel agent dispatching via topological sort with `depends_on` dependencies (`Scheduler`)
-- **Semantic Distillation** — "Pointer Method" context summaries prevent token bloat across phase handoffs
+## The Solution
 
-### Pillar 3 — Autonomous Resilience ✅
-- **Pluggable Evaluators** — Exit code, regex match, workspace toolchain (`xcodebuild`, `make`), and test suite output parsing (`EvaluatorRegistry`)
-- **Automated Version Control** — Snapshot commits after each phase, clean-room rollback on failure (`GitManager`)
-- **Self-Healing Retry Loops** — Configurable per-phase `max_retries` with exponential backoff and error-injected augmented prompts (`SelfHealingController`)
-- **Consolidation Reports** — Aggregated phase results, decisions, and modified files after execution (`ConsolidationAgent`)
+Coogent takes a different approach: instead of keeping one long conversation, it **breaks your task into small, isolated phases** and gives each one to a fresh AI agent that knows only what it needs.
 
----
+1. **You describe what you want** — "Refactor auth to use JWT", "Add dark mode", "Migrate the database schema"
+2. **Coogent plans the work** — An AI planner scans your codebase and decomposes the task into a sequence of micro-phases, each with its own file scope and success criteria
+3. **Each phase runs in isolation** — A fresh agent receives *only* the files it needs, executes its task, and hands off its results
+4. **Everything is tracked** — Changes are checkpointed to Git branches, outputs stream in real-time, failures retry automatically
 
-## Architecture
+No context drift. No hallucinations from stale history. No single 200K-token conversation praying the model doesn't lose the thread.
+
+## How It Works
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    Antigravity IDE                            │
-│                                                              │
-│  ┌──────────────────────────────┐  ┌──────────────────────┐ │
-│  │    Extension Host (Node.js)  │◄►│  Webview (Mission    │ │
-│  │  ┌────────────────────────┐  │  │   Control Dashboard) │ │
-│  │  │ Engine (9-State FSM)   │  │  └──────────────────────┘ │
-│  │  │  + Scheduler (DAG)     │  │       ▲ postMessage       │
-│  │  │  + SelfHealing         │  │       │                   │
-│  │  │  + EvaluatorRegistry   │  │       │                   │
-│  │  └────────────────────────┘  │       │                   │
-│  │  ┌────────────────────────┐  │       │                   │
-│  │  │ ContextScoper          │  │       │                   │
-│  │  │  + ASTFileResolver     │  │       │                   │
-│  │  │  + TokenPruner         │  │       │                   │
-│  │  └────────────────────────┘  │       │                   │
-│  │  ┌────────────────────────┐  │       │                   │
-│  │  │ ADKController          │──┼───────┘                   │
-│  │  │  + GitManager          │  │                           │
-│  │  │  + GitSandboxManager   │  │                           │
-│  │  └──────┬─────────────────┘  │                           │
-│  └─────────┼────────────────────┘                           │
-│            │ spawn/terminate (parallel workers)              │
-│            ▼                                                │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐        │
-│  │ Worker 0    │  │ Worker 1    │  │ Worker N    │        │
-│  │ (ephemeral) │  │ (ephemeral) │  │ (ephemeral) │        │
-│  └─────────────┘  └─────────────┘  └─────────────┘        │
-│                                                              │
-│  ┌────────────────────────────────────────────────────────┐ │
-│  │  .coogent/ipc/<session-id>/  (session-scoped state)    │ │
-│  └────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────┘
+You: "Refactor the authentication module to use JWT"
+         │
+         ▼
+   ┌─────────────┐     ┌──────────────────────────────────────┐
+   │   Planner   │────►│ Phase 1: Create JWT utility module    │
+   │             │     │ Phase 2: Update auth middleware       │
+   │  Scans your │     │ Phase 3: Migrate session endpoints    │
+   │  codebase   │     │ Phase 4: Add refresh token rotation   │
+   └─────────────┘     │ Phase 5: Update tests                 │
+                       └──────────┬───────────────────────────┘
+                                  │
+                    ┌─────────────┼─────────────┐
+                    ▼             ▼             ▼
+              ┌──────────┐ ┌──────────┐ ┌──────────┐
+              │ Worker 1 │ │ Worker 2 │ │ Worker 3 │  (parallel)
+              │ 3 files  │ │ 5 files  │ │ 2 files  │
+              └──────────┘ └──────────┘ └──────────┘
+                    │             │             │
+                    └─────────────┼─────────────┘
+                                  ▼
+                        ┌──────────────┐
+                        │ Consolidated │
+                        │    Report    │
+                        └──────────────┘
 ```
 
-See [ARCHITECTURE.md](./docs/ARCHITECTURE.md) for the full technical design with Mermaid diagrams.
+## Features
 
----
+- **Plan → Review → Execute** — AI generates a phased plan; you review and approve before anything runs
+- **Parallel Execution** — Independent phases run concurrently (up to 4 workers)
+- **Live Dashboard** — Mission Control UI shows real-time output, phase status, and plan details
+- **Git Safety** — Automatic sandbox branches keep changes isolated from your working tree
+- **Self-Healing** — Failed phases retry automatically with error feedback injected into the next attempt
+- **Crash Recovery** — If the IDE crashes mid-execution, Coogent picks up where it left off
+- **Token Budgeting** — Prevents expensive failures by checking context size *before* calling the API
+- **post-Execution Reports** — Aggregated summary of all decisions and changes across phases
 
-## Getting Started
+## Installation
 
 ### Prerequisites
 
-- [Antigravity IDE](https://antigravity.dev) (VS Code fork) — v1.85+
+- [Antigravity IDE](https://antigravity.dev) (VS Code ≥ 1.85)
 - Node.js 18+
-- Antigravity Agent Development Kit (ADK)
+- Git
 
-### Installation
+### From VSIX
+
+```
+Cmd+Shift+P → "Extensions: Install from VSIX…" → select coogent-0.1.0.vsix
+```
+
+### From Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/lehoa1806/coogent.git
 cd coogent
-
-# Install dependencies
 npm install
-
-# Compile TypeScript + Webview
 npm run build
-
-# Launch in Extension Development Host
-# Press F5 in Antigravity IDE, or:
-npm run watch  # in one terminal
-# Then launch "Run Extension" from the debug panel
 ```
 
-### Hello World: Your First Coogent Run
+Then press **F5** to launch the Extension Development Host.
 
-1. **Open Mission Control** — `Cmd+Shift+P` → **Coogent: Open Mission Control**
+## Quick Start
 
-2. **Enter a prompt** — Type a high-level implementation goal in the prompt area:
-   ```
-   Create a TypeScript REST API with Express: a User model, a UserService
-   with CRUD operations, and route handlers with input validation.
-   ```
+1. **Open Mission Control** — `Cmd+Shift+P` → `Coogent: Open Mission Control`
+2. **Enter your objective** — Describe what you want to build or change
+3. **Review the plan** — Read the AI-generated phases, approve or regenerate
+4. **Watch it execute** — Each phase streams output in real-time
+5. **Review the results** — Check the consolidated report and Git diff
 
-3. **Review the Plan** — Coogent's Planner Agent decomposes the goal into a multi-phase runbook. Review phases, context files, and dependencies. Click **Approve** to proceed.
+## Configuration
 
-4. **Monitor Execution** — Watch each phase execute in isolation:
-   - Phase Navigator shows progress through the DAG
-   - Phase Details shows live worker output
-   - Git creates a sandbox branch (`coogent/<task-slug>`)
+All settings live under `coogent.*` in VS Code Settings:
 
-5. **Review the Diff** — When all phases complete, use the native VS Code Source Control to review all changes made on the `coogent/*` branch against your original branch.
-
-### Manual Runbook (Alternative)
-
-Create `.task-runbook.json` in your workspace root:
-
-```json
-{
-  "project_id": "hello-coogent",
-  "status": "idle",
-  "current_phase": 0,
-  "phases": [
-    {
-      "id": 0,
-      "status": "pending",
-      "prompt": "Create src/models/User.ts with a TypeScript interface for User.",
-      "context_files": [],
-      "success_criteria": "exit_code:0"
-    },
-    {
-      "id": 1,
-      "status": "pending",
-      "prompt": "Create src/services/UserService.ts implementing CRUD operations.",
-      "context_files": ["src/models/User.ts"],
-      "success_criteria": "exit_code:0",
-      "depends_on": [0]
-    }
-  ]
-}
-```
-
-Then load it via **Coogent: Open Mission Control** → **Start**.
-
----
-
-## Project Structure
-
-```
-coogent/
-├── README.md
-├── CONTRIBUTING.md
-├── package.json
-├── tsconfig.json
-├── jest.config.js
-├── esbuild.js                     # Extension bundler
-├── esbuild-webview.js             # Webview bundler (legacy)
-├── docs/
-│   ├── PRD.md                     # Product requirements
-│   ├── ARCHITECTURE.md            # System architecture (Mermaid diagrams)
-│   ├── TDD.md                     # Technical design document
-│   ├── API_REFERENCE.md           # IPC contracts, schemas, module APIs
-│   └── USER_GUIDE.md              # End-user reference
-├── schemas/
-│   └── runbook.schema.json        # AJV-validated JSON Schema
-├── src/
-│   ├── extension.ts               # activate/deactivate + event wiring
-│   ├── types/
-│   │   └── index.ts               # All TypeScript interfaces (796 lines)
-│   ├── state/
-│   │   └── StateManager.ts        # Runbook I/O, locking, WAL
-│   ├── engine/
-│   │   ├── Engine.ts              # 9-state deterministic FSM
-│   │   ├── Scheduler.ts           # DAG scheduler (Kahn's algorithm)
-│   │   └── SelfHealing.ts         # Auto-retry controller
-│   ├── adk/
-│   │   ├── ADKController.ts       # Parallel worker pool
-│   │   ├── AntigravityADKAdapter.ts # ADK adapter with IPC fallback
-│   │   ├── OutputBuffer.ts        # 100ms batched stream flush
-│   │   └── OutputBufferRegistry.ts # Multi-worker output management
-│   ├── context/
-│   │   ├── ContextScoper.ts       # File reading + tokenization
-│   │   ├── FileResolver.ts        # AST auto-discovery (import crawling)
-│   │   └── TokenPruner.ts         # 3-tier heuristic token pruning
-│   ├── evaluators/
-│   │   └── CompilerEvaluator.ts   # Pluggable success evaluators
-│   ├── git/
-│   │   ├── GitManager.ts          # Snapshot commits & rollback
-│   │   └── GitSandboxManager.ts   # Native VS Code Git API sandboxing
-│   ├── consolidation/
-│   │   └── ConsolidationAgent.ts  # Post-execution report aggregation
-│   ├── session/
-│   │   └── SessionManager.ts      # Session history & search
-│   ├── planner/
-│   │   └── PlannerAgent.ts        # Objective → runbook decomposition
-│   ├── logger/
-│   │   └── TelemetryLogger.ts     # Append-only JSONL session logging
-│   └── webview/
-│       ├── MissionControlPanel.ts # Webview lifecycle + IPC bridge
-│       └── ipcValidator.ts        # Typed IPC message validation
-├── webview-ui/                    # ⚠️ DEPRECATED — legacy Vanilla JS webview
-│   └── DEPRECATED.md
-├── webview-ui-svelte/             # Active Svelte webview (Vite-built)
-│   ├── src/
-│   │   ├── components/            # Svelte UI components
-│   │   ├── lib/                   # Stores, IPC bridge, utilities
-│   │   ├── App.svelte             # Root component
-│   │   └── main.ts                # Entry point
-│   ├── dist/                      # Compiled assets (committed)
-│   │   └── assets/
-│   │       ├── index.js           # Single JS bundle
-│   │       └── style.css          # Single CSS bundle
-│   ├── vite.config.ts             # Vite build config
-│   └── package.json
-└── .coogent/                      # All runtime state (gitignored)
-    ├── ipc/<session-id>/          # Session-scoped runbook + WAL + lock
-    ├── logs/                      # JSONL session logs
-    └── pid/                       # PID files for orphan recovery
-```
-
----
+| Setting | Default | Description |
+|---|---|---|
+| `tokenLimit` | `100,000` | Max tokens per phase context |
+| `workerTimeoutMs` | `900,000` | Worker timeout (15 min) |
+| `maxRetries` | `3` | Auto-retry attempts per phase |
+| `logLevel` | `info` | Log verbosity (`trace` through `off`) |
 
 ## Documentation
 
-| Document | Description |
-|---|---|
-| [User Guide](./docs/USER_GUIDE.md) | End-user reference — Mission Control UI, Plan & Review workflow, runbook authoring |
-| [Architecture](./docs/ARCHITECTURE.md) | System architecture — 9-state FSM, DAG engine, Git sandboxing, semantic distillation |
-| [API Reference](./docs/API_REFERENCE.md) | IPC contracts, MCP resources/tools, runbook schema, module APIs |
-| [TDD](./docs/TDD.md) | Technical Design Document — detailed implementation blueprint |
-| [PRD](./docs/PRD.md) | Product Requirements Document — problem, solution, feature roadmap |
-| [Contributing](./CONTRIBUTING.md) | Development setup, debugging, testing, code style |
-| [Runbook Schema](./schemas/runbook.schema.json) | JSON Schema for `.task-runbook.json` validation |
+See [docs/SITE_MAP.md](docs/SITE_MAP.md) for the full documentation index, including:
 
----
-
-## Development
-
-```bash
-npm run compile          # One-time TypeScript build
-npm run build:webview    # Build Svelte webview (one-time)
-npm run dev:webview      # Svelte webview dev mode (HMR)
-npm run build            # Both (TypeScript + Svelte)
-npm run watch            # TypeScript watch mode
-npm run lint             # Type-check (no emit)
-npm test                 # Run test suite (Jest — 14 suites, 100+ tests)
-npm run package          # Create .vsix extension package
-```
-
-### Svelte Migration
-
-The Mission Control webview has been migrated from Vanilla JS (`webview-ui/`) to Svelte 5 (`webview-ui-svelte/`). The Svelte app is built with Vite into a single JS + CSS bundle for CSP compliance in VS Code webviews.
-
-- **Source**: `webview-ui-svelte/src/`
-- **Output**: `webview-ui-svelte/dist/assets/` (single `index.js` + `style.css`)
-- **Build**: `npm run build:webview`
-- **Dev**: `npm run dev:webview` (Vite dev server for rapid iteration)
-
-The legacy `webview-ui/` directory is preserved for rollback but is no longer active. See `webview-ui/DEPRECATED.md`.
-
----
+- [Architecture & Technical Design](docs/ARCHITECTURE.md)
+- [User Guide](docs/USER_GUIDE.md)
+- [Developer & Contributor Guide](docs/DEVELOPER_GUIDE.md)
+- [API & Integration Reference](docs/API_REFERENCE.md)
+- [Deployment & Operations](docs/OPERATIONS.md)
 
 ## License
 
-MIT
+[MIT](LICENSE)

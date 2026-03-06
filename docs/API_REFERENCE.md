@@ -1,512 +1,236 @@
-# Coogent API Reference
+# API & Integration Reference
 
-> **Audience**: Extension developers, MCP server integrators, and contributors.
+> MCP URIs, tools, IPC message contracts, and data model schemas.
 
 ---
 
 ## Table of Contents
 
-1. [MCP Resources](#mcp-resources)
+1. [MCP Resource URIs](#mcp-resource-uris)
 2. [MCP Tools](#mcp-tools)
-3. [IPC Message Contract](#ipc-message-contract)
-4. [Runbook Schema](#runbook-schema)
-5. [ADK Integration Contract](#adk-integration-contract)
-6. [Module API Reference](#module-api-reference)
+3. [IPC Message Contracts](#ipc-message-contracts)
+4. [Data Models](#data-models)
 
 ---
 
-## MCP Resources
+## MCP Resource URIs
 
-Coogent exposes its internal state as MCP (Model Context Protocol) resources that can be read by agents and tools.
+All runtime artifacts are addressed via a RESTful `coogent://` URI schema. The Extension Host enforces strict regex matching.
 
-### `coogent://runbook/summary`
+### Task-Level Resources
 
-Returns a human-readable summary of the current runbook state.
+| URI | Returns | Content Type |
+|---|---|---|
+| `coogent://tasks/{taskId}/summary` | Task overview | Markdown |
+| `coogent://tasks/{taskId}/implementation_plan` | Implementation plan | Markdown |
+| `coogent://tasks/{taskId}/consolidation_report` | Final report | Markdown |
 
-**Response**: Plain text summary including:
-- Project ID
-- Global status (`idle`, `running`, `paused_error`, `completed`)
-- Phase count and current phase index
-- Per-phase status breakdown
+### Phase-Level Resources
 
-### `coogent://runbook/full`
+| URI | Returns | Content Type |
+|---|---|---|
+| `coogent://tasks/{taskId}/phases/{phaseId}/implementation_plan` | Phase plan | Markdown |
+| `coogent://tasks/{taskId}/phases/{phaseId}/handoff` | Phase handoff | JSON |
 
-Returns the complete `.task-runbook.json` contents as JSON.
+### ID Formats
 
-**Response**: Full `Runbook` object (see [Runbook Schema](#runbook-schema)).
+| Segment | Format | Example |
+|---|---|---|
+| `{taskId}` | `YYYYMMDD-HHMMSS-<uuid>` | `20260306-153847-a3b8d1b6-0b3b-4b1a-9c1a-1a2b3c4d5e6f` |
+| `{phaseId}` | `phase-<index>-<uuid>` | `phase-001-3be30b9e-7c42-4f12-b8a1-...` |
 
-### `coogent://phases/{id}/handoff`
+### URI Builder Functions
 
-Returns the handoff report for a completed phase.
+```typescript
+import { RESOURCE_URIS } from './mcp/types';
 
-**Response** (`HandoffReport`):
-```json
-{
-  "phaseId": 0,
-  "status": "completed",
-  "decisions": ["Used Zod for validation", "Added input sanitization"],
-  "modifiedFiles": ["src/models/User.ts", "src/validation/schema.ts"],
-  "summary": "Created User model with TypeScript interface and Zod validation schema.",
-  "unresolvedIssues": []
-}
-```
-
-### `coogent://plan/implementation`
-
-Returns the `implementation_plan.md` content generated during the planning phase.
-
-**Response**: Markdown string with the full implementation plan.
-
-### `coogent://report/consolidation`
-
-Returns the final consolidation report after all phases complete.
-
-**Response**: Markdown-formatted `ConsolidationReport`.
-
-### `coogent://sessions/list`
-
-Returns a list of all past session summaries.
-
-**Response** (`SessionSummary[]`):
-```json
-[
-  {
-    "sessionId": "019cbf04-9ee0-7f6d-bc08-f7fec781944a",
-    "projectId": "add-auth-module",
-    "status": "completed",
-    "phaseCount": 4,
-    "completedPhases": 4,
-    "createdAt": 1709456789000,
-    "firstPrompt": "Add JWT authentication..."
-  }
-]
+RESOURCE_URIS.taskSummary(taskId)                   // → coogent://tasks/{taskId}/summary
+RESOURCE_URIS.taskPlan(taskId)                       // → coogent://tasks/{taskId}/implementation_plan
+RESOURCE_URIS.taskReport(taskId)                     // → coogent://tasks/{taskId}/consolidation_report
+RESOURCE_URIS.phasePlan(taskId, phaseId)             // → coogent://tasks/{taskId}/phases/{phaseId}/implementation_plan
+RESOURCE_URIS.phaseHandoff(taskId, phaseId)          // → coogent://tasks/{taskId}/phases/{phaseId}/handoff
 ```
 
 ---
 
 ## MCP Tools
 
-### `submit_phase_handoff`
-
-Submit a handoff report after completing a phase. Called by the worker agent (or the extension on behalf of the worker).
-
-**Parameters**:
-```json
-{
-  "phaseId": { "type": "integer", "required": true },
-  "status": { "type": "string", "enum": ["completed", "failed"], "required": true },
-  "decisions": { "type": "string[]", "description": "Key decisions made during execution" },
-  "modifiedFiles": { "type": "string[]", "description": "Files created or modified" },
-  "summary": { "type": "string", "description": "Semantic summary for downstream phases" },
-  "unresolvedIssues": { "type": "string[]", "description": "Open questions or concerns" }
-}
-```
-
-**Behavior**:
-1. Validates the payload structure
-2. Writes to `<sessionDir>/handoffs/phase-{id}.json`
-3. Updates the phase's `context_summary` field in the runbook
-4. Triggers the `phase:handoff` event on the engine
-
-### `get_modified_file_content`
-
-Read the current content of a file modified by a previous phase.
-
-**Parameters**:
-```json
-{
-  "filePath": { "type": "string", "required": true, "description": "Workspace-relative path" }
-}
-```
-
-**Behavior**:
-1. Resolves the absolute path against the workspace root
-2. Validates the file exists and is not binary
-3. Returns the file content as a string
-
-**Response**:
-```json
-{
-  "content": "// File contents...",
-  "tokens": 1234,
-  "path": "src/models/User.ts"
-}
-```
-
-### `get_workspace_file_tree`
-
-Return the file tree of the workspace for planning purposes.
-
-**Parameters**:
-```json
-{
-  "maxDepth": { "type": "integer", "default": 5 },
-  "excludePatterns": { "type": "string[]", "default": ["node_modules", ".git", ".coogent"] }
-}
-```
-
-**Response**: Array of relative file paths.
-
----
-
-## IPC Message Contract
-
-All communication between the Webview and Extension Host uses typed `postMessage` payloads with a `type` discriminator. Messages are validated at runtime by `ipcValidator.ts`.
-
-### Host → Webview (15 Message Types)
-
-| Type | Payload | Description |
+| Tool | Direction | Description |
 |---|---|---|
-| `STATE_SNAPSHOT` | `{ runbook: Runbook, engineState: EngineState }` | Full state projection on load or major change |
-| `PHASE_STATUS` | `{ phaseId: PhaseId, status: PhaseStatus, durationMs?: number }` | Single phase status update |
-| `WORKER_OUTPUT` | `{ phaseId: PhaseId, stream: 'stdout' \| 'stderr', chunk: string }` | Live stdout/stderr from active worker |
-| `PHASE_OUTPUT` | `{ phaseId: PhaseId, stream: 'stdout' \| 'stderr', chunk: string }` | Per-phase output routed to specific detail views |
-| `TOKEN_BUDGET` | `{ phaseId: PhaseId, breakdown: FileTokenEntry[], totalTokens: number, limit: number }` | Per-file token counts before execution |
-| `ERROR` | `{ code: ErrorCode, message: string, phaseId?: PhaseId }` | Error notification |
-| `LOG_ENTRY` | `{ timestamp: UnixTimestampMs, level: 'info' \| 'warn' \| 'error', message: string }` | Log message for Mission Control |
-| `PLAN_DRAFT` | `{ draft: Runbook, fileTree: string[] }` | Planner produced a runbook draft |
-| `PLAN_STATUS` | `{ status: 'generating' \| 'parsing' \| 'ready' \| 'error' \| 'timeout', message?: string }` | Planning progress updates |
-| `PLAN_SUMMARY` | `{ summary: string }` | Planning phase output for the review gate |
-| `IMPLEMENTATION_PLAN` | `{ plan: string }` | Markdown content of `implementation_plan.md` |
-| `SESSION_LIST` | `{ sessions: SessionSummary[] }` | Recent sessions for the history drawer |
-| `SESSION_SEARCH_RESULTS` | `{ query: string, sessions: SessionSummary[] }` | Filtered sessions from search |
-| `CONVERSATION_MODE` | `{ mode: ConversationMode, smartSwitchTokenThreshold: number }` | Active conversation mode sync |
-| `CONSOLIDATION_REPORT` | `{ report: string }` | Markdown-formatted final report |
+| `submit_implementation_plan` | Agent → Server | Submit a generated implementation plan for a task |
+| `submit_phase_handoff` | Agent → Server | Submit phase completion artifacts |
+| `submit_consolidation_report` | Agent → Server | Submit the final aggregated report |
+| `get_modified_file_content` | Agent ← Server | Retrieve file content from the Git sandbox (read-only, truncated) |
 
-### Error Codes
+### `submit_phase_handoff` Schema
 
 ```typescript
-type ErrorCode =
-  | 'RUNBOOK_NOT_FOUND'
-  | 'PARSE_ERROR'
-  | 'PHASE_FAILED'
-  | 'WORKER_TIMEOUT'
-  | 'WORKER_CRASH'
-  | 'CYCLE_DETECTED'
-  | 'VALIDATION_ERROR'
-  | 'CONTEXT_ERROR'
-  | 'PLAN_ERROR'
-  | 'TOKEN_OVER_BUDGET'
-  | 'COMMAND_ERROR'
-  | 'GIT_DIRTY'
-  | 'UNKNOWN';
+{
+    phaseId: string;           // MCP phase ID (phase-NNN-<uuid>)
+    masterTaskId: string;      // Master task ID
+    decisions: string[];       // Key decisions made during phase
+    modifiedFiles: string[];   // Paths of files modified (pointers, not content)
+    blockers: string[];        // Unresolved issues (may be empty)
+    completedAt: number;       // Unix timestamp in ms
+}
 ```
 
-### Webview → Host (25 Message Types)
+### `get_modified_file_content` Behavior
 
-| Type | Payload | Description |
-|---|---|---|
-| `CMD_START` | — | Begin (or resume) execution |
-| `CMD_PAUSE` | — | Pause after current phase (deprecated: flag-based) |
-| `CMD_ABORT` | — | Terminate active worker, halt execution |
-| `CMD_RETRY` | `{ phaseId: PhaseId }` | Retry a failed phase |
-| `CMD_SKIP_PHASE` | `{ phaseId: PhaseId }` | Skip a failed phase, advance |
-| `CMD_PAUSE_PHASE` | `{ phaseId: PhaseId }` | Pause a specific phase |
-| `CMD_STOP_PHASE` | `{ phaseId: PhaseId }` | Stop a specific phase |
-| `CMD_RESTART_PHASE` | `{ phaseId: PhaseId }` | Restart a phase from scratch |
-| `CMD_EDIT_PHASE` | `{ phaseId: PhaseId, patch: Partial<Phase> }` | Update phase prompt/files/criteria |
-| `CMD_LOAD_RUNBOOK` | `{ filePath?: string }` | Load a runbook from disk |
-| `CMD_REQUEST_STATE` | — | Request a full state snapshot |
-| `CMD_PLAN_REQUEST` | `{ prompt: string, feedback?: string }` | Submit a prompt for runbook generation |
-| `CMD_PLAN_APPROVE` | — | Approve the AI-generated plan |
-| `CMD_PLAN_REJECT` | `{ feedback: string }` | Reject plan with re-generation feedback |
-| `CMD_PLAN_EDIT_DRAFT` | `{ draft: Runbook }` | Edit the draft runbook directly |
-| `CMD_PLAN_RETRY_PARSE` | — | Re-parse cached timeout output |
-| `CMD_RESET` | — | Full reset (start new chat) |
-| `CMD_LIST_SESSIONS` | — | Request list of past sessions |
-| `CMD_SEARCH_SESSIONS` | `{ query: string }` | Search past sessions by query |
-| `CMD_LOAD_SESSION` | `{ sessionId: string }` | Load a specific past session |
-| `CMD_SET_CONVERSATION_MODE` | `{ mode: ConversationMode }` | Set conversation mode |
-| `CMD_REQUEST_REPORT` | — | Request consolidation report |
-| `CMD_REQUEST_PLAN` | — | Request implementation plan |
-| `CMD_DELETE_SESSION` | `{ sessionId: string }` | Delete a session from history |
-| `CMD_REVIEW_DIFF` | `{ phaseId: PhaseId }` | Open diff review for a phase |
-| `CMD_RESUME_PENDING` | — | Resume all pending phases with satisfied deps |
-
-All incoming messages are runtime-validated by `isValidWebviewMessage()`.
+- Reads files **only** within the Git sandbox (workspace root)
+- Returns truncated content to respect token limits
+- Returns an error if the file does not exist (no ENOENT disclosure of full path)
 
 ---
 
-## Runbook Schema
+## IPC Message Contracts
 
-The complete JSON Schema for `.task-runbook.json` (validated by AJV at parse time):
+Communication between the Extension Host and the Svelte Webview uses `postMessage` with typed discriminators and `requestId` correlation.
 
-```json
-{
-  "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "runbook.schema.json",
-  "title": "Coogent Task Runbook",
-  "description": "The persistent state file for the Coogent execution engine.",
-  "type": "object",
-  "required": ["project_id", "status", "current_phase", "phases"],
-  "additionalProperties": false,
-  "properties": {
-    "project_id": {
-      "type": "string",
-      "minLength": 1,
-      "description": "Unique identifier for the execution run."
-    },
-    "status": {
-      "type": "string",
-      "enum": ["idle", "running", "paused_error", "completed"],
-      "description": "Global execution status."
-    },
-    "current_phase": {
-      "type": "integer",
-      "minimum": 0,
-      "description": "Index of the currently executing (or next-to-execute) phase."
-    },
-    "summary": {
-      "type": "string",
-      "description": "High-level summary of the entire task (generated by the planner)."
-    },
-    "implementation_plan": {
-      "type": "string",
-      "description": "Detailed markdown plan describing the approach and key changes."
-    },
-    "phases": {
-      "type": "array",
-      "minItems": 1,
-      "description": "Ordered collection of micro-tasks.",
-      "items": {
-        "type": "object",
-        "required": ["id", "status", "prompt", "context_files", "success_criteria"],
-        "additionalProperties": false,
-        "properties": {
-          "id":               { "type": "integer", "description": "Sequential phase identifier." },
-          "status":           { "type": "string", "enum": ["pending", "running", "completed", "failed"] },
-          "prompt":           { "type": "string", "minLength": 1, "description": "Instruction injected into the worker." },
-          "context_files":    { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "File paths relative to workspace root." },
-          "success_criteria": { "type": "string", "minLength": 1, "description": "Evaluation condition (e.g., 'exit_code:0')." },
-          "depends_on":       { "type": "array", "items": { "type": "integer" }, "description": "Phase IDs that must complete first (DAG mode)." },
-          "evaluator":        { "type": "string", "enum": ["exit_code", "regex", "toolchain", "test_suite"] },
-          "max_retries":      { "type": "integer", "minimum": 0, "description": "Max self-healing retry attempts." },
-          "context_summary":  { "type": "string", "description": "Semantic summary for downstream phase handoffs." }
+### Host → Webview (Push)
+
+| `type` | Payload | When Sent |
+|---|---|---|
+| `STATE_SNAPSHOT` | `Partial<AppState>` | State change, panel reveal, panel init |
+| `PHASE_STATUS` | `{ phaseId: string, status: PhaseStatus }` | Phase transition |
+| `PHASE_OUTPUT` | `{ phaseId: string, chunk: string }` | Real-time worker stdout/stderr |
+| `MCP_RESOURCE_DATA` | `{ requestId: string, data?: T, error?: string }` | Response to `MCP_FETCH_RESOURCE` |
+
+### Webview → Host (Request)
+
+| `type` | Payload | Purpose |
+|---|---|---|
+| `MCP_FETCH_RESOURCE` | `{ uri: string, requestId: string }` | Fetch an artifact by URI |
+| `COMMAND` | `{ command: string, args?: unknown[] }` | Trigger an extension command |
+
+### Correlation Pattern
+
+1. **Generate**: The `mcpStore` factory creates a unique `requestId` (UUIDv4/7)
+2. **Track**: A one-time `message` event listener is attached to `window`
+3. **Filter**: Listener ignores messages where `requestId` doesn't match
+4. **Cleanup**: On matching response (or error), listener is removed and store updated
+
+```typescript
+// Svelte store factory (simplified)
+export function createMCPResource<T>(uri: string): MCPResourceStore<T> {
+    const { subscribe, set } = writable<MCPResourceState<T>>({
+        loading: true, data: null, error: null
+    });
+    let requestId = crypto.randomUUID();
+
+    function onMessage(event: MessageEvent) {
+        const msg = event.data;
+        if (msg.type === 'MCP_RESOURCE_DATA' && msg.payload.requestId === requestId) {
+            window.removeEventListener('message', onMessage);
+            if (msg.payload.error) set({ loading: false, data: null, error: msg.payload.error });
+            else set({ loading: false, data: msg.payload.data as T, error: null });
         }
-      }
     }
-  }
+
+    window.addEventListener('message', onMessage);
+    postMessage({ type: 'MCP_FETCH_RESOURCE', payload: { uri, requestId } });
+
+    return { subscribe, destroy: () => window.removeEventListener('message', onMessage) };
 }
 ```
 
 ---
 
-## ADK Integration Contract
+## Data Models
 
-### Injection Payload
+### Runbook (`.task-runbook.json`)
+
+The persistent state file for the execution engine. Validated by AJV on every load.
+
+```jsonc
+{
+    "project_id": "string",                    // Unique run identifier
+    "status": "idle | running | paused_error | completed",
+    "current_phase": 0,                        // Index of current/next phase
+    "summary": "string",                       // High-level task summary (optional)
+    "implementation_plan": "string",           // Detailed markdown plan (optional)
+    "phases": [
+        {
+            "id": 0,                           // Sequential integer ID
+            "status": "pending | running | completed | failed",
+            "prompt": "string",                // Worker instruction
+            "context_files": ["src/foo.ts"],    // Files to inject (workspace-relative)
+            "success_criteria": "exit_code:0",  // Completion condition
+            "depends_on": [0, 1],              // DAG dependencies (optional)
+            "evaluator": "exit_code",          // Evaluator type (optional)
+            "max_retries": 3,                  // Phase retry limit (optional)
+            "context_summary": "string",       // Downstream context (optional)
+            "mcpPhaseId": "phase-001-<uuid>"   // Assigned at dispatch (optional)
+        }
+    ]
+}
+```
+
+> **Full schema**: [`schemas/runbook.schema.json`](../schemas/runbook.schema.json)
+
+### Phase Handoff
+
+Produced by each completed worker phase. Stored in the MCP server state.
+
+```jsonc
+{
+    "phaseId": "phase-001-<uuid>",
+    "masterTaskId": "20260306-153847-<uuid>",
+    "decisions": [
+        "Refactored auth to use JWT",
+        "Added refresh token rotation"
+    ],
+    "modifiedFiles": [
+        "src/auth/jwt.ts",
+        "src/auth/refresh.ts"
+    ],
+    "blockers": [],
+    "completedAt": 1741283847123               // Unix timestamp (ms)
+}
+```
+
+### MCP State Store (In-Memory)
 
 ```typescript
-interface ADKInjectionPayload {
-  readonly ephemeral: true;              // MUST be true — zero-context mode
-  readonly prompt: string;               // The micro-task instruction
-  readonly contextPayload: string;       // Delimited file content (<<<FILE:...>>>)
-  readonly workingDirectory: string;     // Workspace root
-  readonly timeoutMs: number;            // Max execution time (default: 300_000)
+interface TaskState {
+    masterTaskId: string;
+    summary?: string;
+    implementationPlan?: string;
+    consolidationReport?: string;
+    phases: Map<string, PhaseArtifacts>;
+}
+
+interface PhaseArtifacts {
+    implementationPlan?: string;
+    handoff?: PhaseHandoff;
 }
 ```
 
-### Worker Handle
+### Branded Types
+
+Coogent uses nominal branded types for compile-time safety:
 
 ```typescript
-interface ADKWorkerHandle {
-  readonly sessionId: string;            // ADK session identifier
-  readonly pid: number;                  // OS process ID (for orphan cleanup)
-  onOutput(cb: (stream: 'stdout' | 'stderr', chunk: string) => void): () => void;
-  onExit(cb: (exitCode: number) => void): () => void;
-  terminate(): Promise<void>;
-}
+type PhaseId = number & { readonly __brand: 'PhaseId' };
+type UnixTimestampMs = number & { readonly __brand: 'UnixTimestampMs' };
+
+// Safe casts
+const id = asPhaseId(0);
+const ts = asTimestamp(Date.now());
 ```
 
-### Context Payload Format
-
-Files are injected using a delimited format:
-
-```
-<<<FILE: src/models/User.ts>>>
-export interface User {
-  id: string;
-  name: string;
-  email: string;
-}
-<<<END FILE>>>
-
-<<<FILE: src/services/UserService.ts>>>
-import { User } from '../models/User';
-// ...
-<<<END FILE>>>
-```
-
----
-
-## Module API Reference
-
-### Engine
-
-The deterministic FSM governing the execution lifecycle.
+### Engine States (Enum)
 
 ```typescript
-new Engine(stateManager: StateManager, options?: {
-  scheduler?: Scheduler;
-  healer?: SelfHealingController;
-  workspaceRoot?: string;
-})
+enum EngineState {
+    IDLE = 'IDLE',
+    PLANNING = 'PLANNING',
+    PLAN_REVIEW = 'PLAN_REVIEW',
+    PARSING = 'PARSING',
+    READY = 'READY',
+    EXECUTING_WORKER = 'EXECUTING_WORKER',
+    EVALUATING = 'EVALUATING',
+    ERROR_PAUSED = 'ERROR_PAUSED',
+    COMPLETED = 'COMPLETED',
+}
 ```
-
-| Method | Returns | Description |
-|---|---|---|
-| `getState()` | `EngineState` | Current FSM state |
-| `getRunbook()` | `Runbook \| null` | Loaded runbook |
-| `transition(event)` | `EngineState \| null` | Attempt FSM transition |
-| `loadRunbook(filePath?)` | `Promise<void>` | Load + validate runbook from disk |
-| `start()` | `Promise<void>` | Begin execution |
-| `pause()` | `void` | Set cooperative pause flag |
-| `abort()` | `Promise<void>` | Stop and return to IDLE |
-| `retry(phaseId)` | `Promise<void>` | Retry a failed phase |
-| `skipPhase(phaseId)` | `void` | Skip a failed phase |
-| `editPhase(phaseId, patch)` | `void` | Edit phase prompt/files/criteria |
-| `onWorkerExited(phaseId, exitCode, stdout?, stderr?)` | `Promise<void>` | Handle worker completion (parallel-aware) |
-| `onWorkerFailed(phaseId, reason)` | `Promise<void>` | Handle timeout/crash |
-
-**Events** (via `EventEmitter`):
-
-| Event | Signature | Description |
-|---|---|---|
-| `state:changed` | `(from, to, event)` | Every FSM transition |
-| `ui:message` | `(message)` | Messages for the Webview |
-| `phase:execute` | `(phase)` | Phase ready for dispatch |
-| `phase:heal` | `(phase, prompt)` | Self-healing retry request |
-| `phase:checkpoint` | `(phaseId)` | Git checkpoint trigger |
-| `run:completed` | `(runbook)` | All phases done |
-| `error` | `(error)` | Any error |
-
----
-
-### StateManager
-
-Crash-safe persistence with WAL + atomic rename + in-process async mutex.
-
-| Method | Returns | Description |
-|---|---|---|
-| `loadRunbook()` | `Promise<Runbook>` | Load and AJV-validate `.task-runbook.json` |
-| `saveRunbook(runbook, state)` | `Promise<void>` | WAL → write → atomic rename (mutex-serialized) |
-| `recoverFromCrash()` | `Promise<boolean>` | Replay WAL, clean stale locks |
-
----
-
-### Scheduler
-
-DAG-aware phase scheduling with Kahn's algorithm.
-
-| Method | Returns | Description |
-|---|---|---|
-| `isDAGMode(phases)` | `boolean` | True if any phase has `depends_on` |
-| `getReadyPhases(phases)` | `Phase[]` | Phases whose deps are satisfied (respects `maxConcurrent`) |
-| `isAllDone(phases)` | `boolean` | No `pending` or `running` phases remain |
-| `detectCycles(phases)` | `PhaseId[]` | Returns cycle member IDs (empty = valid DAG) |
-| `getExecutionOrder(phases)` | `Phase[]` | Topological sort for display |
-
----
-
-### ContextScoper
-
-File reading, tokenization, and payload assembly.
-
-| Method | Returns | Description |
-|---|---|---|
-| `assemble(files, workspaceRoot)` | `Promise<ContextResult>` | Returns `{ok: true, payload, ...}` or `{ok: false, ...}` |
-
----
-
-### ADKController
-
-Worker pool lifecycle management with PID-based orphan cleanup.
-
-| Method | Returns | Description |
-|---|---|---|
-| `spawnWorker(phaseId, payload)` | `Promise<void>` | Spawn ephemeral worker |
-| `terminateWorker(phaseId, reason)` | `Promise<void>` | Force-terminate (deletes from map first) |
-| `cleanupOrphanedWorkers()` | `Promise<void>` | Kill workers from previous crash |
-
-**Events**: `worker:exited`, `worker:timeout`, `worker:output`
-
----
-
-### SelfHealingController
-
-Auto-retry with exponential backoff and error-injected prompts.
-
-| Method | Returns | Description |
-|---|---|---|
-| `recordFailure(phaseId, exitCode, stderr)` | `void` | Log a failure attempt |
-| `canRetryWithPhase(phase)` | `boolean` | Check if retries remain |
-| `buildHealingPrompt(phase)` | `string` | Build augmented prompt with stderr context |
-| `getRetryDelay(phaseId)` | `number` | Exponential backoff delay (ms) |
-| `clearAttempts(phaseId)` | `void` | Reset retry state on success |
-
----
-
-### EvaluatorRegistry
-
-Pluggable success evaluators.
-
-| Evaluator | Criteria Prefix | Description |
-|---|---|---|
-| `ExitCodeEvaluator` | `exit_code:` | Check process exit code |
-| `RegexEvaluator` | `regex:` | Match stdout against pattern |
-| `ToolchainEvaluator` | `toolchain:` | Run whitelisted build command |
-| `TestSuiteEvaluator` | `test_suite:` | Run whitelisted test command |
-
----
-
-### GitSandboxManager
-
-Git sandbox branch management via native VS Code Git API (zero `child_process`).
-
-| Method | Returns | Description |
-|---|---|---|
-| `preFlightCheck()` | `Promise<PreFlightCheckResult>` | Check working tree is clean |
-| `createSandboxBranch(options)` | `Promise<GitSandboxResult>` | Create and checkout `coogent/<slug>` branch |
-| `openDiffReview()` | `Promise<GitSandboxResult>` | Open VS Code SCM panel for diff review |
-| `restoreOriginalBranch()` | `Promise<GitSandboxResult>` | Checkout the pre-sandbox branch |
-| `dispose()` | `Promise<void>` | Release resources |
-
----
-
-### GitManager
-
-File-level Git operations using `execFile` (no shell injection).
-
-| Method | Returns | Description |
-|---|---|---|
-| `checkpoint(phaseId)` | `Promise<GitOperationResult>` | Snapshot commit after phase success |
-| `rollbackToCommit(hash)` | `Promise<GitOperationResult>` | `git reset --hard` to commit |
-| `stash()` / `unstash()` | `Promise<GitOperationResult>` | Preserve in-progress work |
-
----
-
-### ConsolidationAgent
-
-Post-execution report aggregation from phase handoff files.
-
-| Method | Returns | Description |
-|---|---|---|
-| `generateReport(sessionDir, runbook)` | `Promise<ConsolidationReport>` | Aggregate all handoff files into a report |
-| `formatAsMarkdown(report)` | `string` | Render report as human-readable Markdown |
-| `saveReport(sessionDir, report)` | `Promise<string>` | Write `consolidation-report.md`, returns path |
-
----
-
-### SessionManager
-
-Session history discovery, search, and pruning.
-
-| Method | Returns | Description |
-|---|---|---|
-| `createSession(prompt)` | `Promise<string>` | Create new session, returns session ID |
-| `listSessions()` | `Promise<SessionSummary[]>` | All past sessions (most recent first, excludes current) |
-| `searchSessions(query)` | `Promise<SessionSummary[]>` | Filter by project ID and phase prompts |
-| `deepSearchSessions(query)` | `Promise<SessionSummary[]>` | Full-text search across all phase prompts |
-| `loadSession(sessionId)` | `StateManager` | Load a StateManager for a specific session |
-| `getSessionRunbook(sessionId)` | `Promise<Runbook \| null>` | Load full runbook for a session |
-| `deleteSession(sessionId)` | `Promise<void>` | Delete a session directory |
-| `pruneSessions(maxCount)` | `Promise<void>` | Delete oldest sessions beyond limit |
