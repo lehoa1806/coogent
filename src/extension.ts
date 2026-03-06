@@ -21,13 +21,14 @@ import { parseLogLevel } from './logger/LogStream.js';
 import { GitManager } from './git/GitManager.js';
 import { GitSandboxManager } from './git/GitSandboxManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
-import { MissionControlViewProvider } from './webview/MissionControlViewProvider.js';
+import { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
 import { PlannerAgent } from './planner/PlannerAgent.js';
 import { SessionManager, formatSessionDirName, stripSessionDirPrefix } from './session/SessionManager.js';
 import { HandoffExtractor } from './context/HandoffExtractor.js';
 import { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 import { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
 import { MCPClientBridge } from './mcp/MCPClientBridge.js';
+import { RESOURCE_URIS } from './mcp/types.js';
 import { buildImplementationPlanMarkdown } from './utils/planMarkdown.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -62,7 +63,15 @@ let consolidationAgent: ConsolidationAgent | undefined;
 let currentSessionDir: string | undefined;
 let mcpServer: CoogentMCPServer | undefined;
 let mcpBridge: MCPClientBridge | undefined;
+let sidebarMenu: SidebarMenuProvider | undefined;
 const workerOutputAccumulator = new Map<number, string>();
+/**
+ * BUG-02 fix: Tracks which sessionDirNames have already created a sandbox branch.
+ * Using a Set<string> (keyed by sessionDirName) instead of a plain boolean means
+ * switching sessions naturally invalidates the guard without explicit reset code.
+ * `.clear()` is still called on explicit reset to free memory.
+ */
+const sandboxBranchCreatedForSession = new Set<string>();
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Pre-flight Git Check — reusable helper (exported for MissionControlPanel)
@@ -142,6 +151,120 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
+    vscode.commands.registerCommand('coogent.newSession', async () => {
+      if (!engine) {
+        vscode.window.showWarningMessage(
+          'Coogent: Open a workspace folder first to start a new session.'
+        );
+        return;
+      }
+      // Reset engine with a fresh session
+      const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (workspaceRoot) {
+        const newId = generateSessionId();
+        const newDirName = formatSessionDirName(newId);
+        const newDir = path.join(workspaceRoot, '.coogent', 'ipc', newDirName);
+        if (currentSessionDir && mcpServer) {
+          mcpServer.purgeTask(path.basename(currentSessionDir));
+        }
+        // BUG-04: Clear stale ADK stdout buffers before switching session
+        workerOutputAccumulator.clear();
+        // BUG-02: Reset the per-session sandbox branch guard
+        sandboxBranchCreatedForSession.clear();
+        currentSessionDir = newDir;
+        const newSM = new StateManager(newDir);
+        await engine.reset(newSM);
+        sessionManager = new SessionManager(workspaceRoot, newId, newDirName);
+        sessionManager.saveCurrentSession().catch(log.onError);
+        plannerAgent?.setMasterTaskId(newDirName);
+      } else {
+        await engine.reset();
+      }
+      // Open Mission Control after reset
+      MissionControlPanel.createOrShow(
+        context.extensionUri, engine, sessionManager, adkController,
+        () => preFlightGitCheck(gitSandbox),
+        (newDir, newDirName) => {
+          currentSessionDir = newDir;
+          plannerAgent?.setMasterTaskId(newDirName);
+          sessionManager?.setCurrentSessionId(newDirName.replace(/^\d{8}-\d{6}-/, ''), newDirName);
+          sessionManager?.saveCurrentSession().catch(log.onError);
+        },
+        mcpServer,
+        mcpBridge
+      );
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('coogent.loadSession', async (sessionId?: string) => {
+      if (!engine || !sessionManager) {
+        vscode.window.showWarningMessage(
+          'Coogent: Open a workspace folder first to load a session.'
+        );
+        return;
+      }
+      if (!sessionId) return;
+      const sessionDir = sessionManager.getSessionDir(sessionId);
+      const newStateManager = new StateManager(sessionDir);
+      try {
+        await engine.switchSession(newStateManager);
+        currentSessionDir = sessionDir;
+        sessionManager.setCurrentSessionId(sessionId);
+        sessionManager.saveCurrentSession().catch(log.onError);
+        plannerAgent?.setMasterTaskId(path.basename(sessionDir));
+        // Open Mission Control to show the loaded session
+        MissionControlPanel.createOrShow(
+          context.extensionUri, engine, sessionManager, adkController,
+          () => preFlightGitCheck(gitSandbox),
+          (newDir, newDirName) => {
+            currentSessionDir = newDir;
+            plannerAgent?.setMasterTaskId(newDirName);
+            sessionManager?.setCurrentSessionId(newDirName.replace(/^\d{8}-\d{6}-/, ''), newDirName);
+            sessionManager?.saveCurrentSession().catch(log.onError);
+          },
+          mcpServer,
+          mcpBridge
+        );
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Coogent: Failed to load session — ${err?.message ?? err}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('coogent.deleteSession', async (item?: { session?: { sessionId?: string } }) => {
+      if (!sessionManager) return;
+      // Support both TreeItem context menu (item.session.sessionId) and direct invocation
+      const sessionId = typeof item === 'string' ? item : item?.session?.sessionId;
+      if (!sessionId) return;
+      try {
+        await sessionManager.deleteSession(sessionId);
+        sidebarMenu?.refresh();
+      } catch (err: any) {
+        vscode.window.showErrorMessage(`Coogent: Failed to delete session — ${err?.message ?? err}`);
+      }
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('coogent.searchHistory', async () => {
+      const query = await vscode.window.showInputBox({
+        prompt: 'Search session history',
+        placeHolder: 'e.g. auth, refactor, api…',
+      });
+      if (query === undefined) return; // cancelled
+      sidebarMenu?.search(query);
+    })
+  );
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('coogent.refreshHistory', () => {
+      sidebarMenu?.refresh();
+    })
+  );
+
+  context.subscriptions.push(
     vscode.commands.registerCommand('coogent.loadRunbook', async () => {
       if (!engine) {
         vscode.window.showWarningMessage('Coogent: No workspace — cannot load runbook.');
@@ -206,6 +329,10 @@ export function activate(context: vscode.ExtensionContext): void {
           if (currentSessionDir && mcpServer) {
             mcpServer.purgeTask(path.basename(currentSessionDir));
           }
+          // BUG-04: Clear stale ADK stdout buffers before switching session
+          workerOutputAccumulator.clear();
+          // BUG-02: Reset the per-session sandbox branch guard
+          sandboxBranchCreatedForSession.clear();
           currentSessionDir = newDir;
           const newSM = new StateManager(newDir);
           await engine.reset(newSM);
@@ -304,11 +431,10 @@ export function activate(context: vscode.ExtensionContext): void {
 
 
     // Output buffer registry — replaces module-level Map (02-review.md § R11)
-    outputRegistry = new OutputBufferRegistry((phaseId, stream, chunk) => {
-      MissionControlPanel.broadcast({
-        type: 'WORKER_OUTPUT',
-        payload: { phaseId: asPhaseId(phaseId), stream, chunk },
-      });
+    // ARCH-03: OutputBufferRegistry no longer emits WORKER_OUTPUT.
+    // PHASE_OUTPUT (broadcast ~line 650) is now the single authoritative live-output channel.
+    outputRegistry = new OutputBufferRegistry((_phaseId, _stream, _chunk) => {
+      // No-op flush callback — PHASE_OUTPUT handles real-time streaming above.
     });
 
 
@@ -350,42 +476,30 @@ export function activate(context: vscode.ExtensionContext): void {
     });
 
 
-    // ─── Register Activity Bar sidebar provider ────────────────────────
-    const sidebarProvider = new MissionControlViewProvider(
-      context.extensionUri, engine, sessionManager, adkController,
-      () => preFlightGitCheck(gitSandbox),
-      (newDir, newDirName) => {
-        currentSessionDir = newDir;
-        plannerAgent?.setMasterTaskId(newDirName);
-        sessionManager?.setCurrentSessionId(newDirName.replace(/^\d{8}-\d{6}-/, ''), newDirName);
-        sessionManager?.saveCurrentSession().catch(log.onError);
-      },
-      mcpServer, mcpBridge
-    );
+    // ─── Register Activity Bar sidebar menu (TreeDataProvider) ──────────
+    sidebarMenu = new SidebarMenuProvider(sessionManager);
     context.subscriptions.push(
-      vscode.window.registerWebviewViewProvider(
-        MissionControlViewProvider.viewType,
-        sidebarProvider,
-        { webviewOptions: { retainContextWhenHidden: true } }
-      )
+      vscode.window.registerTreeDataProvider('coogent.sidebarMenu', sidebarMenu)
     );
-    log.info('[Coogent] Activity Bar sidebar provider registered.');
+    // Initial load of session history
+    sidebarMenu.refresh();
+    log.info('[Coogent] Activity Bar sidebar menu registered.');
 
 
     // ─── Wire Engine → Webview ─────────────────────────────────────────
     engine.on('ui:message', (message: HostToWebviewMessage) => {
       MissionControlPanel.broadcast(message);
-      MissionControlViewProvider.broadcast(message);
     });
 
     // ─── Wire Engine → Webview (state:changed) ────────────────────────────
-    let branchCreated = false; // Bug 4: ensure branch creation runs once per session
+    // BUG-02 fix: use the module-level Set keyed by sessionDirName instead of a
+    // closure-captured boolean. This resets automatically when sessionDirName changes.
     engine.on('state:changed', (from, to, event) => {
       logger?.logStateTransition(from, to, event).catch(log.onError);
 
-      // Bug 4: Auto-create sandbox branch on first EXECUTING_WORKER transition
-      if (to === 'EXECUTING_WORKER' && !branchCreated && gitSandbox) {
-        branchCreated = true;
+      // Auto-create sandbox branch on first EXECUTING_WORKER transition per session
+      if (to === 'EXECUTING_WORKER' && !sandboxBranchCreatedForSession.has(sessionDirName) && gitSandbox) {
+        sandboxBranchCreatedForSession.add(sessionDirName);
 
         // Skip branch creation if the user chose "Continue on Current Branch"
         if (MissionControlPanel.shouldSkipSandbox()) {
@@ -418,14 +532,7 @@ export function activate(context: vscode.ExtensionContext): void {
           masterTaskId: sessionDirName,
         },
       });
-      MissionControlViewProvider.broadcast({
-        type: 'STATE_SNAPSHOT',
-        payload: {
-          runbook: rb ?? { project_id: '', status: 'idle', current_phase: 0, phases: [] },
-          engineState: to,
-          masterTaskId: sessionDirName,
-        },
-      });
+
     });
 
     // ─── Wire Engine → run:completed (log completion) ──────────────────
@@ -444,14 +551,7 @@ export function activate(context: vscode.ExtensionContext): void {
           message: `✅ Run completed: ${completedCount}/${phaseCount} phases for "${runbook.project_id}".`,
         },
       });
-      MissionControlViewProvider.broadcast({
-        type: 'LOG_ENTRY',
-        payload: {
-          timestamp: asTimestamp(),
-          level: 'info',
-          message: `✅ Run completed: ${completedCount}/${phaseCount} phases for "${runbook.project_id}".`,
-        },
-      });
+
     });
 
     // ─── Wire Engine → ADK (phase execution) ───────────────────────────
@@ -838,43 +938,7 @@ export function activate(context: vscode.ExtensionContext): void {
   }
 }
 
-export async function deactivate(): Promise<void> {
-  log.info('[Coogent] Extension deactivating (closing log stream)...');
 
-  // Graceful shutdown: abort engine + kill all workers in parallel (Req §6)
-  await Promise.allSettled([
-    engine?.abort().catch(log.onError),
-    adkController?.killAllWorkers().catch(log.onError),
-    plannerAgent?.abort().catch(log.onError),
-    mcpBridge?.disconnect().catch(log.onError),
-  ]);
-
-  // Flush any remaining output buffers
-  outputRegistry?.dispose();
-
-  // Release all references for GC
-  stateManager = undefined;
-  engine = undefined;
-  adkController = undefined;
-  contextScoper = undefined;
-  logger = undefined;
-
-  // N-1: Release all remaining references BEFORE disposing the log stream
-  gitManager = undefined;
-  gitSandbox = undefined;
-  outputRegistry = undefined;
-  plannerAgent = undefined;
-  sessionManager = undefined;
-  handoffExtractor = undefined;
-  consolidationAgent = undefined;
-  currentSessionDir = undefined;
-  mcpServer = undefined;
-  mcpBridge = undefined;
-  workerOutputAccumulator.clear();
-
-  // Dispose log stream LAST so all shutdown/teardown messages are captured
-  disposeLog();
-}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Phase Execution Pipeline
@@ -974,5 +1038,81 @@ async function executePhase(
     effectivePrompt = `${effectivePrompt}\n\n---\n\n${distillationPrompt}`;
   }
   const effectivePhase = { ...phase, prompt: effectivePrompt };
-  await adkController.spawnWorker(effectivePhase, result.payload, timeoutMs, masterTaskId);
+
+  // DAG-1 fix: Build MCP warm-start URIs so every worker receives a pointer to
+  // the master implementation plan and its parent phase handoffs (Pull Model).
+  // Previously spawnWorker was called with no 5th argument, meaning every worker
+  // started with zero MCP warm-start context regardless of what the Pull Model
+  // architecture intended.
+  const mcpResourceUris: {
+    implementationPlan?: string;
+    parentHandoffs?: string[];
+  } = {
+    implementationPlan: RESOURCE_URIS.taskPlan(masterTaskId),
+  };
+
+  if (phase.depends_on && (phase.depends_on as unknown[]).length > 0 && engine) {
+    const runbook = engine.getRunbook();
+    const parentHandoffs: string[] = [];
+    for (const parentId of phase.depends_on) {
+      const parentPhase = runbook?.phases.find(p => p.id === parentId);
+      if (parentPhase?.mcpPhaseId) {
+        parentHandoffs.push(RESOURCE_URIS.phaseHandoff(masterTaskId, parentPhase.mcpPhaseId));
+      }
+    }
+    if (parentHandoffs.length > 0) {
+      mcpResourceUris.parentHandoffs = parentHandoffs;
+    }
+  }
+
+  await adkController.spawnWorker(effectivePhase, timeoutMs, masterTaskId, mcpResourceUris);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Extension Deactivation
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Called by VS Code before the extension host process is torn down.
+ * Gracefully aborts the engine, kills all ADK workers, disconnects the MCP
+ * bridge, flushes output buffers, and releases all module-level references.
+ * Never throws — best-effort teardown so the event loop is not held open.
+ */
+export async function deactivate(): Promise<void> {
+  log.info('[Coogent] Extension deactivating...');
+
+  // Graceful shutdown: abort engine + kill all workers + disconnect bridge (Req §6)
+  await Promise.allSettled([
+    engine?.abort().catch(log.onError),
+    adkController?.killAllWorkers().catch(log.onError),
+    plannerAgent?.abort().catch(log.onError),
+    mcpBridge?.disconnect().catch((err) =>
+      log.warn('[Coogent] deactivate: mcpBridge.disconnect() threw:', err)
+    ),
+  ]);
+
+  // Flush any remaining output buffers
+  outputRegistry?.dispose();
+
+  // Release all module-level references for GC
+  stateManager = undefined;
+  engine = undefined;
+  adkController = undefined;
+  contextScoper = undefined;
+  logger = undefined;
+  gitManager = undefined;
+  gitSandbox = undefined;
+  outputRegistry = undefined;
+  plannerAgent = undefined;
+  sessionManager = undefined;
+  handoffExtractor = undefined;
+  consolidationAgent = undefined;
+  currentSessionDir = undefined;
+  mcpServer = undefined;
+  mcpBridge = undefined;
+  workerOutputAccumulator.clear();
+  sandboxBranchCreatedForSession.clear();
+
+  // Dispose log stream LAST so all shutdown messages are captured
+  disposeLog();
 }

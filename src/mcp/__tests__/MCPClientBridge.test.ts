@@ -121,14 +121,15 @@ describe('MCPClientBridge — Core Operations', () => {
         expect(text).toBe('# Read Test');
     });
 
-    it('readResource() returns empty string for unset fields', async () => {
+    it('readResource() throws for unset fields (ERR-02 behavior)', async () => {
         // Create the task but don't set summary
-        await bridge.submitImplementationPlan(VALID_MASTER_TASK_ID, '');
+        await bridge.submitImplementationPlan(VALID_MASTER_TASK_ID, '# A plan');
 
-        const text = await bridge.readResource(
-            RESOURCE_URIS.taskSummary(VALID_MASTER_TASK_ID)
-        );
-        expect(text).toBe('');
+        // ERR-02: requesting an unset resource now throws instead of returning ''.
+        // This prevents the silent 'loaded but empty' UI state in mcpStore.ts.
+        await expect(
+            bridge.readResource(RESOURCE_URIS.taskSummary(VALID_MASTER_TASK_ID))
+        ).rejects.toThrow(/Resource not yet available/);
     });
 
     it('callTool() delegates to MCP client', async () => {
@@ -176,7 +177,7 @@ describe('MCPClientBridge — buildWarmStartPrompt', () => {
         expect(prompt).toContain(`master task ${VALID_MASTER_TASK_ID}`);
     });
 
-    it('uses phaseId for handoff URI when no parentPhaseId', () => {
+    it('uses phaseId for handoff URI when no parentPhaseIds given (fallback)', () => {
         const prompt = bridge.buildWarmStartPrompt(
             VALID_MASTER_TASK_ID,
             VALID_PHASE_ID
@@ -189,11 +190,25 @@ describe('MCPClientBridge — buildWarmStartPrompt', () => {
         expect(prompt).toContain(expectedHandoffUri);
     });
 
-    it('uses parentPhaseId for handoff URI when provided', () => {
+    it('uses parentPhaseIds array for handoff URIs when empty array passed (fallback to self)', () => {
         const prompt = bridge.buildWarmStartPrompt(
             VALID_MASTER_TASK_ID,
             VALID_PHASE_ID,
-            PARENT_PHASE_ID
+            []
+        );
+
+        const expectedHandoffUri = RESOURCE_URIS.phaseHandoff(
+            VALID_MASTER_TASK_ID,
+            VALID_PHASE_ID
+        );
+        expect(prompt).toContain(expectedHandoffUri);
+    });
+
+    it('uses single parentPhaseId array for handoff URI when one parent provided', () => {
+        const prompt = bridge.buildWarmStartPrompt(
+            VALID_MASTER_TASK_ID,
+            VALID_PHASE_ID,
+            [PARENT_PHASE_ID]
         );
 
         const expectedHandoffUri = RESOURCE_URIS.phaseHandoff(
@@ -201,12 +216,26 @@ describe('MCPClientBridge — buildWarmStartPrompt', () => {
             PARENT_PHASE_ID
         );
         expect(prompt).toContain(expectedHandoffUri);
-        // Should NOT point to the current phase's handoff
+        // Should NOT point to the current phase's own handoff when parents declared
         const selfHandoffUri = RESOURCE_URIS.phaseHandoff(
             VALID_MASTER_TASK_ID,
             VALID_PHASE_ID
         );
         expect(prompt).not.toContain(selfHandoffUri);
+    });
+
+    it('includes ALL parent handoff URIs for multi-dependency phases (F-4.1 fix)', () => {
+        const PARENT_PHASE_ID_2 = 'phase-002-b2c3d4e5-f6a7-8901-bcde-f12345678901';
+        const prompt = bridge.buildWarmStartPrompt(
+            VALID_MASTER_TASK_ID,
+            VALID_PHASE_ID,
+            [PARENT_PHASE_ID, PARENT_PHASE_ID_2]
+        );
+
+        const uri1 = RESOURCE_URIS.phaseHandoff(VALID_MASTER_TASK_ID, PARENT_PHASE_ID);
+        const uri2 = RESOURCE_URIS.phaseHandoff(VALID_MASTER_TASK_ID, PARENT_PHASE_ID_2);
+        expect(prompt).toContain(uri1);
+        expect(prompt).toContain(uri2);
     });
 
     it('includes the global plan URI', () => {

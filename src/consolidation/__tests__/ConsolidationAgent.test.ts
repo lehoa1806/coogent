@@ -323,6 +323,103 @@ describe('ConsolidationAgent', () => {
         });
     });
 
+    // ─── MCP-based handoff loading ─────────────────────────────────────
+
+    describe('loadHandoffFromMCP (via generateReport)', () => {
+        const MASTER_TASK_ID = '20260306-223640-36bc870c-08aa-40b3-8c85-16400f2a6825';
+        const MCP_PHASE_0 = 'phase-000-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+        const MCP_PHASE_1 = 'phase-001-11111111-2222-3333-4444-555555555555';
+
+        function makeRunbookWithMcpIds(): import('../../types/index.js').Runbook {
+            return {
+                project_id: 'mcp-test',
+                status: 'completed',
+                current_phase: 0,
+                phases: [
+                    {
+                        id: asPhaseId(0),
+                        status: 'completed',
+                        prompt: 'P0',
+                        context_files: [],
+                        success_criteria: 'exit_code:0',
+                        mcpPhaseId: MCP_PHASE_0,
+                    },
+                    {
+                        id: asPhaseId(1),
+                        status: 'completed',
+                        prompt: 'P1',
+                        context_files: [],
+                        success_criteria: 'exit_code:0',
+                        mcpPhaseId: MCP_PHASE_1,
+                    },
+                ],
+            };
+        }
+
+        function makeMcpHandoffJson(decisions: string[], modifiedFiles: string[], blockers: string[]) {
+            return JSON.stringify({ decisions, modifiedFiles, blockers, completedAt: 1700000000000 });
+        }
+
+        it('should read handoffs from MCP using the real mcpPhaseId', async () => {
+            const mockBridge = {
+                readResource: jest.fn()
+                    .mockResolvedValueOnce(makeMcpHandoffJson(['D0'], ['src/a.ts'], []))
+                    .mockResolvedValueOnce(makeMcpHandoffJson(['D1'], ['src/b.ts'], ['blocker-1'])),
+            } as unknown as import('../../mcp/MCPClientBridge.js').MCPClientBridge;
+
+            const runbook = makeRunbookWithMcpIds();
+            const report = await agent.generateReport(tmpDir, runbook, mockBridge, MASTER_TASK_ID);
+
+            // Verify correct URIs were called
+            expect(mockBridge.readResource).toHaveBeenCalledTimes(2);
+            expect(mockBridge.readResource).toHaveBeenCalledWith(
+                `coogent://tasks/${MASTER_TASK_ID}/phases/${MCP_PHASE_0}/handoff`,
+            );
+            expect(mockBridge.readResource).toHaveBeenCalledWith(
+                `coogent://tasks/${MASTER_TASK_ID}/phases/${MCP_PHASE_1}/handoff`,
+            );
+
+            // Verify report aggregation
+            expect(report.successfulPhases).toBe(2);
+            expect(report.allDecisions).toEqual(['D0', 'D1']);
+            expect(report.allModifiedFiles).toEqual(expect.arrayContaining(['src/a.ts', 'src/b.ts']));
+            expect(report.unresolvedIssues).toEqual(['blocker-1']);
+        });
+
+        it('should fall back to file-based loading when mcpPhaseId is absent', async () => {
+            const runbook = makeRunbook(); // no mcpPhaseId on phases
+            await writeHandoff(tmpDir, 0, makeHandoff(0));
+            await writeHandoff(tmpDir, 1, makeHandoff(1));
+
+            const mockBridge = {
+                readResource: jest.fn(),
+            } as unknown as import('../../mcp/MCPClientBridge.js').MCPClientBridge;
+
+            const report = await agent.generateReport(tmpDir, runbook, mockBridge, MASTER_TASK_ID);
+
+            // MCP bridge should NOT have been called (no mcpPhaseId)
+            expect(mockBridge.readResource).not.toHaveBeenCalled();
+            // But file-based loading should work
+            expect(report.successfulPhases).toBe(2);
+        });
+
+        it('should fall back to file when MCP read fails', async () => {
+            const mockBridge = {
+                readResource: jest.fn().mockRejectedValue(new Error('MCP error -32603')),
+            } as unknown as import('../../mcp/MCPClientBridge.js').MCPClientBridge;
+
+            await writeHandoff(tmpDir, 0, makeHandoff(0, { decisions: ['file-based'] }));
+            await writeHandoff(tmpDir, 1, makeHandoff(1));
+
+            const runbook = makeRunbookWithMcpIds();
+            const report = await agent.generateReport(tmpDir, runbook, mockBridge, MASTER_TASK_ID);
+
+            // Should still succeed via file fallback
+            expect(report.successfulPhases).toBe(2);
+            expect(report.allDecisions).toContain('file-based');
+        });
+    });
+
     // ─── End-to-end integration ─────────────────────────────────────────
 
     describe('end-to-end', () => {

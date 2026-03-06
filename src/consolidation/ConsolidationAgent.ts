@@ -64,10 +64,10 @@ export class ConsolidationAgent {
         let skippedPhases = 0;
 
         for (const phase of runbook.phases) {
-            // Try MCP first, then fall back to file-based loading
+            // Try MCP first (requires real mcpPhaseId), then fall back to file-based loading
             let handoff: HandoffReport | null = null;
-            if (mcpBridge && masterTaskId) {
-                handoff = await this.loadHandoffFromMCP(mcpBridge, masterTaskId, phase.id as number);
+            if (mcpBridge && masterTaskId && phase.mcpPhaseId) {
+                handoff = await this.loadHandoffFromMCP(mcpBridge, masterTaskId, phase.mcpPhaseId);
             }
             if (!handoff) {
                 handoff = await this.loadHandoffFile(sessionDir, phase.id as number);
@@ -296,19 +296,17 @@ export class ConsolidationAgent {
      * Maps the MCP `PhaseHandoff` shape (camelCase) to the file-based
      * `HandoffReport` shape (snake_case) for uniform downstream processing.
      *
+     * @param mcpPhaseId  The real compound phase ID (e.g., `phase-001-<uuid>`).
+     *                    Must match the key used by `handleSubmitPhaseHandoff()`.
      * Returns `null` if the resource is empty or the read fails.
      */
     private async loadHandoffFromMCP(
         bridge: MCPClientBridge,
         masterTaskId: string,
-        phaseId: number,
+        mcpPhaseId: string,
     ): Promise<HandoffReport | null> {
         try {
-            // Build a phase ID string suitable for MCP URI (e.g., "phase-001-<uuid>")
-            // The MCP stores handoffs keyed by phaseId strings, but the consolidation
-            // agent works with numeric IDs. We construct a padded prefix to search.
-            const paddedPhaseNum = String(phaseId).padStart(3, '0');
-            const uri = RESOURCE_URIS.phaseHandoff(masterTaskId, `phase-${paddedPhaseNum}`);
+            const uri = RESOURCE_URIS.phaseHandoff(masterTaskId, mcpPhaseId);
             const handoffJson = await bridge.readResource(uri);
 
             if (!handoffJson || handoffJson.trim() === '') {
@@ -318,8 +316,10 @@ export class ConsolidationAgent {
             const mcpHandoff = JSON.parse(handoffJson) as Record<string, unknown>;
 
             // Map MCP PhaseHandoff (camelCase) → file-based HandoffReport (snake_case)
+            // Extract numeric index from compound ID (e.g., "phase-001-<uuid>" → 1)
+            const numericId = parseInt(mcpPhaseId.replace(/^phase-/, '').split('-')[0], 10);
             return {
-                phaseId,
+                phaseId: isNaN(numericId) ? 0 : numericId,
                 decisions: Array.isArray(mcpHandoff.decisions) ? mcpHandoff.decisions as string[] : [],
                 modified_files: Array.isArray(mcpHandoff.modifiedFiles)
                     ? mcpHandoff.modifiedFiles as string[]
@@ -335,7 +335,7 @@ export class ConsolidationAgent {
                     : Date.now(),
             };
         } catch (err) {
-            log.warn(`[ConsolidationAgent] MCP handoff read failed for phase ${phaseId}:`, err);
+            log.warn(`[ConsolidationAgent] MCP handoff read failed for phase ${mcpPhaseId}:`, err);
             return null;
         }
     }

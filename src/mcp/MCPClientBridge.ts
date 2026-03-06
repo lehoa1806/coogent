@@ -142,27 +142,38 @@ export class MCPClientBridge {
      *
      * This prompt tells the worker:
      * - Which phase and master task it is executing.
-     * - How to retrieve its context via MCP resource URIs.
+     * - How to retrieve its context via MCP resource URIs (one per parent dependency).
      * - Where to find the global implementation plan.
      *
-     * @param masterTaskId  The master task identifier.
-     * @param phaseId       The phase identifier (e.g., `phase-001-<uuid>`).
-     * @param parentPhaseId Optional parent phase ID for retrieving handoff context.
+     * @param masterTaskId   The master task identifier.
+     * @param phaseId        The phase identifier (e.g., `phase-001-<uuid>`).
+     * @param parentPhaseIds Array of parent phase IDs whose handoffs this phase depends on.
+     *                       Pass an empty array (or omit) for root phases with no upstream deps.
      */
     buildWarmStartPrompt(
         masterTaskId: string,
         phaseId: string,
-        parentPhaseId?: string
+        parentPhaseIds: string[] = []
     ): string {
-        const handoffPhase = parentPhaseId ?? phaseId;
-        const handoffUri = RESOURCE_URIS.phaseHandoff(masterTaskId, handoffPhase);
         const planUri = RESOURCE_URIS.taskPlan(masterTaskId);
 
-        return [
+        const lines: string[] = [
             `You are executing ${phaseId} under master task ${masterTaskId}.`,
-            `DO NOT GUESS context. Read ${handoffUri} to retrieve your context pointers.`,
-            `You can also read ${planUri} if you need the global task perspective.`,
-        ].join('\n');
+            `DO NOT GUESS context. Read the following URIs to retrieve your context:`,
+        ];
+
+        if (parentPhaseIds.length > 0) {
+            for (const parentId of parentPhaseIds) {
+                lines.push(`- ${RESOURCE_URIS.phaseHandoff(masterTaskId, parentId)}`);
+            }
+        } else {
+            // No declared upstream dependencies — point to own phase handoff as fallback
+            lines.push(`- ${RESOURCE_URIS.phaseHandoff(masterTaskId, phaseId)}`);
+        }
+
+        lines.push(`You can also read ${planUri} for global context.`);
+
+        return lines.join('\n');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

@@ -293,14 +293,7 @@ export interface PhaseStatusMessage {
     };
 }
 
-export interface WorkerOutputMessage {
-    readonly type: 'WORKER_OUTPUT';
-    readonly payload: {
-        phaseId: PhaseId;
-        stream: 'stdout' | 'stderr';
-        chunk: string;
-    };
-}
+
 
 export interface TokenBudgetMessage {
     readonly type: 'TOKEN_BUDGET';
@@ -439,6 +432,24 @@ export interface MCPResourceDataMessage {
     };
 }
 
+
+/** Suggestion items for @ mention and / workflow popups. */
+export interface SuggestionDataMessage {
+    readonly type: 'SUGGESTION_DATA';
+    readonly payload: {
+        mentions: readonly { label: string; description: string; insert: string }[];
+        workflows: readonly { label: string; description: string; insert: string }[];
+    };
+}
+
+/** File/image attachment selection result from the Extension Host. */
+export interface AttachmentSelectedMessage {
+    readonly type: 'ATTACHMENT_SELECTED';
+    readonly payload: {
+        paths: readonly string[];
+    };
+}
+
 /**
  * Discriminated union of all messages the Extension Host sends to the Webview.
  * Use `HostToWebviewMessageType` for the `type` string literal union.
@@ -446,7 +457,6 @@ export interface MCPResourceDataMessage {
 export type HostToWebviewMessage =
     | StateSnapshotMessage
     | PhaseStatusMessage
-    | WorkerOutputMessage
     | TokenBudgetMessage
     | ErrorMessage
     | LogEntryMessage
@@ -459,7 +469,9 @@ export type HostToWebviewMessage =
     | PhaseOutputMessage
     | PlanSummaryMessage
     | ImplementationPlanMessage
-    | MCPResourceDataMessage;
+    | MCPResourceDataMessage
+    | SuggestionDataMessage
+    | AttachmentSelectedMessage;
 
 // ── Webview → Host (user commands) ──────────────────────────────────────────
 
@@ -472,14 +484,7 @@ export interface CmdStartMessage {
     readonly type: 'CMD_START';
 }
 
-/**
- * @deprecated Use cooperative pause via CMD_START dual-purpose.
- * The pause mechanism is flag-based (pauseRequested), not FSM-driven.
- * Retained for backward compatibility but CMD_START handles resume.
- */
-export interface CmdPauseMessage {
-    readonly type: 'CMD_PAUSE';
-}
+
 
 export interface CmdAbortMessage {
     readonly type: 'CMD_ABORT';
@@ -638,13 +643,22 @@ export interface MCPFetchResourceMessage {
     };
 }
 
+/** User requests to attach a file from the workspace. */
+export interface CmdUploadFileMessage {
+    readonly type: 'CMD_UPLOAD_FILE';
+}
+
+/** User requests to attach an image from the workspace. */
+export interface CmdUploadImageMessage {
+    readonly type: 'CMD_UPLOAD_IMAGE';
+}
+
 /**
  * Discriminated union of all messages the Webview sends to the Extension Host.
  * Use `WebviewToHostMessageType` for the `type` string literal union.
  */
 export type WebviewToHostMessage =
     | CmdStartMessage
-    | CmdPauseMessage
     | CmdAbortMessage
     | CmdRetryMessage
     | CmdSkipPhaseMessage
@@ -660,16 +674,18 @@ export type WebviewToHostMessage =
     | CmdPlanRejectMessage
     | CmdPlanEditDraftMessage
     | CmdPlanRetryParseMessage
-    | CmdListSessionsMessage
-    | CmdSearchSessionsMessage
-    | CmdLoadSessionMessage
     | CmdSetConversationModeMessage
     | CmdRequestReportMessage
     | CmdRequestPlanMessage
-    | CmdDeleteSessionMessage
     | CmdReviewDiffMessage
     | CmdResumePendingMessage
-    | MCPFetchResourceMessage;
+    | MCPFetchResourceMessage
+    | CmdUploadFileMessage
+    | CmdUploadImageMessage
+    | CmdListSessionsMessage
+    | CmdSearchSessionsMessage
+    | CmdLoadSessionMessage
+    | CmdDeleteSessionMessage;
 
 /** Helper: union of all Host → Webview message type string literals (#95). */
 export type HostToWebviewMessageType = HostToWebviewMessage['type'];

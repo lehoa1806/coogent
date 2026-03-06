@@ -5,7 +5,14 @@
 <script lang="ts">
     import { appState, postMessage } from "../stores/vscode.js";
 
-    let timerInterval: ReturnType<typeof setInterval> | null = $state(null);
+    interface Props {
+        /** Called when user clicks the 📋 View Plan button. */
+        onviewplan?: () => void;
+    }
+    let { onviewplan }: Props = $props();
+
+    // Use a plain module-level var to avoid $effect re-triggering on every tick
+    let _timerInterval: ReturnType<typeof setInterval> | null = null;
     let displaySeconds = $state(0);
 
     function formatTime(seconds: number): string {
@@ -21,26 +28,30 @@
     );
     let isIdle = $derived($appState.engineState === "IDLE");
     let isCompleted = $derived($appState.engineState === "COMPLETED");
-    let isError = $derived($appState.engineState === "ERROR_PAUSED");
+    let hasPhases = $derived($appState.phases.length > 0);
 
-    // Timer management
+    // Timer management — using plain var avoids $effect loop caused by $state timerInterval
     $effect(() => {
-        if (isRunning && !timerInterval) {
-            timerInterval = setInterval(() => {
-                displaySeconds++;
-            }, 1000);
-        } else if (!isRunning && timerInterval) {
-            clearInterval(timerInterval);
-            timerInterval = null;
-        }
-        if (isIdle) {
-            displaySeconds = 0;
+        if (isRunning) {
+            if (!_timerInterval) {
+                _timerInterval = setInterval(() => {
+                    displaySeconds++;
+                }, 1000);
+            }
+        } else {
+            if (_timerInterval) {
+                clearInterval(_timerInterval);
+                _timerInterval = null;
+            }
+            if (isIdle) {
+                displaySeconds = 0;
+            }
         }
 
         return () => {
-            if (timerInterval) {
-                clearInterval(timerInterval);
-                timerInterval = null;
+            if (_timerInterval) {
+                clearInterval(_timerInterval);
+                _timerInterval = null;
             }
         };
     });
@@ -49,7 +60,9 @@
         postMessage({ type: "CMD_START" });
     }
     function handlePause() {
-        postMessage({ type: "CMD_PAUSE" });
+        // CMD_PAUSE is not currently in the message union.
+        // The Pause button triggers abort for now; update when CMD_PAUSE is added.
+        postMessage({ type: "CMD_ABORT" });
     }
     function handleAbort() {
         postMessage({ type: "CMD_ABORT" });
@@ -58,7 +71,8 @@
         postMessage({ type: "CMD_REQUEST_REPORT" });
     }
     function handleViewPlan() {
-        postMessage({ type: "CMD_REQUEST_PLAN" });
+        // Open the local View-All modal without a backend round-trip.
+        onviewplan?.();
     }
 </script>
 
@@ -84,9 +98,11 @@
             >📊</button
         >
     {/if}
-    {#if !isIdle}
-        <button class="btn-icon" onclick={handleViewPlan} title="View Plan"
-            >📋</button
+    {#if hasPhases}
+        <button
+            class="btn-icon"
+            onclick={handleViewPlan}
+            title="View Implementation Plan">📋</button
         >
     {/if}
 </div>
@@ -196,6 +212,7 @@
         transition: all 0.15s ease;
         font-size: 14px;
         line-height: 1;
+        pointer-events: auto;
     }
 
     .btn-icon:hover {

@@ -9,9 +9,7 @@ describe('isValidWebviewMessage — IPC Runtime Validation (P1-3)', () => {
         expect(isValidWebviewMessage({ type: 'CMD_START' })).toBe(true);
     });
 
-    it('accepts CMD_PAUSE (no payload)', () => {
-        expect(isValidWebviewMessage({ type: 'CMD_PAUSE' })).toBe(true);
-    });
+
 
     it('accepts CMD_ABORT (no payload)', () => {
         expect(isValidWebviewMessage({ type: 'CMD_ABORT' })).toBe(true);
@@ -128,24 +126,6 @@ describe('isValidWebviewMessage — IPC Runtime Validation (P1-3)', () => {
         expect(isValidWebviewMessage({ type: 'CMD_RESET' })).toBe(true);
     });
 
-    it('accepts CMD_LIST_SESSIONS (no payload)', () => {
-        expect(isValidWebviewMessage({ type: 'CMD_LIST_SESSIONS' })).toBe(true);
-    });
-
-    it('accepts CMD_SEARCH_SESSIONS with query', () => {
-        expect(isValidWebviewMessage({
-            type: 'CMD_SEARCH_SESSIONS',
-            payload: { query: 'auth' }
-        })).toBe(true);
-    });
-
-    it('accepts CMD_LOAD_SESSION with sessionId', () => {
-        expect(isValidWebviewMessage({
-            type: 'CMD_LOAD_SESSION',
-            payload: { sessionId: 'abc-123' }
-        })).toBe(true);
-    });
-
     it('accepts CMD_SET_CONVERSATION_MODE with mode', () => {
         expect(isValidWebviewMessage({
             type: 'CMD_SET_CONVERSATION_MODE',
@@ -155,5 +135,69 @@ describe('isValidWebviewMessage — IPC Runtime Validation (P1-3)', () => {
 
     it('accepts CMD_REQUEST_PLAN (no payload)', () => {
         expect(isValidWebviewMessage({ type: 'CMD_REQUEST_PLAN' })).toBe(true);
+    });
+});
+
+describe('isValidWebviewMessage — Session Management (#wire-ui)', () => {
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  CMD_LIST_SESSIONS
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    it('accepts CMD_LIST_SESSIONS (no payload)', () => {
+        expect(isValidWebviewMessage({ type: 'CMD_LIST_SESSIONS' })).toBe(true);
+    });
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  CMD_SEARCH_SESSIONS
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    it('accepts CMD_SEARCH_SESSIONS with a query string', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_SEARCH_SESSIONS',
+            payload: { query: 'auth refactor' },
+        })).toBe(true);
+    });
+
+    it('rejects CMD_SEARCH_SESSIONS with missing query', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_SEARCH_SESSIONS',
+            payload: {},
+        })).toBe(false);
+    });
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  CMD_LOAD_SESSION
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    it('accepts CMD_LOAD_SESSION with a sessionId string', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_LOAD_SESSION',
+            payload: { sessionId: 'abc-123' },
+        })).toBe(true);
+    });
+
+    it('rejects CMD_LOAD_SESSION with missing sessionId', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_LOAD_SESSION',
+            payload: {},
+        })).toBe(false);
+    });
+
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    //  CMD_DELETE_SESSION
+    // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+    it('accepts CMD_DELETE_SESSION with a sessionId string', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_DELETE_SESSION',
+            payload: { sessionId: 'def-456' },
+        })).toBe(true);
+    });
+
+    it('rejects CMD_DELETE_SESSION with numeric sessionId', () => {
+        expect(isValidWebviewMessage({
+            type: 'CMD_DELETE_SESSION',
+            payload: { sessionId: 42 },
+        })).toBe(false);
     });
 });

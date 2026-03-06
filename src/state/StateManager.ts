@@ -15,6 +15,7 @@ const runbookSchema = {
     title: 'Coogent Task Runbook',
     type: 'object',
     required: ['project_id', 'status', 'current_phase', 'phases'],
+    additionalProperties: false,
     properties: {
         project_id: { type: 'string', minLength: 1 },
         status: { type: 'string', enum: ['idle', 'running', 'paused_error', 'completed'] },
@@ -27,6 +28,7 @@ const runbookSchema = {
             items: {
                 type: 'object',
                 required: ['id', 'status', 'prompt', 'context_files', 'success_criteria'],
+                additionalProperties: false,
                 properties: {
                     id: { type: 'integer' },
                     status: { type: 'string', enum: ['pending', 'running', 'completed', 'failed'] },
@@ -37,6 +39,7 @@ const runbookSchema = {
                     evaluator: { type: 'string', enum: ['exit_code', 'regex', 'toolchain', 'test_suite'] },
                     max_retries: { type: 'integer', minimum: 0 },
                     context_summary: { type: 'string' },
+                    mcpPhaseId: { type: 'string' },
                 },
             },
         },

@@ -112,6 +112,10 @@
                     "context_summary": {
                         "type": "string",
                         "description": "Summarized context of the current phase so downstream agents know what has been done and what should happen next."
+                    },
+                    "mcpPhaseId": {
+                        "type": "string",
+                        "description": "The real MCP-server phase ID string (phase-NNN-<uuid>). Set by the Engine at dispatch time and persisted back into the runbook."
                     }
                 }
             }
