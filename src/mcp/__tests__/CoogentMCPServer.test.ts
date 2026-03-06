@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { CoogentMCPServer } from '../CoogentMCPServer.js';
+import { CoogentMCPServer, safeTruncate } from '../CoogentMCPServer.js';
 import {
     RESOURCE_URIS,
     MCP_TOOLS,
@@ -269,7 +269,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
         ).rejects.toThrow();
     });
 
-    it('reading a resource with no data returns empty content', async () => {
+    it('reading a resource with no data throws (resource not yet available)', async () => {
         // Create the task but don't set a summary
         await client.callTool({
             name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
@@ -279,14 +279,13 @@ describe('CoogentMCPServer — Resource Handlers', () => {
             },
         });
 
-        const result = await client.readResource({
-            uri: RESOURCE_URIS.taskSummary(VALID_MASTER_TASK_ID),
-        });
-
-        // summary was never set, should be empty string
-        expect(result.contents[0]).toMatchObject({
-            text: '',
-        });
+        // ERR-02: summary was never set — should throw rather than silently
+        // returning an empty string which causes a phantom 'loaded but empty' UI state.
+        await expect(
+            client.readResource({
+                uri: RESOURCE_URIS.taskSummary(VALID_MASTER_TASK_ID),
+            })
+        ).rejects.toThrow(/Resource not yet available/);
     });
 
     it('reading a resource for non-existent task throws', async () => {
@@ -398,6 +397,15 @@ describe('CoogentMCPServer — Tool Handlers', () => {
     // ── get_modified_file_content ────────────────────────────────────────
 
     it('get_modified_file_content reads file from workspace', async () => {
+        // Seed the store so the authorization check passes
+        await client.callTool({
+            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                markdown_content: '# Plan',
+            },
+        });
+
         // Create a file in the temp workspace
         await fs.writeFile(path.join(tmpDir, 'hello.txt'), 'Hello from test');
 
@@ -416,7 +424,7 @@ describe('CoogentMCPServer — Tool Handlers', () => {
         expect(content[0].text).toBe('Hello from test');
     });
 
-    it('get_modified_file_content throws for non-existent file', async () => {
+    it('get_modified_file_content throws Unauthorized for fabricated masterTaskId', async () => {
         await expect(
             client.callTool({
                 name: MCP_TOOLS.GET_MODIFIED_FILE_CONTENT,
@@ -426,7 +434,29 @@ describe('CoogentMCPServer — Tool Handlers', () => {
                     file_path: 'does-not-exist.txt',
                 },
             })
-        ).rejects.toThrow(/Cannot resolve path/);
+        ).rejects.toThrow(/Unauthorized/);
+    });
+
+    it('get_modified_file_content throws for non-existent file when task is registered', async () => {
+        // Seed the store so auth check passes
+        await client.callTool({
+            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                markdown_content: '# Plan',
+            },
+        });
+
+        await expect(
+            client.callTool({
+                name: MCP_TOOLS.GET_MODIFIED_FILE_CONTENT,
+                arguments: {
+                    masterTaskId: VALID_MASTER_TASK_ID,
+                    phaseId: VALID_PHASE_ID,
+                    file_path: 'does-not-exist.txt',
+                },
+            })
+        ).rejects.toThrow(/File not found/);
     });
 
     // ── Validation Errors ────────────────────────────────────────────────
@@ -599,5 +629,178 @@ describe('CoogentMCPServer — ListResources', () => {
         expect(uris).toContain(RESOURCE_URIS.taskReport(VALID_MASTER_TASK_ID));
         expect(uris).toContain(RESOURCE_URIS.phasePlan(VALID_MASTER_TASK_ID, VALID_PHASE_ID));
         expect(uris).toContain(RESOURCE_URIS.phaseHandoff(VALID_MASTER_TASK_ID, VALID_PHASE_ID));
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  D-3: validateStringArray Enforcement Tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('CoogentMCPServer — D-3: validateStringArray enforcement', () => {
+    let tmpDir: string;
+    let server: CoogentMCPServer;
+    let client: Client;
+
+    beforeEach(async () => {
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-d3-test-'));
+        ({ server, client } = await createConnectedPair(tmpDir));
+    });
+
+    afterEach(async () => {
+        await teardown(client, server);
+        await fs.rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('rejects a decisions item that exceeds 500 chars (D-1/D-3)', async () => {
+        const longDecision = 'x'.repeat(501);
+        await expect(
+            client.callTool({
+                name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+                arguments: {
+                    masterTaskId: VALID_MASTER_TASK_ID,
+                    phaseId: VALID_PHASE_ID,
+                    decisions: [longDecision],
+                    modified_files: [],
+                    blockers: [],
+                },
+            })
+        ).rejects.toThrow(/exceeds maxLength/);
+    });
+
+    it('rejects blockers array with more than 20 items (D-1/D-3)', async () => {
+        const tooManyBlockers = Array.from({ length: 21 }, (_, i) => `Blocker ${i + 1}`);
+        await expect(
+            client.callTool({
+                name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+                arguments: {
+                    masterTaskId: VALID_MASTER_TASK_ID,
+                    phaseId: VALID_PHASE_ID,
+                    decisions: [],
+                    modified_files: [],
+                    blockers: tooManyBlockers,
+                },
+            })
+        ).rejects.toThrow(/exceeds maxItems/);
+    });
+
+    it('rejects modified_files with a non-path-like string (D-2/D-3)', async () => {
+        await expect(
+            client.callTool({
+                name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+                arguments: {
+                    masterTaskId: VALID_MASTER_TASK_ID,
+                    phaseId: VALID_PHASE_ID,
+                    decisions: [],
+                    // Code dump — not a relative path
+                    modified_files: ["import foo from 'bar';\nconst x = 1;"],
+                    blockers: [],
+                },
+            })
+        ).rejects.toThrow(/not a valid relative path/);
+    });
+
+    it('accepts valid inputs within all limits (D-1/D-2/D-3)', async () => {
+        const result = await client.callTool({
+            name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                phaseId: VALID_PHASE_ID,
+                decisions: ['Chose TypeScript strict mode', 'Used Zod for validation'],
+                modified_files: ['src/mcp/CoogentMCPServer.ts', 'src/adk/ADKController.ts'],
+                blockers: [],
+            },
+        });
+        expect(result).toBeDefined();
+        const task = server.getTaskState(VALID_MASTER_TASK_ID);
+        expect(task?.phases.get(VALID_PHASE_ID)?.handoff?.decisions).toHaveLength(2);
+    });
+
+    // ═════════════════════════════════════════════════════════════════════════════
+    //  R-2: safeTruncate — surrogate-pair-safe truncation unit tests
+    // ═════════════════════════════════════════════════════════════════════════════
+
+    describe('safeTruncate — R-2: surrogate-pair-safe truncation', () => {
+        it('returns the original string when it is within the limit', () => {
+            expect(safeTruncate('hello', 10)).toBe('hello');
+            expect(safeTruncate('', 10)).toBe('');
+        });
+
+        it('truncates plain ASCII strings at exactly the limit', () => {
+            const s = 'abcdefghij'; // 10 chars
+            expect(safeTruncate(s, 5)).toBe('abcde');
+            expect(safeTruncate(s, 10)).toBe('abcdefghij');
+        });
+
+        it('backs off by one when cut lands on a leading surrogate (emoji)', () => {
+            // 🎯 = U+1F3AF = \uD83C\uDFAF — a surrogate pair (2 UTF-16 code units)
+            // Build: 4 ASCII chars + emoji = 6 UTF-16 units total
+            const s = 'abcd\uD83C\uDFAF'; // 'abcd🎯'
+            // Cut at 5 lands on leading surrogate \uD83C → must back to 4
+            expect(safeTruncate(s, 5)).toBe('abcd');
+            // Cut at 6 is safe — includes the full emoji
+            expect(safeTruncate(s, 6)).toBe('abcd\uD83C\uDFAF');
+        });
+
+        it('does not back off when cut lands on a BMP character', () => {
+            // 'abc🎯xyz' as UTF-16 code units:
+            //   index: 0='a', 1='b', 2='c', 3=\uD83C (leading surrogate), 4=\uDFAF (trailing), 5='x', 6='y', 7='z'
+            // So the string has 8 UTF-16 code units total.
+            const s = 'abc\uD83C\uDFAFxyz';
+            expect(s.length).toBe(8); // sanity check
+            // Cut at 7 → includes indices 0-6 → 'abc\uD83C\uDFAFxy'
+            expect(safeTruncate(s, 7)).toBe('abc\uD83C\uDFAFxy');
+            // Cut at 5 → 'abc\uD83C\uDFAF' (the full emoji, ends at index 4)
+            expect(safeTruncate(s, 5)).toBe('abc\uD83C\uDFAF');
+            // Cut at 4 → lands on leading surrogate → backs to 3 → 'abc'
+            expect(safeTruncate(s, 4)).toBe('abc');
+        });
+
+        it('handles full surrogate-pair string at exact limit', () => {
+            // Two emoji = 4 UTF-16 code units
+            const s = '\uD83C\uDFAF\uD83C\uDF4E'; // 🎯🍎
+            expect(safeTruncate(s, 4)).toBe(s);
+            // Limit 2 cuts between the first emoji's surrogates → backs off to 1
+            // but position 1 is also a leading surrogate → result is empty
+            expect(safeTruncate(s, 2).length).toBeLessThanOrEqual(2);
+        });
+
+        it('integration: handleGetModifiedFileContent truncation produces valid JSON payload', async () => {
+            const tmpDir2 = await fs.mkdtemp(path.join(os.tmpdir(), 'mcp-r2-truncate-'));
+            const { server: srv, client: cli } = await createConnectedPair(tmpDir2);
+
+            try {
+                // Seed store so R-3 auth gate passes
+                await cli.callTool({
+                    name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+                    arguments: {
+                        masterTaskId: VALID_MASTER_TASK_ID,
+                        markdown_content: '# Plan',
+                    },
+                });
+
+                // 32_000 'a' chars + emoji at position 32_000 → raw slice would split the pair
+                const body = 'a'.repeat(32_000) + '\uD83C\uDFAF' + 'padding';
+                await fs.writeFile(path.join(tmpDir2, 'big.txt'), body);
+
+                const result = await cli.callTool({
+                    name: MCP_TOOLS.GET_MODIFIED_FILE_CONTENT,
+                    arguments: {
+                        masterTaskId: VALID_MASTER_TASK_ID,
+                        phaseId: VALID_PHASE_ID,
+                        file_path: 'big.txt',
+                    },
+                });
+
+                const text = ((result as any).content[0] as { type: string; text: string }).text;
+                // Truncation sentinel must be present
+                expect(text).toContain('[TRUNCATED:');
+                // Content before sentinel must round-trip through JSON without corruption
+                const contentPart = text.split('\n\n[TRUNCATED:')[0];
+                expect(JSON.parse(JSON.stringify(contentPart))).toBe(contentPart);
+            } finally {
+                await teardown(cli, srv);
+                await fs.rm(tmpDir2, { recursive: true, force: true });
+            }
+        });
     });
 });

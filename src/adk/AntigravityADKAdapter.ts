@@ -30,10 +30,10 @@ interface ActiveSession {
 const RESPONSE_TIMEOUT_MS = 900_000;
 
 /** How often to poll for file-stability (ms). */
-const STABILITY_POLL_MS = 2_000;
+const STABILITY_POLL_MS = 1_000;
 
 /** How long the file must remain unchanged to be considered "done" (ms). */
-const STABILITY_THRESHOLD_MS = 3_000;
+const STABILITY_THRESHOLD_MS = 1_500;
 
 /** IPC subdirectory under the workspace. */
 const IPC_DIR_NAME = '.coogent/ipc';
@@ -342,6 +342,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
             let lastSizeTime = 0;
             let resolved = false;
 
+            let stabilityRecheck: ReturnType<typeof setTimeout> | null = null;
             const cleanup = () => {
                 if (session.watcher) {
                     session.watcher.close();
@@ -350,6 +351,10 @@ export class AntigravityADKAdapter implements IADKAdapter {
                 if (session.pollTimer) {
                     clearInterval(session.pollTimer);
                     delete session.pollTimer;
+                }
+                if (stabilityRecheck) {
+                    clearTimeout(stabilityRecheck);
+                    stabilityRecheck = null;
                 }
                 clearTimeout(timeoutHandle);
             };
@@ -409,10 +414,18 @@ export class AntigravityADKAdapter implements IADKAdapter {
             };
 
             // Set up fs.watch for fast detection of file creation
+            let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
             try {
                 session.watcher = watch(dir, (_eventType, filename) => {
                     if (filename === basename) {
                         checkStability().catch(() => { });
+                        // Schedule a deferred re-check to guarantee the stability
+                        // window is fully evaluated even if no poll aligns with it.
+                        if (stabilityTimer) clearTimeout(stabilityTimer);
+                        stabilityTimer = setTimeout(() => {
+                            stabilityTimer = null;
+                            checkStability().catch(() => { });
+                        }, STABILITY_THRESHOLD_MS + 200);
                     }
                 });
             } catch {

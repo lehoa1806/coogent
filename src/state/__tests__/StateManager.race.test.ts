@@ -37,7 +37,6 @@ describe('StateManager — P0 Verification Tests', () => {
     });
 
     afterEach(async () => {
-        await new Promise(r => setTimeout(r, 100)); // let async writes settle
         await fs.rm(tmpDir, { recursive: true, force: true });
     });
 

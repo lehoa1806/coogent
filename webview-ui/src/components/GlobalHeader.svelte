@@ -8,7 +8,7 @@
     import { DEFAULT_APP_STATE } from "../types.js";
 
     /** Props — callback replaces createEventDispatcher */
-    let { ontogglehistory }: { ontogglehistory?: () => void } = $props();
+    let { ontoggleterminal }: { ontoggleterminal?: () => void } = $props();
 
     /** Map engine state → badge CSS modifier. */
     function badgeClass(state: EngineState): string {
@@ -26,9 +26,8 @@
         postMessage({ type: "CMD_RESET" });
     }
 
-    function handleHistoryToggle() {
-        ontogglehistory?.();
-        postMessage({ type: "CMD_LIST_SESSIONS" });
+    function handleTerminalToggle() {
+        ontoggleterminal?.();
     }
 
     let canNewChat = $derived(
@@ -50,10 +49,51 @@
         {$appState.engineState}
     </span>
 
+    <span class="badge badge-mode" title="Conversation mode">
+        {$appState.conversationMode}
+    </span>
+
     <span class="header-spacer"></span>
 
-    <button class="btn-history" onclick={handleHistoryToggle}>📂 History</button
+    <button
+        class="btn-terminal"
+        onclick={handleTerminalToggle}
+        title="Toggle worker terminal output panel"
+        aria-label="Toggle worker terminal"
     >
+        <svg
+            width="12"
+            height="12"
+            viewBox="0 0 16 16"
+            fill="none"
+            xmlns="http://www.w3.org/2000/svg"
+            aria-hidden="true"
+        >
+            <rect
+                x="1"
+                y="2"
+                width="14"
+                height="10"
+                rx="1.5"
+                stroke="currentColor"
+                stroke-width="1.3"
+            />
+            <path
+                d="M4 6l3 2.5L4 11"
+                stroke="currentColor"
+                stroke-width="1.3"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+            />
+            <path
+                d="M9 11h3"
+                stroke="currentColor"
+                stroke-width="1.3"
+                stroke-linecap="round"
+            />
+        </svg>
+        Terminal
+    </button>
 </header>
 
 <style>
@@ -114,7 +154,10 @@
         background: var(--vscode-button-hoverBackground);
     }
 
-    .btn-history {
+    .btn-terminal {
+        display: flex;
+        align-items: center;
+        gap: 5px;
         background: var(
             --vscode-button-secondaryBackground,
             var(--vscode-editorWidget-background)
@@ -137,9 +180,10 @@
         white-space: nowrap;
         line-height: 1.3;
         transition: all 0.15s ease;
+        pointer-events: auto;
     }
 
-    .btn-history:hover {
+    .btn-terminal:hover {
         background: var(--vscode-button-secondaryHoverBackground);
         color: var(--vscode-foreground);
     }
@@ -249,5 +293,21 @@
         50% {
             opacity: 0.6;
         }
+    }
+
+    .badge-mode {
+        background: color-mix(
+            in srgb,
+            var(--vscode-charts-orange, #d18616) 10%,
+            transparent
+        );
+        color: var(--vscode-charts-orange, #d18616);
+        border: 1px solid
+            color-mix(
+                in srgb,
+                var(--vscode-charts-orange, #d18616) 30%,
+                transparent
+            );
+        text-transform: capitalize;
     }
 </style>

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="grad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2dd4bf"/>
+      <stop offset="100%" stop-color="#0e7490"/>
+    </linearGradient>
+    <linearGradient id="gradDark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e7490"/>
+      <stop offset="100%" stop-color="#134e4a"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Pentagon edges (the 5 connecting bars) -->
+  <g stroke="url(#grad)" stroke-width="26" stroke-linecap="round" fill="none">
+    <!-- Top to Top-Right -->
+    <line x1="256" y1="72" x2="430" y2="198"/>
+    <!-- Top-Right to Bottom-Right -->
+    <line x1="430" y1="198" x2="362" y2="410"/>
+    <!-- Bottom-Right to Bottom-Left -->
+    <line x1="362" y1="410" x2="150" y2="410"/>
+    <!-- Bottom-Left to Top-Left -->
+    <line x1="150" y1="410" x2="82" y2="198"/>
+    <!-- Top-Left to Top -->
+    <line x1="82" y1="198" x2="256" y2="72"/>
+  </g>
+
+  <!-- Spokes from center to each vertex -->
+  <g stroke="url(#grad)" stroke-width="22" stroke-linecap="round" fill="none">
+    <line x1="256" y1="256" x2="256" y2="72"/>
+    <line x1="256" y1="256" x2="430" y2="198"/>
+    <line x1="256" y1="256" x2="362" y2="410"/>
+    <line x1="256" y1="256" x2="150" y2="410"/>
+    <line x1="256" y1="256" x2="82" y2="198"/>
+  </g>
+
+  <!-- Center circle with gear -->
+  <circle cx="256" cy="256" r="88" fill="url(#grad)"/>
+
+  <!-- Gear/cog icon inside center circle -->
+  <g transform="translate(256,256)" fill="#134e4a">
+    <!-- Hexagon body -->
+    <polygon points="0,-42 36,-21 36,21 0,42 -36,21 -36,-21" fill="#134e4a" opacity="0.6"/>
+    <!-- Gear teeth (8 teeth) -->
+    <g fill="#f0fdfa" opacity="0.9">
+      <rect x="-5" y="-30" width="10" height="10" rx="2" transform="rotate(0)"/>
+      <rect x="-5" y="-30" width="10" height="10" rx="2" transform="rotate(45)"/>
+      <rect x="-5" y="-30" width="10" height="10" rx="2" transform="rotate(90)"/>
+      <rect x="-5" y="-30" width="10" height="10" rx="2" transform="rotate(135)"/>
+      <rect x="-5" y="-30" width="10" height="10" rx="2" transform="rotate(180)"/>
+      <rect x="-5" y="-30" width="10" height="10" rx="2" transform="rotate(225)"/>
+      <rect x="-5" y="-30" width="10" height="10" rx="2" transform="rotate(270)"/>
+      <rect x="-5" y="-30" width="10" height="10" rx="2" transform="rotate(315)"/>
+    </g>
+    <!-- Gear outer ring -->
+    <circle cx="0" cy="0" r="24" fill="none" stroke="#f0fdfa" stroke-width="5" opacity="0.85"/>
+    <!-- Gear inner hole -->
+    <circle cx="0" cy="0" r="10" fill="#134e4a" opacity="0.7"/>
+  </g>
+
+  <!-- 5 vertex nodes -->
+  <circle cx="256" cy="72" r="32" fill="url(#grad)"/>
+  <circle cx="430" cy="198" r="32" fill="url(#grad)"/>
+  <circle cx="362" cy="410" r="32" fill="url(#grad)"/>
+  <circle cx="150" cy="410" r="32" fill="url(#grad)"/>
+  <circle cx="82" cy="198" r="32" fill="url(#grad)"/>
+</svg>

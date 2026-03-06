@@ -197,7 +197,7 @@ describe('PlannerAgent', () => {
             }
 
             // Fast-forward past the 120s timeout
-            jest.advanceTimersByTime(900_001);
+            jest.advanceTimersByTime(910_001);
 
             expect(timeoutSpy).toHaveBeenCalledWith(true);
             expect(statusSpy).toHaveBeenCalledWith('timeout', 'Planner agent timed out');
@@ -218,7 +218,7 @@ describe('PlannerAgent', () => {
             await agent.plan('Build a todo app');
 
             // Fast-forward past the 120s timeout (no output was accumulated)
-            jest.advanceTimersByTime(900_001);
+            jest.advanceTimersByTime(910_001);
 
             expect(timeoutSpy).toHaveBeenCalledWith(false);
             // After plan(), lastIpcSessionDir is set, so hasTimeoutOutput()

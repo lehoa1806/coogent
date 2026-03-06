@@ -143,8 +143,9 @@ export class PlannerAgent extends EventEmitter {
             // Store session ID for file-based retry
             this.lastIpcSessionDir = this.activeSession.sessionId;
 
-            // Add timeout — matches RESPONSE_TIMEOUT_MS in AntigravityADKAdapter
-            const timeoutMs = 900_000;
+            // Timeout must exceed the adapter's RESPONSE_TIMEOUT_MS (900s) to avoid
+            // cancelling the file watcher's CancellationToken before it resolves.
+            const timeoutMs = 910_000;
             const timeoutHandle = setTimeout(() => {
                 // Preserve accumulated output for potential retry before aborting
                 const hasOutput = this.accumulatedOutput.length > 0;
@@ -157,6 +158,19 @@ export class PlannerAgent extends EventEmitter {
                 this.emit('plan:status', 'timeout', 'Planner agent timed out');
                 this.emit('plan:timeout', hasOutput);
                 this.abort().catch(log.onError);
+
+                // Auto-retryParse: if an IPC session exists, the agent may have
+                // written response.md after the adapter's watcher timed out.
+                // Try reading it once automatically before requiring manual retry.
+                if (this.lastIpcSessionDir || hasOutput) {
+                    log.info('[PlannerAgent] Auto-retrying parse from timeout...');
+                    // Delay slightly to let abort() finish cleaning up
+                    setTimeout(() => {
+                        this.retryParse().catch(err => {
+                            log.error('[PlannerAgent] Auto-retryParse failed:', err);
+                        });
+                    }, 500);
+                }
             }, timeoutMs);
 
             // Wire output accumulation

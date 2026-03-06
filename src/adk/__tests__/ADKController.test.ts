@@ -18,12 +18,14 @@ describe('ADKController (with MockADKAdapter)', () => {
     };
 
     beforeEach(async () => {
+        jest.useFakeTimers();
         tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-adk-'));
-        adapter = new MockADKAdapter(500); // 500ms delay to make timeout testing reliable
+        adapter = new MockADKAdapter(500); // 500ms mock delay (fake, won't actually wait)
         controller = new ADKController(adapter, tmpDir);
     });
 
     afterEach(async () => {
+        jest.useRealTimers();
         await controller.terminateWorker(testPhase.id, 'TEST_CLEANUP');
         await fs.rm(tmpDir, { recursive: true, force: true });
     });
@@ -35,13 +37,13 @@ describe('ADKController (with MockADKAdapter)', () => {
         controller.on('worker:output', outputSpy);
         controller.on('worker:exited', exitedSpy);
 
-        await controller.spawnWorker(testPhase, 'FAKECONTEXT', 5000);
+        await controller.spawnWorker(testPhase, 5000);
 
         // Should return almost immediately with the mock
         expect(controller.getActiveWorker(42)?.phaseId).toBe(42);
 
-        // Advance timers to trigger the mock's setTimeout
-        await new Promise(res => setTimeout(res, 600));
+        // Advance fake timers to trigger the mock's setTimeout
+        await jest.advanceTimersByTimeAsync(600);
 
         expect(outputSpy).toHaveBeenCalledWith(42, 'stdout', expect.any(String));
         expect(exitedSpy).toHaveBeenCalledWith(42, 0);
@@ -54,9 +56,9 @@ describe('ADKController (with MockADKAdapter)', () => {
         controller.on('worker:timeout', timeoutSpy);
 
         // 100ms timeout, the mock takes ~500ms to exit normally
-        await controller.spawnWorker(testPhase, 'FAKECONTEXT', 100);
+        await controller.spawnWorker(testPhase, 100);
 
-        await new Promise(res => setTimeout(res, 200));
+        await jest.advanceTimersByTimeAsync(200);
 
         expect(timeoutSpy).toHaveBeenCalledWith(42);
         expect(controller.getActiveWorker(42)).toBeUndefined();
@@ -65,11 +67,11 @@ describe('ADKController (with MockADKAdapter)', () => {
     it('should terminate duplicate worker when spawning same phase again', async () => {
         const terminateSpy = jest.spyOn(adapter, 'terminateSession');
 
-        await controller.spawnWorker(testPhase, 'FAKECONTEXT', 5000);
+        await controller.spawnWorker(testPhase, 5000);
         expect(controller.getActiveWorker(42)?.phaseId).toBe(42);
 
         // Spawn same phase again — should terminate the existing one first
-        await controller.spawnWorker(testPhase, 'FAKECONTEXT_RETRY', 5000);
+        await controller.spawnWorker(testPhase, 5000);
 
         expect(terminateSpy).toHaveBeenCalled();
         expect(controller.getActiveWorker(42)?.phaseId).toBe(42);
@@ -87,10 +89,10 @@ describe('ADKController (with MockADKAdapter)', () => {
         controller.on('worker:exited', exitedSpy);
 
         // 100ms timeout, mock takes ~500ms to exit
-        await controller.spawnWorker(testPhase, 'FAKECONTEXT', 100);
+        await controller.spawnWorker(testPhase, 100);
 
-        // Wait long enough for both timeout AND mock exit to fire
-        await new Promise(res => setTimeout(res, 700));
+        // Advance enough for both timeout AND mock exit to fire
+        await jest.advanceTimersByTimeAsync(700);
 
         // Timeout should fire, but exited should NOT fire since the
         // worker was already cleaned up by terminateWorker()
@@ -117,12 +119,12 @@ describe('ADKController (with MockADKAdapter)', () => {
         }));
 
         for (const phase of phases) {
-            const worker = await controller.spawnWorker(phase, 'CTX', 10000);
+            const worker = await controller.spawnWorker(phase, 10000);
             expect(worker).not.toBeNull();
         }
 
         // 5th worker should return null
-        const fifth = await controller.spawnWorker({ ...testPhase, id: asPhaseId(99) }, 'CTX', 10000);
+        const fifth = await controller.spawnWorker({ ...testPhase, id: asPhaseId(99) }, 10000);
         expect(fifth).toBeNull();
 
         // Clean up all workers
@@ -132,8 +134,8 @@ describe('ADKController (with MockADKAdapter)', () => {
     it('should terminateAll active workers (#65)', async () => {
         const terminateSpy = jest.spyOn(adapter, 'terminateSession');
 
-        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 'CTX', 10000);
-        await controller.spawnWorker({ ...testPhase, id: asPhaseId(2) }, 'CTX', 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(2) }, 10000);
 
         expect(controller.getActiveWorker(1)).toBeDefined();
         expect(controller.getActiveWorker(2)).toBeDefined();
@@ -153,7 +155,7 @@ describe('ADKController (with MockADKAdapter)', () => {
         // Initially empty
         expect(controller.getActivePids().size).toBe(0);
 
-        const worker = await controller.spawnWorker(testPhase, 'FAKECONTEXT', 5000);
+        const worker = await controller.spawnWorker(testPhase, 5000);
         expect(worker).not.toBeNull();
 
         // PID should be tracked
@@ -162,12 +164,12 @@ describe('ADKController (with MockADKAdapter)', () => {
         expect(pids.has(worker!.handle.pid)).toBe(true);
 
         // After natural exit, PID should be removed
-        await new Promise(res => setTimeout(res, 600));
+        await jest.advanceTimersByTimeAsync(600);
         expect(controller.getActivePids().size).toBe(0);
     });
 
     it('should remove PIDs from activePids on terminateWorker', async () => {
-        await controller.spawnWorker(testPhase, 'FAKECONTEXT', 5000);
+        await controller.spawnWorker(testPhase, 5000);
         expect(controller.getActivePids().size).toBe(1);
 
         await controller.terminateWorker(testPhase.id, 'TEST');
@@ -175,9 +177,9 @@ describe('ADKController (with MockADKAdapter)', () => {
     });
 
     it('should track multiple PIDs for parallel workers', async () => {
-        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 'CTX', 10000);
-        await controller.spawnWorker({ ...testPhase, id: asPhaseId(2) }, 'CTX', 10000);
-        await controller.spawnWorker({ ...testPhase, id: asPhaseId(3) }, 'CTX', 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(2) }, 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(3) }, 10000);
 
         expect(controller.getActivePids().size).toBe(3);
 
@@ -186,29 +188,85 @@ describe('ADKController (with MockADKAdapter)', () => {
     });
 
     it('should killAllWorkers and clear all PIDs', async () => {
-        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 'CTX', 10000);
-        await controller.spawnWorker({ ...testPhase, id: asPhaseId(2) }, 'CTX', 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(2) }, 10000);
 
         expect(controller.getActivePids().size).toBe(2);
 
-        // killAllWorkers sends SIGTERM, waits, then SIGKILL
-        // With mock adapter PIDs are fake (90000+), so process.kill will no-op/throw
-        // but the method should still clean up the set
-        await controller.killAllWorkers();
+        // killAllWorkers sends SIGTERM, waits (5s grace), then SIGKILL
+        // Advance fake timers to skip the 5s grace period immediately
+        const killPromise = controller.killAllWorkers();
+        await jest.advanceTimersByTimeAsync(6000);
+        await killPromise;
 
         expect(controller.getActivePids().size).toBe(0);
         expect(controller.getActiveWorker(1)).toBeUndefined();
         expect(controller.getActiveWorker(2)).toBeUndefined();
-    }, 15000); // Extended timeout for the 5s grace period
+    });
 
     it('should dispose and be idempotent', async () => {
-        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 'CTX', 10000);
+        await controller.spawnWorker({ ...testPhase, id: asPhaseId(1) }, 10000);
         expect(controller.getActivePids().size).toBe(1);
 
-        await controller.dispose();
+        const disposePromise = controller.dispose();
+        await jest.advanceTimersByTimeAsync(6000);
+        await disposePromise;
+
         expect(controller.getActivePids().size).toBe(0);
 
         // Second dispose should be a no-op (idempotent)
         await controller.dispose();
-    }, 15000);
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  B-1: Pull-Model Prompt Builder Tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('B-1: prompt lists MCP tool directives when phase.context_files is non-empty', async () => {
+        // Capture the initialPrompt that the adapter receives
+        let capturedPrompt = '';
+        jest.spyOn(adapter, 'createSession').mockImplementationOnce(async (options) => {
+            capturedPrompt = options.initialPrompt;
+            return {
+                sessionId: 'mock-b1',
+                pid: 99001,
+                onOutput: () => { },
+                onExit: () => { },
+            };
+        });
+
+        const phaseWithFiles = {
+            ...testPhase,
+            context_files: ['src/foo.ts', 'src/bar.ts'],
+        };
+
+        await controller.spawnWorker(phaseWithFiles, 5000);
+
+        // Should contain MCP tool directives
+        expect(capturedPrompt).toContain('get_modified_file_content');
+        expect(capturedPrompt).toContain('src/foo.ts');
+        expect(capturedPrompt).toContain('src/bar.ts');
+    });
+
+    it('B-1: prompt emits no context section when phase.context_files is empty', async () => {
+        let capturedPrompt = '';
+        jest.spyOn(adapter, 'createSession').mockImplementationOnce(async (options) => {
+            capturedPrompt = options.initialPrompt;
+            return {
+                sessionId: 'mock-b1-empty',
+                pid: 99002,
+                onOutput: () => { },
+                onExit: () => { },
+            };
+        });
+
+        // testPhase has context_files: [] — should emit NO context section
+        await controller.spawnWorker(testPhase, 5000);
+
+        // No tool directive, no raw bytes
+        expect(capturedPrompt).not.toContain('get_modified_file_content');
+        expect(capturedPrompt).not.toContain('## Context Files');
+        // Should still have the task prompt
+        expect(capturedPrompt).toContain('Mock phase');
+    });
 });

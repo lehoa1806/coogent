@@ -104,6 +104,38 @@ export function parseResourceURI(uri: string): ParsedResourceURI | null {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  Private Utilities
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * R-2: Truncate a string to at most `limit` UTF-16 code units while avoiding
+ * splitting a surrogate pair.
+ *
+ * JavaScript string indexing is code-unit based (UTF-16). Characters outside
+ * the Basic Multilingual Plane (e.g. emoji, supplementary CJK) are encoded as
+ * two code units called a surrogate pair. A raw `slice(0, limit)` can cut
+ * between the leading surrogate (0xD800–0xDBFF) and its trailing partner
+ * (0xDC00–0xDFFF), yielding a lone surrogate. Lone surrogates are ill-formed
+ * in UTF-8 / JSON and some runtimes serialize them as U+FFFD replacement chars
+ * or throw a serialization error.
+ *
+ * This function backs up by one code unit when the cut point lands on a leading
+ * surrogate to keep surrogate pairs intact.
+ *
+ * @param s     The source string.
+ * @param limit Maximum number of UTF-16 code units to keep.
+ * @returns     The safely truncated string (≤ limit code units).
+ */
+export function safeTruncate(s: string, limit: number): string {
+    if (s.length <= limit) return s;
+    // If the character at position (limit - 1) is a leading surrogate, back up
+    // by one to avoid splitting the pair.
+    const c = s.charCodeAt(limit - 1);
+    const cutAt = (c >= 0xD800 && c <= 0xDBFF) ? limit - 1 : limit;
+    return s.slice(0, cutAt);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  CoogentMCPServer
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -294,12 +326,20 @@ export class CoogentMCPServer {
 
                 switch (parsed.resource) {
                     case 'implementation_plan':
-                        content = phase.implementationPlan ?? '';
+                        if (!phase.implementationPlan) {
+                            throw new Error(
+                                `Resource not yet available: implementation plan has not been submitted for phase ${parsed.phaseId} of task ${parsed.masterTaskId}.`
+                            );
+                        }
+                        content = phase.implementationPlan;
                         break;
                     case 'handoff':
-                        content = phase.handoff
-                            ? JSON.stringify(phase.handoff, null, 2)
-                            : '';
+                        if (!phase.handoff) {
+                            throw new Error(
+                                `Resource not yet available: handoff has not been submitted for phase ${parsed.phaseId} of task ${parsed.masterTaskId}.`
+                            );
+                        }
+                        content = JSON.stringify(phase.handoff, null, 2);
                         break;
                     default:
                         throw new Error(`Unknown phase resource: ${parsed.resource}`);
@@ -308,13 +348,28 @@ export class CoogentMCPServer {
                 // Task-level resource
                 switch (parsed.resource) {
                     case 'summary':
-                        content = task.summary ?? '';
+                        if (!task.summary) {
+                            throw new Error(
+                                `Resource not yet available: summary has not been set for task ${parsed.masterTaskId}.`
+                            );
+                        }
+                        content = task.summary;
                         break;
                     case 'implementation_plan':
-                        content = task.implementationPlan ?? '';
+                        if (!task.implementationPlan) {
+                            throw new Error(
+                                `Resource not yet available: implementation plan has not been submitted for task ${parsed.masterTaskId}.`
+                            );
+                        }
+                        content = task.implementationPlan;
                         break;
                     case 'consolidation_report':
-                        content = task.consolidationReport ?? '';
+                        if (!task.consolidationReport) {
+                            throw new Error(
+                                `Resource not yet available: consolidation report has not been submitted for task ${parsed.masterTaskId}.`
+                            );
+                        }
+                        content = task.consolidationReport;
                         break;
                     default:
                         throw new Error(`Unknown task resource: ${parsed.resource}`);
@@ -400,20 +455,30 @@ export class CoogentMCPServer {
                                         'Phase ID in phase-<index>-<uuid> format.',
                                     pattern: PHASE_ID_PATTERN.source,
                                 },
+                                // D-1: maxLength + maxItems guard on free-text string arrays
                                 decisions: {
                                     type: 'array',
-                                    items: { type: 'string' },
+                                    items: { type: 'string', maxLength: 500 },
+                                    maxItems: 50,
                                     description: 'Key decisions made during this phase.',
                                 },
+                                // D-2: path pattern enforces that items are relative file paths
                                 modified_files: {
                                     type: 'array',
-                                    items: { type: 'string' },
+                                    items: {
+                                        type: 'string',
+                                        pattern: '^[\\w\\-./]+$',
+                                        maxLength: 260,
+                                    },
+                                    maxItems: 200,
                                     description:
                                         'Relative paths to files created or modified.',
                                 },
+                                // D-1: maxLength + maxItems guard on free-text string arrays
                                 blockers: {
                                     type: 'array',
-                                    items: { type: 'string' },
+                                    items: { type: 'string', maxLength: 500 },
+                                    maxItems: 20,
                                     description:
                                         'Unresolved issues or blockers encountered.',
                                 },
@@ -539,9 +604,21 @@ export class CoogentMCPServer {
     ): { content: Array<{ type: 'text'; text: string }> } {
         const masterTaskId = this.validateMasterTaskId(args['masterTaskId']);
         const phaseId = this.validatePhaseId(args['phaseId']);
-        const decisions = this.validateStringArray(args['decisions'], 'decisions');
-        const modifiedFiles = this.validateStringArray(args['modified_files'], 'modified_files');
-        const blockers = this.validateStringArray(args['blockers'], 'blockers');
+        // D-3: Pass enforcement opts so the runtime gate matches the schema declaration.
+        // The MCP SDK does NOT auto-validate arguments against JSON Schema — this is the
+        // only enforcement that actually runs.
+        const decisions = this.validateStringArray(
+            args['decisions'], 'decisions',
+            { maxItemLength: 500, maxItems: 50 }
+        );
+        const modifiedFiles = this.validateStringArray(
+            args['modified_files'], 'modified_files',
+            { maxItemLength: 260, maxItems: 200, pathLike: true }
+        );
+        const blockers = this.validateStringArray(
+            args['blockers'], 'blockers',
+            { maxItemLength: 500, maxItems: 20 }
+        );
 
         const handoff: PhaseHandoff = {
             phaseId,
@@ -603,6 +680,28 @@ export class CoogentMCPServer {
         const phaseId = this.validatePhaseId(args['phaseId']);
         const filePath = this.validateString(args['file_path'], 'file_path');
 
+        /**
+         * @security R-3 Authorization Gate
+         *
+         * Verifies the masterTaskId belongs to an active in-memory session before
+         * performing any file I/O. Prevents IDOR by callers with fabricated but
+         * syntactically valid masterTaskId values.
+         *
+         * **V1 (in-process MCP transport):** Session-scoped Map lookup is sufficient
+         * because the only caller is the co-located ADK worker process.
+         *
+         * **Networked transport hardening (pre-V2 checklist):**
+         *   1. Replace this Map lookup with a bearer-token or mTLS identity check.
+         *   2. Bind tokens to a specific masterTaskId at session creation time.
+         *   3. Add per-IP rate limiting on failed auth attempts.
+         *   4. Audit-log every rejected request with source IP.
+         */
+        const task = this.store.get(masterTaskId);
+        if (!task) {
+            log.warn(`[CoogentMCPServer] R-3: Unauthorized file read attempt for task ${masterTaskId}.`);
+            throw new Error('Unauthorized');
+        }
+
         // B-2: Resolve symlinks before boundary check to prevent symlink-based path traversal
         let resolved: string;
         let realWorkspaceRoot: string;
@@ -610,30 +709,46 @@ export class CoogentMCPServer {
             resolved = await fs.realpath(path.resolve(this.workspaceRoot, filePath));
             realWorkspaceRoot = await fs.realpath(this.workspaceRoot);
         } catch {
-            throw new Error(`Cannot resolve path: "${filePath}"`);
+            log.warn(`[CoogentMCPServer] File not found (realpath): ${filePath}`);
+            throw new Error('File not found');
         }
         if (!resolved.startsWith(realWorkspaceRoot + path.sep) && resolved !== realWorkspaceRoot) {
-            throw new Error(
-                `Path traversal detected: "${filePath}" resolves outside the workspace root.`
-            );
+            log.warn(`[CoogentMCPServer] Path traversal blocked: ${filePath}`);
+            throw new Error('Access denied');
         }
 
         try {
-            const content = await fs.readFile(resolved, 'utf-8');
+            const rawContent = await fs.readFile(resolved, 'utf-8');
+            const MAX_FILE_CHARS = 32_000;
+            const isTruncated = rawContent.length > MAX_FILE_CHARS;
+            let safeContent: string;
+            if (isTruncated) {
+                const lineCount = rawContent.split('\n').length;
+                // R-2: Use surrogate-pair-safe truncation.
+                // rawContent.slice(0, N) is UTF-16 code-unit based. If the Nth code unit
+                // is a leading surrogate (0xD800–0xDBFF), the next unit forms the second
+                // half of the pair; cutting between them produces a lone surrogate which
+                // may be serialized as U+FFFD or cause a JSON encoding error.
+                safeContent = safeTruncate(rawContent, MAX_FILE_CHARS) +
+                    `\n\n[TRUNCATED: ${rawContent.length} chars / ~${lineCount} lines total; showing first ${MAX_FILE_CHARS} chars. Re-invoke with a narrower file_path or specific line range.]`;
+                log.warn('[CoogentMCPServer] File truncated:', filePath, rawContent.length, 'chars');
+            } else {
+                safeContent = rawContent;
+            }
             log.info(
                 `[CoogentMCPServer] File read: ${filePath} (task=${masterTaskId}, phase=${phaseId})`
             );
             return {
-                content: [{ type: 'text', text: content }],
+                content: [{ type: 'text', text: safeContent }],
             };
         } catch (err: unknown) {
             const code = (err as NodeJS.ErrnoException).code;
             if (code === 'ENOENT') {
-                throw new Error(`File not found: ${filePath}`);
+                log.warn(`[CoogentMCPServer] File not found (readFile): ${filePath}`);
+                throw new Error('File not found');
             }
-            throw new Error(
-                `Failed to read file ${filePath}: ${(err as Error).message}`
-            );
+            log.warn(`[CoogentMCPServer] File read error: ${filePath}`, (err as Error).message);
+            throw new Error('Failed to read file');
         }
     }
 
@@ -668,11 +783,47 @@ export class CoogentMCPServer {
         return value;
     }
 
-    private validateStringArray(value: unknown, fieldName: string): string[] {
-        if (!Array.isArray(value) || !value.every((v) => typeof v === 'string')) {
+    /**
+     * D-3: Runtime enforcement for string array fields.
+     * The MCP SDK does NOT validate `arguments` against the declared JSON Schema,
+     * so this is the sole enforcement gate for array constraints.
+     */
+    private validateStringArray(
+        value: unknown,
+        fieldName: string,
+        opts: {
+            maxItemLength?: number;
+            maxItems?: number;
+            /** If true, each item must match the safe relative-path pattern `^[\w\-./]+$` */
+            pathLike?: boolean;
+        } = {}
+    ): string[] {
+        if (!Array.isArray(value)) {
             throw new Error(
-                `Invalid ${fieldName}: expected an array of strings, got ${typeof value}.`
+                `Invalid ${fieldName}: expected an array, got ${typeof value}.`
             );
+        }
+        if (opts.maxItems !== undefined && value.length > opts.maxItems) {
+            throw new Error(
+                `Invalid ${fieldName}: exceeds maxItems (${opts.maxItems}).`
+            );
+        }
+        for (const v of value) {
+            if (typeof v !== 'string') {
+                throw new Error(
+                    `Invalid ${fieldName}: all items must be strings.`
+                );
+            }
+            if (opts.maxItemLength !== undefined && v.length > opts.maxItemLength) {
+                throw new Error(
+                    `Invalid ${fieldName}: item exceeds maxLength (${opts.maxItemLength} chars).`
+                );
+            }
+            if (opts.pathLike && !/^[\w\-./]+$/.test(v)) {
+                throw new Error(
+                    `Invalid ${fieldName}: item "${v.slice(0, 60)}" is not a valid relative path.`
+                );
+            }
         }
         return value as string[];
     }

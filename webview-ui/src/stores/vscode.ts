@@ -33,13 +33,33 @@ const vscodeApi: VsCodeApi = acquireVsCodeApi();
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
+ * Fields that should NOT be restored from persisted state on startup.
+ * These are transient data that should be fetched fresh on demand.
+ */
+const TRANSIENT_FIELDS: ReadonlySet<keyof AppState> = new Set([
+    'consolidationReport',
+    'implementationPlan',
+    'error',
+    'terminalOutput',
+    'phaseOutputs',
+]);
+
+/**
  * Hydrate initial state from VS Code's persisted state (survives panel
  * hide/show cycles) and merge with defaults for any missing fields.
+ *
+ * Transient fields (session history, reports, terminal output) are always
+ * reset to defaults so stale data doesn't flash on startup.
  */
 function hydrateInitialState(): AppState {
     const persisted = vscodeApi.getState();
     if (persisted && typeof persisted === 'object') {
-        return { ...DEFAULT_APP_STATE, ...(persisted as Partial<AppState>) };
+        const restored = { ...DEFAULT_APP_STATE, ...(persisted as Partial<AppState>) };
+        // Reset transient fields to defaults
+        for (const key of TRANSIENT_FIELDS) {
+            (restored as Record<string, unknown>)[key] = DEFAULT_APP_STATE[key];
+        }
+        return restored;
     }
     return { ...DEFAULT_APP_STATE };
 }
@@ -52,9 +72,18 @@ export const appState = writable<AppState>(hydrateInitialState());
 
 // Auto-persist every store update to VS Code's state API.
 // This ensures state survives webview panel visibility toggles.
-appState.subscribe((state) => {
+// QUAL-02: Store the unsubscribe handle so test teardown can call destroyStore()
+// to prevent leaked subscriptions when the module is loaded in a test environment.
+const _unsubscribePersist = appState.subscribe((state) => {
     vscodeApi.setState(state);
 });
+
+/** Cancel the auto-persist subscription. Only needed for test teardown. */
+export function destroyStore(): void {
+    _unsubscribePersist();
+}
+
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Helpers

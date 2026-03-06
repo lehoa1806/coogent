@@ -54,8 +54,8 @@ export interface ADKSessionOptions {
     mcpResourceUris?: {
         /** URI to the master-level implementation plan. e.g. coogent://tasks/{id}/implementation_plan */
         implementationPlan?: string;
-        /** URI to the parent phase's handoff artifact. e.g. coogent://tasks/{id}/phases/{parentPhaseId}/handoff */
-        parentHandoff?: string;
+        /** URIs to parent phase handoff artifacts — one per depends_on entry. e.g. coogent://tasks/{id}/phases/{parentPhaseId}/handoff */
+        parentHandoffs?: string[];  // PLURAL — supports all parent dependencies in multi-phase DAGs
     };
 }
 
@@ -167,14 +167,21 @@ export class ADKController extends EventEmitter {
      */
     async spawnWorker(
         phase: Phase,
-        contextPayload: string,
         timeoutMs = 900_000,
         masterTaskId?: string,
         mcpResourceUris?: {
             implementationPlan?: string;
-            parentHandoff?: string;
+            parentHandoffs?: string[];  // PLURAL — supports multi-dependency DAG phases
         }
     ): Promise<WorkerHandle | null> {
+        // B-3: Warn when mcpResourceUris is absent for phases that have parent dependencies.
+        // This surfaces silent Pull→Push degradation that would otherwise be invisible.
+        if (!mcpResourceUris && phase.depends_on && (phase.depends_on as unknown[]).length > 0) {
+            log.warn(
+                `[ADKController] spawnWorker: mcpResourceUris not provided for phase ${phase.id} ` +
+                `which has parent dependencies. Warm-start context will be missing.`
+            );
+        }
         // Limit check
         if (this.activeWorkers.size >= 4) {
             log.warn(`[ADKController] Max concurrent workers reached (4). Skipping phase ${phase.id}`);
@@ -186,17 +193,23 @@ export class ADKController extends EventEmitter {
             await this.terminateWorker(phase.id, 'ORPHAN_PREVENTION');
         }
 
-        const prompt = this.buildInjectionPrompt(phase, contextPayload, mcpResourceUris);
+        const prompt = this.buildInjectionPrompt(phase, mcpResourceUris);
 
-        // Determine if a new conversation should be started based on mode
-        // W-9 fix: Use typed optional interface method instead of `as any` cast
-        let newConversation = false;
-        if (typeof this.adapter.shouldStartNewConversation === 'function') {
+        // Determine if a new conversation should be started based on mode.
+        // Isolated mode: ALWAYS start a new conversation — guaranteed regardless
+        // of whether the adapter implements the optional helper. This ensures
+        // every subtask runs with zero prior context as the mode promises.
+        let newConversation: boolean;
+        if (this._conversationSettings.mode === 'isolated') {
+            newConversation = true;
+        } else if (typeof this.adapter.shouldStartNewConversation === 'function') {
             newConversation = this.adapter.shouldStartNewConversation(
                 this._conversationSettings.mode,
                 prompt.length,
                 this._conversationSettings.smartSwitchTokenThreshold
             );
+        } else {
+            newConversation = false;
         }
 
         let handle;
@@ -523,21 +536,30 @@ export class ADKController extends EventEmitter {
 
     private buildInjectionPrompt(
         phase: Phase,
-        contextPayload: string,
         mcpResourceUris?: {
             implementationPlan?: string;
-            parentHandoff?: string;
+            parentHandoffs?: string[];  // PLURAL — one URI per depends_on parent
         }
     ): string {
         const sections: string[] = [
             `## Task`,
             phase.prompt,
-            ``,
-            `## Context Files`,
-            `The following files are provided for reference. Work ONLY with these files.`,
-            ``,
-            contextPayload,
         ];
+
+        // B-1: enforce the Pull Model / Pointer Method.
+        // When the phase declares context_files, emit MCP tool-call directives
+        // so the worker fetches content on demand — never inject raw file bytes.
+        if (phase.context_files && phase.context_files.length > 0) {
+            const fileUris = phase.context_files.map(
+                (f) => `- \`get_modified_file_content\` → \`${f}\``
+            );
+            sections.push(
+                ``,
+                `## Context Files`,
+                `Fetch the following files via the MCP tool \`get_modified_file_content\`. Do NOT guess their content.`,
+                ...fileUris
+            );
+        }
 
         // Append MCP context resources when available (warm-start injection)
         if (mcpResourceUris) {
@@ -546,8 +568,11 @@ export class ADKController extends EventEmitter {
             if (mcpResourceUris.implementationPlan) {
                 uriLines.push(`- Implementation Plan: ${mcpResourceUris.implementationPlan}`);
             }
-            if (mcpResourceUris.parentHandoff) {
-                uriLines.push(`- Parent Phase Handoff: ${mcpResourceUris.parentHandoff}`);
+            // Iterate all parent handoff URIs — supports multi-dependency DAG phases
+            if (mcpResourceUris.parentHandoffs && mcpResourceUris.parentHandoffs.length > 0) {
+                mcpResourceUris.parentHandoffs.forEach((uri, idx) => {
+                    uriLines.push(`- Parent Phase Handoff [${idx + 1}]: ${uri}`);
+                });
             }
 
             if (uriLines.length > 0) {

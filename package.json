@@ -21,7 +21,14 @@
       {
         "command": "coogent.openMissionControl",
         "title": "Coogent: Open Mission Control",
-        "category": "Coogent"
+        "category": "Coogent",
+        "icon": "$(rocket)"
+      },
+      {
+        "command": "coogent.newSession",
+        "title": "Coogent: New Orchestration Session",
+        "category": "Coogent",
+        "icon": "$(add)"
       },
       {
         "command": "coogent.loadRunbook",
@@ -57,8 +64,62 @@
         "command": "coogent.openDiffReview",
         "title": "Coogent: Open Diff Review",
         "category": "Coogent"
+      },
+      {
+        "command": "coogent.loadSession",
+        "title": "Coogent: Load Session",
+        "category": "Coogent"
+      },
+      {
+        "command": "coogent.deleteSession",
+        "title": "Delete Session",
+        "category": "Coogent",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "coogent.searchHistory",
+        "title": "Search Sessions",
+        "category": "Coogent",
+        "icon": "$(search)"
+      },
+      {
+        "command": "coogent.refreshHistory",
+        "title": "Refresh Sessions",
+        "category": "Coogent",
+        "icon": "$(refresh)"
       }
     ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "coogent.openMissionControl",
+          "when": "view == coogent.sidebarMenu",
+          "group": "navigation"
+        },
+        {
+          "command": "coogent.newSession",
+          "when": "view == coogent.sidebarMenu",
+          "group": "navigation"
+        },
+        {
+          "command": "coogent.searchHistory",
+          "when": "view == coogent.sidebarMenu",
+          "group": "navigation"
+        },
+        {
+          "command": "coogent.refreshHistory",
+          "when": "view == coogent.sidebarMenu",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "coogent.deleteSession",
+          "when": "view == coogent.sidebarMenu && viewItem == session",
+          "group": "inline"
+        }
+      ]
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -71,8 +132,7 @@
     "views": {
       "coogent-sidebar": [
         {
-          "type": "webview",
-          "id": "coogent.missionControlView",
+          "id": "coogent.sidebarMenu",
           "name": "Mission Control"
         }
       ]
@@ -153,7 +213,7 @@
     "pretest": "npm run lint",
     "prepackage": "npm run compile -- --minify && npm run build:webview",
     "package": "npx -y @vscode/vsce package",
-    "test": "jest --runInBand --detectOpenHandles",
+    "test": "jest --runInBand --detectOpenHandles --forceExit",
     "ci": "npm run lint && npm test && npm audit --audit-level=high"
   },
   "devDependencies": {

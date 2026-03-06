@@ -6,6 +6,10 @@ import { StateManager } from '../../state/StateManager.js';
 import type { Runbook } from '../../types/index.js';
 import { asPhaseId } from '../../types/index.js';
 
+// Mock saveRunbook to be a no-op — Engine tests are about FSM state transitions,
+// not disk persistence. This eliminates all WAL I/O and ENOTEMPTY issues.
+jest.spyOn(StateManager.prototype, 'saveRunbook').mockResolvedValue();
+
 describe('Engine', () => {
     let tmpDir: string;
     let runbookPath: string;
@@ -49,9 +53,8 @@ describe('Engine', () => {
     });
 
     afterEach(async () => {
-        // give any pending async writes a chance to settle
-        await new Promise(res => setTimeout(res, 50));
-        await fs.rm(tmpDir, { recursive: true, force: true });
+        // saveRunbook is mocked — no WAL files to wait for
+        await fs.rm(path.resolve(tmpDir, '../../..'), { recursive: true, force: true });
     });
 
     it('should start in IDLE state', () => {
@@ -575,6 +578,102 @@ describe('Engine', () => {
         // It should dispatch phase 1 (pending, no deps since sequential mode)
         expect(executeSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
 
+
         jest.useRealTimers();
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  DAG-4: restartPhase() uses dispatchReadyPhases, not stale current_phase
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('DAG-4: restartPhase uses dispatchReadyPhases so the DAG Scheduler finds the correct frontier', async () => {
+        // Linear DAG: Root (id:0) → Dependent (id:1 depends on 0).
+        // Scenario: Root fails → ERROR_PAUSED. Advance current_phase to 1 to simulate
+        // a stale pointer (what the old dispatchCurrentPhase would have used).
+        // After restartPhase(0), dispatchReadyPhases should dispatch phase 0 again
+        // (the only ready phase), NOT phase 1 (still blocked on 0).
+        const linearDag: Runbook = {
+            project_id: 'dag4-test',
+            status: 'idle',
+            current_phase: 0,
+            phases: [
+                {
+                    id: asPhaseId(0),
+                    status: 'pending',
+                    prompt: 'Root',
+                    context_files: [],
+                    success_criteria: 'exit_code:0',
+                    depends_on: [],
+                    max_retries: 0,
+                },
+                {
+                    id: asPhaseId(1),
+                    status: 'pending',
+                    prompt: 'Dependent (blocked on Root)',
+                    context_files: [],
+                    success_criteria: 'exit_code:0',
+                    depends_on: [asPhaseId(0)],
+                    max_retries: 0,
+                },
+            ],
+        };
+        await fs.writeFile(runbookPath, JSON.stringify(linearDag));
+        stateManager = new StateManager(tmpDir);
+        engine = new Engine(stateManager);
+
+        const executeSpy = jest.fn();
+        engine.on('phase:execute', executeSpy);
+
+        await engine.loadRunbook();
+        await engine.start();
+
+        // Only Root dispatched (Dependent is blocked)
+        expect(executeSpy).toHaveBeenCalledTimes(1);
+        expect(executeSpy).toHaveBeenCalledWith(expect.objectContaining({ id: 0 }));
+        executeSpy.mockClear();
+
+        // Root fails → ERROR_PAUSED
+        await engine.onWorkerExited(0, 1);
+        expect(engine.getState()).toBe('ERROR_PAUSED');
+        expect(engine.getRunbook()!.phases[0].status).toBe('failed');
+
+        // Advance current_phase pointer to 1 — simulating what stale logic would use
+        engine.getRunbook()!.current_phase = 1;
+
+        // restartPhase(0) — should call dispatchReadyPhases(), which finds phase 0 is
+        // the only ready phase (phase 1 is still blocked on phase 0)
+        await engine.restartPhase(0);
+
+        // Phase 0 re-dispatched — dispatchReadyPhases selected it correctly
+        expect(executeSpy).toHaveBeenCalledWith(expect.objectContaining({ id: 0 }));
+        // Phase 1 still blocked on phase 0 — must NOT be dispatched
+        expect(executeSpy).not.toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  DAG-2: phase:execute carries Phase object allowing mcpPhaseId assignment
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('DAG-2: phase:execute emits the Phase object so callers can assign mcpPhaseId', async () => {
+        const executeSpy = jest.fn();
+        engine.on('phase:execute', (phase) => {
+            // Simulate the extension.ts P1-1 fix: assign mcpPhaseId in-place on the object
+            if (!phase.mcpPhaseId) {
+                (phase as any).mcpPhaseId = `phase-${String(phase.id).padStart(3, '0')}-test-uuid`;
+            }
+            executeSpy(phase);
+        });
+
+        await engine.loadRunbook();
+        await engine.start();
+
+        // The emitted phase should now have mcpPhaseId set
+        const emittedPhase = executeSpy.mock.calls[0][0];
+        expect(emittedPhase.mcpPhaseId).toBeDefined();
+        expect(emittedPhase.mcpPhaseId).toMatch(/^phase-000-/);
+
+        // The mutation persists on the runbook's phase object (same reference)
+        const rb = engine.getRunbook()!;
+        expect((rb.phases[0] as any).mcpPhaseId).toBe(emittedPhase.mcpPhaseId);
     });
 });

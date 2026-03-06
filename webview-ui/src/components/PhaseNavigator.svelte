@@ -61,7 +61,7 @@
 </script>
 
 <nav class="phase-navigator" aria-label="Phase navigator" role="list">
-    <div class="nav-header panel-header">Phase Navigator</div>
+    <div class="nav-header panel-header">Phases</div>
 
     {#each phasesWithStatus as { phase, index, effectiveStatus, ready } (phase.id)}
         {#if index > 0}
@@ -150,6 +150,7 @@
         flex-direction: column;
         overflow-y: auto;
         flex-shrink: 0;
+        pointer-events: auto;
     }
 
     .nav-header {
@@ -194,6 +195,8 @@
         margin: 2px 4px;
         font-size: 12px;
         color: var(--vscode-foreground);
+        pointer-events: auto;
+        user-select: none;
     }
 
     .phase-item:hover {

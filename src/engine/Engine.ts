@@ -633,7 +633,11 @@ export class Engine extends EventEmitter {
             },
         });
 
-        this.dispatchCurrentPhase();
+        // DAG-4 fix: Use dispatchReadyPhases() so the DAG Scheduler computes
+        // the correct frontier instead of relying on the stale current_phase
+        // pointer used by dispatchCurrentPhase(). This also ensures sibling phases
+        // that became unblocked while this phase was paused are dispatched correctly.
+        this.dispatchReadyPhases();
     }
 
     /**
@@ -1108,37 +1112,6 @@ export class Engine extends EventEmitter {
     // ═══════════════════════════════════════════════════════════════════════════
     //  Private Helpers
     // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Dispatch the current phase for execution (V1 sequential fallback).
-     * Emits 'phase:execute' which the ADKController listens to.
-     */
-    private dispatchCurrentPhase(): void {
-        if (!this.runbook) return;
-
-        const phase = this.runbook.phases.find(
-            p => p.id === this.runbook!.current_phase
-        );
-
-        if (!phase) {
-            log.warn(`[Engine] Phase ${this.runbook.current_phase} not found.`);
-            return;
-        }
-
-        // Mark as running and track
-        phase.status = 'running';
-        this.activeWorkerCount++;
-        this.emitUIMessage({
-            type: 'PHASE_STATUS',
-            payload: { phaseId: phase.id, status: 'running' },
-        });
-
-        // Persist the running status so crash recovery knows the phase was in-flight
-        this.persist().catch(log.onError);
-
-        // Delegate execution to ADKController
-        this.emit('phase:execute', phase);
-    }
 
     /**
  * Dispatch all ready phases (DAG-aware).

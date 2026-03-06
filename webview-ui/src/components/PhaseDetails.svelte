@@ -11,12 +11,19 @@
     } from "../stores/mcpStore.js";
     import type { Phase } from "../types.js";
     import MarkdownRenderer from "./MarkdownRenderer.svelte";
+    import ViewModeTabs from "./ViewModeTabs.svelte";
+
+    /** Toggle state for prompt view */
+    let promptMode: "preview" | "raw" = $state("preview");
 
     /** Toggle state for worker output view */
     let outputMode: "preview" | "raw" = $state("raw");
 
     /** Toggle state for MCP artifacts section */
     let showMCPArtifacts = $state(false);
+
+    /** Original prompt the user submitted */
+    let lastPrompt = $derived($appState.lastPrompt ?? "");
 
     let selectedPhase = $derived(
         $appState.phases.find((p) => p.id === $appState.selectedPhaseId) as
@@ -49,6 +56,65 @@
         tokenPct > 90 ? "over" : tokenPct > 70 ? "warn" : "",
     );
 
+    // ── Per-phase elapsed time ───────────────────────────────────────────────────
+    let _phaseTimerInterval: ReturnType<typeof setInterval> | null = null;
+    let liveElapsedMs = $state(0);
+
+    $effect(() => {
+        const phase = selectedPhase;
+        if (!phase) {
+            if (_phaseTimerInterval) {
+                clearInterval(_phaseTimerInterval);
+                _phaseTimerInterval = null;
+            }
+            liveElapsedMs = 0;
+            return;
+        }
+
+        const frozen = $appState.phaseElapsedMs[phase.id];
+        if (frozen != null && frozen > 0) {
+            // Phase completed/failed: show frozen time
+            if (_phaseTimerInterval) {
+                clearInterval(_phaseTimerInterval);
+                _phaseTimerInterval = null;
+            }
+            liveElapsedMs = frozen;
+            return;
+        }
+
+        const startMs = $appState.phaseStartTimes[phase.id];
+        if (startMs && phase.status === "running") {
+            // Phase is running: tick live
+            liveElapsedMs = Date.now() - startMs;
+            if (!_phaseTimerInterval) {
+                _phaseTimerInterval = setInterval(() => {
+                    liveElapsedMs = Date.now() - startMs;
+                }, 500);
+            }
+        } else {
+            if (_phaseTimerInterval) {
+                clearInterval(_phaseTimerInterval);
+                _phaseTimerInterval = null;
+            }
+            liveElapsedMs = 0;
+        }
+
+        return () => {
+            if (_phaseTimerInterval) {
+                clearInterval(_phaseTimerInterval);
+                _phaseTimerInterval = null;
+            }
+        };
+    });
+
+    function formatPhaseElapsed(ms: number): string {
+        if (ms <= 0) return "";
+        const totalSec = Math.floor(ms / 1000);
+        const m = Math.floor(totalSec / 60);
+        const s = totalSec % 60;
+        return m > 0 ? `${m}m ${s}s` : `${s}s`;
+    }
+
     /** Find phases that depend on this phase (reverse lookup). */
     let dependents = $derived(
         selectedPhase
@@ -63,6 +129,10 @@
     let handoffStore: MCPResourceStore<object> | null = $state(null);
     let phasePlanStore: MCPResourceStore<string> | null = $state(null);
 
+    // Parent handoff stores (Fix 6)
+    let _parentHandoffStores: MCPResourceStore<object>[] = [];
+    let parentHandoffs: Record<number, MCPResourceState<object>> = $state({});
+
     // Derived state piped from store subscriptions (avoids $-subscribing to null)
     let handoffData: MCPResourceState<object> = $state({
         loading: false,
@@ -76,10 +146,57 @@
     });
 
     /**
+     * Semantic-equality guard variables for the MCP resource $effect below.
+     * Persist across effect re-runs so we can skip store teardown/recreation
+     * when appState object-reference churn gives selectedPhase a new reference
+     * with identical meaningful fields (id, status, mcpPhaseId, masterTaskId).
+     */
+    let _mcpLastPhaseId: number | undefined;
+    let _mcpLastStatus: string | undefined;
+    let _mcpLastMcpPhaseId: string | undefined;
+    let _mcpLastMasterTaskId: string | undefined;
+
+    /**
+     * Regex matching the strict MCP masterTaskId format: YYYYMMDD-HHMMSS-<uuid>.
+     * Human-readable project_id slugs (e.g. "coogent-context-management-audit")
+     * must NOT be used to build coogent:// URIs — they fail parseResourceURI and
+     * produce "Unknown or malformed resource URI" errors in Mission Control.
+     */
+    const MCP_MASTER_TASK_ID_RE =
+        /^\d{8}-\d{6}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+    /**
      * Reactively create MCP resource stores when a completed phase is selected
      * and a valid projectId (masterTaskId) is available.
+     *
+     * Guard: skip teardown + recreation when only the phase object _reference_
+     * changed (due to spread in messageHandler.ts) but the meaningful fields
+     * (id, status, mcpPhaseId, masterTaskId) are identical. Without this guard
+     * every PHASE_OUTPUT / TOKEN_BUDGET / LOG_ENTRY message would restart the
+     * stores and fire a burst of duplicate MCP_FETCH_RESOURCE IPC calls.
      */
     $effect(() => {
+        const masterTaskId = $appState.masterTaskId;
+        const newPhaseId = selectedPhase?.id;
+        const newStatus = selectedPhase?.status;
+        const newMcpPhaseId = selectedPhase?.mcpPhaseId;
+
+        // Bail out early — nothing semantically changed, keep existing stores.
+        if (
+            newPhaseId === _mcpLastPhaseId &&
+            newStatus === _mcpLastStatus &&
+            newMcpPhaseId === _mcpLastMcpPhaseId &&
+            masterTaskId === _mcpLastMasterTaskId
+        ) {
+            return;
+        }
+
+        // Record the new key values before any async work.
+        _mcpLastPhaseId = newPhaseId;
+        _mcpLastStatus = newStatus;
+        _mcpLastMcpPhaseId = newMcpPhaseId;
+        _mcpLastMasterTaskId = masterTaskId;
+
         // Clean up previous stores
         handoffStore?.destroy();
         phasePlanStore?.destroy();
@@ -88,10 +205,10 @@
         handoffData = { loading: false, data: null, error: null };
         planData = { loading: false, data: null, error: null };
 
-        const masterTaskId = $appState.masterTaskId;
         if (
             selectedPhase &&
             masterTaskId &&
+            MCP_MASTER_TASK_ID_RE.test(masterTaskId) && // guard: reject slugs like "coogent-context-management-audit"
             selectedPhase.status === "completed" &&
             selectedPhase.mcpPhaseId
         ) {
@@ -112,9 +229,42 @@
             });
         }
 
+        // -- Parent handoff stores (Fix 6) --
+        _parentHandoffStores.forEach((s) => s.destroy());
+        _parentHandoffStores = [];
+        parentHandoffs = {};
+
+        if (
+            selectedPhase &&
+            masterTaskId &&
+            MCP_MASTER_TASK_ID_RE.test(masterTaskId) &&
+            selectedPhase.depends_on &&
+            selectedPhase.depends_on.length > 0
+        ) {
+            for (const depId of selectedPhase.depends_on) {
+                const parentPhase = $appState.phases.find(
+                    (p) => p.id === depId,
+                );
+                if (
+                    parentPhase &&
+                    parentPhase.status === "completed" &&
+                    parentPhase.mcpPhaseId
+                ) {
+                    const store = createMCPResource<object>(
+                        `coogent://tasks/${masterTaskId}/phases/${parentPhase.mcpPhaseId}/handoff`,
+                    );
+                    _parentHandoffStores.push(store);
+                    store.subscribe((v) => {
+                        parentHandoffs = { ...parentHandoffs, [depId]: v };
+                    });
+                }
+            }
+        }
+
         return () => {
             handoffStore?.destroy();
             phasePlanStore?.destroy();
+            _parentHandoffStores.forEach((s) => s.destroy());
         };
     });
 
@@ -150,12 +300,48 @@
 
 <div class="phase-details">
     {#if selectedPhase}
-        <h3>Phase {phaseNumber}: {truncatePrompt(selectedPhase.prompt)}</h3>
+        <!-- Persistent original prompt (collapsible) -->
+        {#if lastPrompt}
+            <details class="original-prompt-details">
+                <summary class="original-prompt-summary">
+                    <span class="summary-icon">💬</span>
+                    Your original prompt
+                </summary>
+                <div class="original-prompt-body">
+                    <p>{lastPrompt}</p>
+                </div>
+            </details>
+        {/if}
+
+        <div class="phase-title-row">
+            <h3>Phase {phaseNumber}: {truncatePrompt(selectedPhase.prompt)}</h3>
+            {#if liveElapsedMs > 0}
+                <span
+                    class="phase-elapsed-badge"
+                    class:running={selectedPhase.status === "running"}
+                >
+                    ⏱ {formatPhaseElapsed(liveElapsedMs)}
+                </span>
+            {/if}
+        </div>
 
         <!-- Prompt -->
         <div class="phase-detail-section">
-            <h4>Prompt</h4>
-            <pre class="phase-prompt-full">{selectedPhase.prompt || ""}</pre>
+            <div class="section-header-row">
+                <h4>Prompt</h4>
+                <ViewModeTabs
+                    value={promptMode}
+                    onchange={(m) => (promptMode = m)}
+                />
+            </div>
+            {#if promptMode === "raw"}
+                <pre class="phase-prompt-full">{selectedPhase.prompt ||
+                        ""}</pre>
+            {:else}
+                <div class="phase-prompt-rendered">
+                    <MarkdownRenderer content={selectedPhase.prompt || ""} />
+                </div>
+            {/if}
         </div>
 
         <!-- Context Files -->
@@ -203,14 +389,6 @@
                 </div>
             </div>
         {/if}
-
-        <!-- Success Criteria -->
-        <div class="phase-detail-section">
-            <h4>Success Criteria</h4>
-            <div class="phase-success-criteria">
-                {selectedPhase.success_criteria || "exit_code:0"}
-            </div>
-        </div>
 
         <!-- Action Buttons -->
         {#if selectedPhase.status === "failed"}
@@ -363,25 +541,87 @@
             </div>
         {/if}
 
+        <!-- Parent Handoff Context (from completed dependencies) -->
+        {#if selectedPhase.depends_on && selectedPhase.depends_on.length > 0}
+            {@const completedParents = selectedPhase.depends_on.filter(
+                (depId) => parentHandoffs[depId],
+            )}
+            {#if completedParents.length > 0}
+                <div class="phase-detail-section parent-handoff-section">
+                    <h4>Parent Handoff Context</h4>
+                    {#each completedParents as depId}
+                        {@const pd = parentHandoffs[depId]}
+                        <div class="parent-handoff-block">
+                            <span class="parent-handoff-label"
+                                >Phase #{getDepLabel(depId)}</span
+                            >
+                            {#if pd.loading}
+                                <div class="mcp-loading">Loading…</div>
+                            {:else if pd.error}
+                                <div class="mcp-error">{pd.error}</div>
+                            {:else if pd.data}
+                                {@const rawH = pd.data}
+                                {@const h = (
+                                    typeof rawH === "string"
+                                        ? JSON.parse(rawH)
+                                        : rawH
+                                ) as Record<string, unknown>}
+                                {#if Array.isArray(h.decisions) && h.decisions.length > 0}
+                                    <div class="handoff-group">
+                                        <span class="handoff-label"
+                                            >Decisions</span
+                                        >
+                                        <ul class="handoff-list">
+                                            {#each h.decisions as decision}
+                                                <li>{decision}</li>
+                                            {/each}
+                                        </ul>
+                                    </div>
+                                {/if}
+                                {#if Array.isArray(h.modifiedFiles) && h.modifiedFiles.length > 0}
+                                    <div class="handoff-group">
+                                        <span class="handoff-label"
+                                            >Modified Files</span
+                                        >
+                                        <div class="handoff-files">
+                                            {#each h.modifiedFiles as file}
+                                                <span class="file-chip"
+                                                    >{file}</span
+                                                >
+                                            {/each}
+                                        </div>
+                                    </div>
+                                {/if}
+                                {#if Array.isArray(h.blockers) && h.blockers.length > 0}
+                                    <div class="handoff-group">
+                                        <span class="handoff-label blockers"
+                                            >Blockers</span
+                                        >
+                                        <ul class="handoff-list blockers">
+                                            {#each h.blockers as blocker}
+                                                <li>{blocker}</li>
+                                            {/each}
+                                        </ul>
+                                    </div>
+                                {/if}
+                            {:else}
+                                <div class="mcp-empty">No handoff data.</div>
+                            {/if}
+                        </div>
+                    {/each}
+                </div>
+            {/if}
+        {/if}
+
         <!-- Worker Output -->
         <div class="phase-detail-section">
             <h4>Worker Output</h4>
             {#if phaseOutput}
-                <div class="output-toggle-bar">
-                    <button
-                        class="output-toggle-btn"
-                        class:active={outputMode === "raw"}
-                        onclick={() => (outputMode = "raw")}
-                    >
-                        {"{ }"} Raw
-                    </button>
-                    <button
-                        class="output-toggle-btn"
-                        class:active={outputMode === "preview"}
-                        onclick={() => (outputMode = "preview")}
-                    >
-                        👁 Preview
-                    </button>
+                <div class="output-mode-row">
+                    <ViewModeTabs
+                        value={outputMode}
+                        onchange={(m) => (outputMode = m)}
+                    />
                 </div>
                 {#if outputMode === "raw"}
                     <pre class="phase-output-section">{phaseOutput}</pre>
@@ -460,6 +700,8 @@
         border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
         font-family: var(--vscode-font-family);
         margin: 0;
+        max-height: min(420px, 50vh);
+        overflow-y: auto;
     }
 
     .phase-context-files {
@@ -522,18 +764,97 @@
         white-space: pre-wrap;
     }
 
-    .phase-success-criteria {
-        font-family: var(--vscode-editor-font-family, monospace);
+    .section-header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 6px;
+    }
+
+    .section-header-row h4 {
+        margin-bottom: 0;
+    }
+
+    /* ── Original prompt collapsible ────────────────────────────────── */
+
+    .original-prompt-details {
+        margin-bottom: 4px;
+        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+        border-radius: 5px;
+        overflow: hidden;
+        background: var(--vscode-editorWidget-background);
+    }
+
+    .original-prompt-summary {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 12px;
         font-size: 11px;
+        font-weight: 600;
         color: var(--vscode-descriptionForeground);
-        padding: 6px 10px;
-        background: color-mix(
-            in srgb,
-            var(--vscode-charts-green, #3fb950) 10%,
-            transparent
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+    }
+
+    .original-prompt-summary::-webkit-details-marker {
+        display: none;
+    }
+
+    .original-prompt-summary::before {
+        content: "›";
+        font-size: 14px;
+        transition: transform 0.15s ease;
+        color: var(--vscode-descriptionForeground);
+        line-height: 1;
+    }
+
+    details[open] .original-prompt-summary::before {
+        transform: rotate(90deg);
+    }
+
+    .summary-icon {
+        font-size: 12px;
+    }
+
+    .original-prompt-body {
+        padding: 10px 14px;
+        border-top: 1px solid
+            var(--vscode-panel-border, rgba(128, 128, 128, 0.2));
+    }
+
+    .original-prompt-body p {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.6;
+        color: var(--vscode-foreground);
+        white-space: pre-wrap;
+        word-wrap: break-word;
+    }
+
+    /* ── Output mode row ─────────────────────────────────────────────── */
+
+    .output-mode-row {
+        display: flex;
+        justify-content: flex-end;
+        padding: 4px 0;
+    }
+
+    .phase-prompt-rendered {
+        font-size: 13px;
+        line-height: 1.6;
+        color: var(--vscode-editor-foreground);
+        padding: 10px 12px;
+        background: var(
+            --vscode-editorWidget-background,
+            var(--vscode-sideBar-background)
         );
         border-radius: 4px;
-        border-left: 3px solid var(--vscode-charts-green, #3fb950);
+        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+        word-wrap: break-word;
+        max-height: min(420px, 50vh);
+        overflow-y: auto;
     }
 
     .phase-actions-bar {
@@ -615,33 +936,11 @@
         color: var(--vscode-foreground);
     }
 
-    .output-toggle-bar {
-        display: flex;
-        justify-content: flex-end;
-        gap: 2px;
-        padding: 4px 0;
-    }
-
-    .output-toggle-btn {
-        font-family: var(--vscode-font-family);
-        font-size: 10px;
-        padding: 2px 8px;
-        border-radius: 4px;
-        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-        background: var(--vscode-button-secondaryBackground);
-        color: var(--vscode-disabledForeground);
-        cursor: pointer;
-        transition: all 0.15s ease;
-    }
-
-    .output-toggle-btn.active {
-        background: var(--vscode-focusBorder, #007fd4);
-        color: var(--vscode-button-foreground, #fff);
-        border-color: var(--vscode-focusBorder, #007fd4);
-    }
+    /* ── Toggle buttons: now provided by ViewModeTabs.svelte ────────── */
 
     .phase-output-section {
-        max-height: 200px;
+        flex: 1;
+        min-height: 120px;
         overflow-y: auto;
         font-family: var(--vscode-editor-font-family, monospace);
         font-size: var(--vscode-editor-font-size, 13px);
@@ -662,13 +961,60 @@
     }
 
     .phase-output-rendered {
-        max-height: 200px;
+        flex: 1;
+        min-height: 120px;
         overflow-y: auto;
         font-size: 13px;
         line-height: 1.6;
         color: var(--vscode-editor-foreground);
         padding: 8px 12px;
         word-wrap: break-word;
+    }
+
+    /* ── Phase title row with elapsed badge ─────────────────────────── */
+
+    .phase-title-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .phase-elapsed-badge {
+        font-size: 10px;
+        font-family: var(--vscode-editor-font-family, monospace);
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 10px;
+        color: var(--vscode-descriptionForeground);
+        background: var(--vscode-editorWidget-background);
+        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.3));
+        white-space: nowrap;
+    }
+
+    .phase-elapsed-badge.running {
+        color: var(--vscode-focusBorder, #007fd4);
+        background: color-mix(
+            in srgb,
+            var(--vscode-focusBorder, #007fd4) 10%,
+            transparent
+        );
+        border-color: color-mix(
+            in srgb,
+            var(--vscode-focusBorder, #007fd4) 30%,
+            transparent
+        );
+        animation: elapsed-pulse 2s ease-in-out infinite;
+    }
+
+    @keyframes elapsed-pulse {
+        0%,
+        100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.65;
+        }
     }
 
     .output-placeholder {
@@ -793,6 +1139,42 @@
         display: flex;
         flex-wrap: wrap;
         gap: 4px;
+    }
+
+    /* ── Parent Handoff Context ──────────────────────────────────────── */
+
+    .parent-handoff-section {
+        border-left: 3px solid
+            color-mix(
+                in srgb,
+                var(--vscode-editorInfo-foreground, #58a6ff) 40%,
+                transparent
+            );
+        padding-left: 12px;
+    }
+
+    .parent-handoff-block {
+        margin-bottom: 10px;
+        padding: 8px 10px;
+        background: var(
+            --vscode-editorWidget-background,
+            var(--vscode-sideBar-background)
+        );
+        border-radius: 4px;
+        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
+    }
+
+    .parent-handoff-block:last-child {
+        margin-bottom: 0;
+    }
+
+    .parent-handoff-label {
+        font-family: var(--vscode-editor-font-family, monospace);
+        font-size: 10px;
+        font-weight: 700;
+        color: var(--vscode-editorInfo-foreground, #58a6ff);
+        display: block;
+        margin-bottom: 6px;
     }
 
     .phase-details-placeholder {
