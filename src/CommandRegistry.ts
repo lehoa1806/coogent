@@ -59,7 +59,6 @@ function makeOnReset(
         svc.sessionManager?.setCurrentSessionId(
             newDirName.replace(/^\d{8}-\d{6}-/, ''), newDirName
         );
-        svc.sessionManager?.saveCurrentSession().catch(log.onError);
     };
 }
 
@@ -130,7 +129,6 @@ export function registerAllCommands(
                 const newSM = new StateManager(newDir);
                 await svc.engine.reset(newSM);
                 svc.sessionManager = new SessionManager(workspaceRoot, newId, newDirName);
-                svc.sessionManager.saveCurrentSession().catch(log.onError);
                 svc.plannerAgent?.setMasterTaskId(newDirName);
             } else {
                 await svc.engine.reset();
@@ -156,7 +154,6 @@ export function registerAllCommands(
                 svc.currentSessionDir = sessionDir;
                 const masterTaskId = path.basename(sessionDir);
                 svc.sessionManager.setCurrentSessionId(sessionId, masterTaskId);
-                svc.sessionManager.saveCurrentSession().catch(log.onError);
                 svc.plannerAgent?.setMasterTaskId(masterTaskId);
                 showMissionControl(context.extensionUri, svc);
 
@@ -305,7 +302,6 @@ export function registerAllCommands(
                     const newSM = new StateManager(newDir);
                     await svc.engine.reset(newSM);
                     svc.sessionManager = new SessionManager(workspaceRoot, newId, newDirName);
-                    svc.sessionManager.saveCurrentSession().catch(log.onError);
                     svc.plannerAgent?.setMasterTaskId(newDirName);
                 } else {
                     await svc.engine.reset();

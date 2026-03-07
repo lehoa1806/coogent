@@ -814,6 +814,13 @@ export interface FileResolver {
      * V2: Walks the AST to discover transitive imports.
      */
     resolve(phase: Phase, workspaceRoot: string): Promise<string[]>;
+
+    /**
+     * Resolve files across multiple workspace roots.
+     * Optional — when absent, callers should fall back to `resolve()` with `roots[0]`.
+     * Implementations should try each root and handle ambiguous paths gracefully.
+     */
+    resolveMultiRoot?(phase: Phase, workspaceRoots: string[]): Promise<string[]>;
 }
 
 /**

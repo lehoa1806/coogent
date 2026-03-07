@@ -22,7 +22,7 @@ import { parseLogLevel } from './logger/LogStream.js';
 import { GitManager } from './git/GitManager.js';
 import { GitSandboxManager } from './git/GitSandboxManager.js';
 import { PlannerAgent } from './planner/PlannerAgent.js';
-import { SessionManager, formatSessionDirName, stripSessionDirPrefix } from './session/SessionManager.js';
+import { SessionManager, formatSessionDirName } from './session/SessionManager.js';
 import { HandoffExtractor } from './context/HandoffExtractor.js';
 import { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 import { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
@@ -35,6 +35,7 @@ import { ServiceContainer } from './ServiceContainer.js';
 import { registerAllCommands, preFlightGitCheck } from './CommandRegistry.js';
 import { wireEngine } from './EngineWiring.js';
 import { wirePlanner } from './PlannerWiring.js';
+import { getStorageBasePath, getWorkspaceRoots, getPrimaryRoot } from './utils/WorkspaceHelper.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Shared Services
@@ -51,7 +52,7 @@ export { preFlightGitCheck };
 
 export function activate(context: vscode.ExtensionContext): void {
   // Start log stream FIRST — captures everything from this point on
-  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const wsRoot = getPrimaryRoot();
   if (wsRoot) {
     const logConfig = vscode.workspace.getConfiguration('coogent');
     const logLevel = parseLogLevel(logConfig.get<string>('logLevel', 'info'));
@@ -70,12 +71,24 @@ export function activate(context: vscode.ExtensionContext): void {
   registerAllCommands(context, svc);
 
   try {
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspaceRoot) {
+    const workspaceRoots = getWorkspaceRoots();
+    const primaryRoot = getPrimaryRoot();
+    if (!primaryRoot) {
       log.warn('[Coogent] No workspace folder open — engine not initialized.');
       return;
     }
-    log.info('[Coogent] Workspace root:', workspaceRoot);
+    log.info('[Coogent] Workspace root:', primaryRoot);
+
+    // Ensure extension-managed storage directory exists (sync — activate() is not async)
+    const storageUri = context.storageUri ?? context.globalStorageUri;
+    const fsSync = require('node:fs') as typeof import('node:fs');
+    fsSync.mkdirSync(storageUri.fsPath, { recursive: true });
+    const storageBase = getStorageBasePath(context);
+    log.info('[Coogent] Storage base:', storageBase);
+
+    // Store workspace roots and storage base on the container for multi-root support
+    svc.workspaceRoots = workspaceRoots;
+    svc.storageBase = storageBase;
 
     // Read extension configuration
     const config = vscode.workspace.getConfiguration('coogent');
@@ -83,19 +96,10 @@ export function activate(context: vscode.ExtensionContext): void {
     const workerTimeoutMs = config.get<number>('workerTimeoutMs', 900_000);
 
     // ── Resolve session ────────────────────────────────────────────────
-    let sessionDirName: string;
-    let sessionId: string;
-    const lastSessionDirName = SessionManager.loadLastSessionSync(workspaceRoot);
-    if (lastSessionDirName) {
-      sessionDirName = lastSessionDirName;
-      sessionId = stripSessionDirPrefix(lastSessionDirName);
-      log.info(`[Coogent] Restoring previous session: ${sessionDirName}`);
-    } else {
-      sessionId = randomUUID();
-      sessionDirName = formatSessionDirName(sessionId);
-      log.info(`[Coogent] Creating fresh session: ${sessionDirName}`);
-    }
-    const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', sessionDirName);
+    const sessionId = randomUUID();
+    const sessionDirName = formatSessionDirName(sessionId);
+    log.info(`[Coogent] Creating fresh session: ${sessionDirName}`);
+    const sessionDir = path.join(storageBase, 'ipc', sessionDirName);
     svc.currentSessionDir = sessionDir;
     log.info('[Coogent] Session dir:', sessionDir);
 
@@ -103,17 +107,16 @@ export function activate(context: vscode.ExtensionContext): void {
     svc.stateManager = new StateManager(sessionDir);
     log.info('[Coogent] StateManager initialized');
 
-    svc.engine = new Engine(svc.stateManager, { workspaceRoot });
+    svc.engine = new Engine(svc.stateManager, { workspaceRoot: primaryRoot });
     log.info('[Coogent] Engine initialized');
 
-    svc.gitManager = new GitManager(workspaceRoot);
-    svc.gitSandbox = new GitSandboxManager(workspaceRoot);
+    svc.gitManager = new GitManager(primaryRoot);
+    svc.gitSandbox = new GitSandboxManager(primaryRoot);
 
-    svc.sessionManager = new SessionManager(workspaceRoot, sessionId, sessionDirName);
-    svc.sessionManager.saveCurrentSession().catch(log.onError);
+    svc.sessionManager = new SessionManager(storageBase, sessionId, sessionDirName);
 
-    const adkAdapter = new AntigravityADKAdapter(workspaceRoot);
-    svc.adkController = new ADKController(adkAdapter, workspaceRoot);
+    const adkAdapter = new AntigravityADKAdapter(primaryRoot);
+    svc.adkController = new ADKController(adkAdapter, primaryRoot);
     log.info('[Coogent] ADKController initialized');
 
     svc.contextScoper = new ContextScoper({
@@ -122,7 +125,7 @@ export function activate(context: vscode.ExtensionContext): void {
       resolver: new ASTFileResolver(),
     });
 
-    svc.logger = new TelemetryLogger(workspaceRoot, '.coogent/logs');
+    svc.logger = new TelemetryLogger(primaryRoot, '.coogent/logs');
     log.info('[Coogent] TelemetryLogger initialized');
 
     svc.outputRegistry = new OutputBufferRegistry((phaseId, stream, chunk) => {
@@ -133,7 +136,7 @@ export function activate(context: vscode.ExtensionContext): void {
     });
 
     svc.plannerAgent = new PlannerAgent(adkAdapter, {
-      workspaceRoot,
+      workspaceRoot: primaryRoot,
       maxTreeDepth: 4,
       maxTreeChars: 8000,
     });
@@ -143,15 +146,17 @@ export function activate(context: vscode.ExtensionContext): void {
     svc.handoffExtractor = new HandoffExtractor();
     svc.consolidationAgent = new ConsolidationAgent();
 
-    svc.workerRegistry = new WorkerRegistry(workspaceRoot);
+    svc.workerRegistry = new WorkerRegistry(primaryRoot);
     log.info('[Coogent] WorkerRegistry initialized');
 
     // ── Initialize MCP Server & Client Bridge ──────────────────────────
-    svc.mcpServer = new CoogentMCPServer(workspaceRoot);
-    svc.mcpBridge = new MCPClientBridge(svc.mcpServer, workspaceRoot);
-    svc.mcpServer.init(path.join(workspaceRoot, '.coogent'))
+    svc.mcpServer = new CoogentMCPServer(primaryRoot);
+    svc.mcpBridge = new MCPClientBridge(svc.mcpServer, primaryRoot);
+    svc.mcpServer.init(storageBase)
       .then(() => {
         log.info('[Coogent] ArtifactDB initialised.');
+        // Persist session metadata to SQLite (replaces old current-session file)
+        svc.mcpServer!.upsertSession(sessionDirName, sessionId, '', Date.now());
         return svc.mcpBridge!.connect();
       })
       .then(() => log.info('[Coogent] MCP Client Bridge connected.'))
@@ -174,7 +179,7 @@ export function activate(context: vscode.ExtensionContext): void {
     log.info('[Coogent] Activity Bar sidebar menu registered.');
 
     // ── Wire events (delegated) ────────────────────────────────────────
-    wireEngine(svc, sessionDirName, workspaceRoot, workerTimeoutMs);
+    wireEngine(svc, sessionDirName, primaryRoot, workerTimeoutMs, workspaceRoots);
     wirePlanner(svc, sessionDirName);
 
     // ── Reactive configuration ─────────────────────────────────────────
@@ -199,8 +204,12 @@ export function activate(context: vscode.ExtensionContext): void {
     );
 
     // ── File system watcher — auto-reload on external runbook edit ─────
+    const storageGlob = new vscode.RelativePattern(
+      vscode.Uri.file(storageBase),
+      `ipc/**/${RUNBOOK_FILENAME}`
+    );
     const watcher = vscode.workspace.createFileSystemWatcher(
-      `**/.coogent/ipc/**/${RUNBOOK_FILENAME}`,
+      storageGlob,
       true, false, true
     );
     watcher.onDidChange(() => {
@@ -225,13 +234,6 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.window.showWarningMessage(
           'Coogent: Recovered from an interrupted session. Review state before continuing.'
         );
-      } else if (lastSessionDirName) {
-        try {
-          await svc.engine?.loadRunbook();
-          log.info('[Coogent] Loaded runbook from restored session.');
-        } catch (err) {
-          log.info('[Coogent] No runbook in restored session (may be idle).');
-        }
       }
     }).catch(log.onError);
 

@@ -46,6 +46,10 @@ export class ServiceContainer {
     mcpBridge: MCPClientBridge | undefined;
     sidebarMenu: SidebarMenuProvider | undefined;
     workerRegistry: WorkerRegistry | undefined;
+    workspaceRoots: string[] | undefined;
+
+    /** Extension-managed storage base path (from context.storageUri). */
+    storageBase: string | undefined;
 
     /** Accumulated worker stdout for handoff extraction (capped at 2 MB). */
     readonly workerOutputAccumulator = new Map<number, string>();
@@ -137,6 +141,8 @@ export class ServiceContainer {
         this.mcpBridge = undefined;
         this.sidebarMenu = undefined;
         this.workerRegistry = undefined;
+        this.workspaceRoots = undefined;
+        this.storageBase = undefined;
         this.workerOutputAccumulator.clear();
         this.sandboxBranchCreatedForSession.clear();
         this.initOrder.length = 0;
@@ -165,4 +171,6 @@ export type ResolvableServices = {
     mcpBridge: MCPClientBridge;
     sidebarMenu: SidebarMenuProvider;
     workerRegistry: WorkerRegistry;
+    workspaceRoots: string[];
+    storageBase: string;
 };

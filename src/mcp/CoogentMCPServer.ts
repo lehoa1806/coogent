@@ -275,6 +275,57 @@ export class CoogentMCPServer {
         return this.db.getWorkerOutputs(masterTaskId);
     }
 
+    // ── Session Tracking ─────────────────────────────────────────────────
+
+    /**
+     * Persist session metadata to SQLite.
+     * Replaces the old `current-session` file approach.
+     */
+    upsertSession(dirName: string, sessionId: string, prompt: string, createdAt: number): void {
+        this.db.upsertSession(dirName, sessionId, prompt, createdAt);
+    }
+
+    /** Retrieve the most recently created session. */
+    getLatestSession(): { dirName: string; sessionId: string; prompt: string; createdAt: number } | undefined {
+        return this.db.getLatestSession();
+    }
+
+    // ── Phase Log Tracking ───────────────────────────────────────────────
+
+    /**
+     * Persist a phase execution log (prompt, context, response, timing).
+     * Called by EngineWiring on phase start and completion.
+     */
+    upsertPhaseLog(
+        masterTaskId: string,
+        phaseId: string,
+        fields: {
+            prompt?: string;
+            requestContext?: string;
+            response?: string;
+            exitCode?: number;
+            startedAt?: number;
+            completedAt?: number;
+        }
+    ): void {
+        this.db.upsertPhaseLog(masterTaskId, phaseId, fields);
+    }
+
+    /** Retrieve a phase execution log. */
+    getPhaseLog(
+        masterTaskId: string,
+        phaseId: string
+    ): {
+        prompt: string;
+        requestContext: string;
+        response: string;
+        exitCode: number | null;
+        startedAt: number;
+        completedAt: number | null;
+    } | undefined {
+        return this.db.getPhaseLog(masterTaskId, phaseId);
+    }
+
     /**
      * Register a listener for the `phaseCompleted` event.
      * Fires whenever `submit_phase_handoff` is called successfully.

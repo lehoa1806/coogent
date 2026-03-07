@@ -77,6 +77,7 @@ You: "Refactor the authentication module to use JWT"
 - **post-Execution Reports** — Aggregated summary of all decisions and changes across phases
 - **Specialized Worker Library** — Skill-based routing assigns domain-expert workers (frontend, backend, QA, etc.) to each phase using Jaccard similarity matching
 - **Custom Worker Profiles** — Define project-specific worker profiles in `.coogent/workers.json` with custom system prompts and skill tags
+- **Multi-Root Workspace Support** — Works across all open workspace folders with cross-root file resolution, multi-repo Git sandboxing, and extension-managed state storage
 
 ## Screenshots
 

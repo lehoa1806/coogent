@@ -378,6 +378,69 @@ Before execution, `GitSandboxManager` checks for uncommitted changes:
 
 ---
 
+## Multi-Root Workspace Support
+
+Coogent fully supports VS Code [multi-root workspaces](https://code.visualstudio.com/docs/editor/multi-root-workspaces), where multiple top-level folders are open simultaneously.
+
+### State Storage Isolation
+
+Session state and artifacts are stored in **extension-managed storage** (`ExtensionContext.storageUri`) rather than inside any workspace folder:
+
+- The `.coogent/` directory is no longer created in the workspace root.
+- `ArtifactDB`, WAL files, and session data live under the extension's `storageUri`, typically `~/.vscode/extensions/storage/coogent/`.
+- This prevents state collisions when multiple workspace roots share the same parent directory.
+
+### Cross-Root File Resolution
+
+The `ExplicitFileResolver` and `ASTFileResolver` probe **all workspace roots** when resolving relative paths specified in runbook `context_files`:
+
+1. **Exact match** — If the path exists under one root, use it.
+2. **Multi-match** — If multiple roots contain the same relative path, the **primary root** (first workspace folder) wins. A warning is logged.
+3. **No match** — The path is skipped with an error logged.
+
+`WorkspaceHelper.resolveFileAcrossRoots(relativePath)` centralizes this logic.
+
+### Multi-Repo Git Sandboxing
+
+`GitSandboxManager` provides multi-repo methods alongside the existing single-repo API:
+
+| Method | Scope | Behavior |
+|---|---|---|
+| `preFlightCheck()` | Single repo (best-match) | Returns clean/dirty for the matched repository |
+| `preFlightCheckAll()` | All repos | Returns per-repo clean/dirty status + aggregate `allClean` flag |
+| `createSandboxBranch()` | Single repo | Creates `coogent/<task-slug>` on the matched repository |
+| `createSandboxBranchAll()` | All repos | Two-phase commit: preflight all → create branch in each repo with consistent naming |
+| `returnToOriginalBranchAll()` | All repos | Checks out original branches for each repository |
+
+Branch naming is **consistent** across all repositories: `coogent/<sanitized-task-slug>`.
+
+If one repository fails during `createSandboxBranchAll`, the result reports which repos succeeded and which failed — there is **no automatic rollback**.
+
+### Workspace-Qualified Paths
+
+To unambiguously reference files across roots, Coogent supports a **workspace-qualified path** format:
+
+```
+<workspaceName>:relative/path/to/file.ts
+```
+
+For example, in a workspace with roots `frontend` and `backend`:
+- `frontend:src/App.tsx` — resolves to the `src/App.tsx` file under the `frontend` root
+- `backend:src/server.ts` — resolves to `src/server.ts` under the `backend` root
+
+`WorkspaceHelper.parseQualifiedPath()` and `WorkspaceHelper.resolveQualifiedPath()` handle parsing and resolution.
+
+### Ambiguity Handling Rules
+
+| Scenario | Resolution |
+|---|---|
+| Path found in exactly one root | Use that root |
+| Path found in multiple roots | Primary root (first workspace folder) wins; warning logged |
+| Qualified path provided | Exact root used; error if root name not found |
+| Path found in no root | Error logged; file skipped |
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |

@@ -74,10 +74,11 @@ const validateRunbook = ajv.compile<Runbook>(runbookSchema);
  * - File locking prevents race conditions from external editors.
  * - Schema validation via ajv on every load.
  *
- * Files are stored under the session directory:
- *   `.coogent/ipc/<id>/.task-runbook.json`
- *   `.coogent/ipc/<id>/.wal.json`
- *   `.coogent/ipc/<id>/.lock`
+ * Files are stored under the extension-managed session directory
+ * (resolved via `WorkspaceHelper.getStorageBasePath()`):
+ *   `<storageUri>/ipc/<id>/.task-runbook.json`
+ *   `<storageUri>/ipc/<id>/.wal.json`
+ *   `<storageUri>/ipc/<id>/.lock`
  *
  * See ARCHITECTURE.md § Persistence Strategy for the full design.
  * See 02-review.md § R10 — singleton removed for multi-workspace support.
@@ -113,8 +114,9 @@ export class StateManager {
     private writeLock: Promise<void> = Promise.resolve();
 
     /**
-     * @param sessionDir Absolute path to the session directory
-     *   (e.g., `<workspace>/.coogent/ipc/<uuid>/`).
+     * @param sessionDir Absolute path to the session directory. Should be
+     *   resolved from extension-managed storage via
+     *   `WorkspaceHelper.getStorageBasePath()` (e.g., `<storageUri>/ipc/<uuid>/`).
      * @param enableEncryption Whether to encrypt files at rest (default: false).
      * @param secretStorage Optional VS Code SecretStorage for secure key management.
      *   When provided, the encryption key is stored in the OS keychain instead of

@@ -206,3 +206,31 @@ Manage multiple orchestration sessions:
 | `Coogent: Open Diff Review` | View changes since sandbox creation |
 | `Coogent: Load Session` | Resume a previous session |
 | `Coogent: Delete Session` | Remove a session |
+
+---
+
+## Multi-Root Workspaces
+
+Coogent works seamlessly with VS Code [multi-root workspaces](https://code.visualstudio.com/docs/editor/multi-root-workspaces).
+
+### What Works Automatically
+
+- **All open workspace folders** are scanned for context files referenced in runbook phases.
+- **State is stored in extension storage** (not inside your repositories), so no `.coogent/` directory is created in any workspace folder.
+- **Git sandbox branches** are created with the **same branch name** across all repositories in the workspace.
+
+### Sandbox Branching Across Multiple Repos
+
+When you start execution in a multi-root workspace:
+
+1. Coogent checks **all** repositories for uncommitted changes (pre-flight check).
+2. If **any** repository is dirty, sandbox creation is aborted — you'll be asked to commit or stash first.
+3. If all repos are clean, a `coogent/<task-slug>` branch is created in **every** repository.
+4. After execution, you can review changes and create PRs from each sandbox branch independently.
+
+### Ambiguous File Paths
+
+If a runbook references a file that exists in multiple workspace roots (e.g., both `frontend/` and `backend/` have a `src/utils.ts`):
+
+- The **first workspace folder** (primary root) takes priority.
+- To be explicit, use the qualified format: `frontend:src/utils.ts` or `backend:src/utils.ts`.
