@@ -54,6 +54,16 @@ export interface Phase {
     mcpPhaseId?: string;
 }
 
+/** A specialized worker profile for the Worker Studio display. */
+export interface WorkerProfile {
+    readonly id: string;
+    readonly name: string;
+    readonly description: string;
+    readonly system_prompt: string;
+    readonly tags: readonly string[];
+    readonly allowed_tools?: readonly string[];
+}
+
 /** The persistent state file: .task-runbook.json */
 export interface Runbook {
     readonly project_id: string;
@@ -141,6 +151,8 @@ export interface AppState {
     workflowItems: { label: string; description: string; insert: string }[];
     /** Session list populated by SESSION_LIST / SESSION_SEARCH_RESULTS messages. */
     sessions: SessionSummary[];
+    /** Loaded worker profiles for the Worker Studio tab. */
+    workers: WorkerProfile[];
 }
 
 /** Default initial state. */
@@ -178,6 +190,7 @@ export const DEFAULT_APP_STATE: AppState = {
         { label: '/history', description: 'Show session history', insert: '/history ' },
     ],
     sessions: [],
+    workers: [],
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -201,7 +214,8 @@ export type HostToWebviewMessage =
     | { type: 'SUGGESTION_DATA'; payload: { mentions: { label: string; description: string; insert: string }[]; workflows: { label: string; description: string; insert: string }[] } }
     | { type: 'ATTACHMENT_SELECTED'; payload: { paths: string[] } }
     | { type: 'SESSION_LIST'; payload: { sessions: SessionSummary[] } }
-    | { type: 'SESSION_SEARCH_RESULTS'; payload: { query: string; sessions: SessionSummary[] } };
+    | { type: 'SESSION_SEARCH_RESULTS'; payload: { query: string; sessions: SessionSummary[] } }
+    | { type: 'workers:loaded'; workers: WorkerProfile[] };
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Webview → Host Messages (discriminated union)
@@ -235,4 +249,5 @@ export type WebviewToHostMessage =
     | { type: 'CMD_LIST_SESSIONS' }
     | { type: 'CMD_SEARCH_SESSIONS'; payload: { query: string } }
     | { type: 'CMD_LOAD_SESSION'; payload: { sessionId: string } }
-    | { type: 'CMD_DELETE_SESSION'; payload: { sessionId: string } };
+    | { type: 'CMD_DELETE_SESSION'; payload: { sessionId: string } }
+    | { type: 'workers:request' };

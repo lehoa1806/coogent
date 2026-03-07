@@ -73,6 +73,59 @@ All settings are under `coogent.*` in VS Code Settings (`Cmd+,`):
 
 ---
 
+## Custom Worker Profiles
+
+Coogent ships with built-in worker profiles (generalist, frontend, backend, database, QA, DevOps, security, documentation). You can override or extend them with workspace-specific profiles.
+
+### Creating `.coogent/workers.json`
+
+Create a `.coogent/workers.json` file at your workspace root:
+
+```json
+{
+  "workers": [
+    {
+      "id": "react_expert",
+      "name": "React Expert",
+      "description": "Specialist in React 18+, hooks, and component architecture",
+      "system_prompt": "You are a React expert. Follow hooks best practices...",
+      "tags": ["frontend", "react", "typescript"]
+    },
+    {
+      "id": "django_api",
+      "name": "Django API Builder",
+      "description": "Backend specialist for Django REST Framework",
+      "system_prompt": "You are a Django REST Framework expert...",
+      "tags": ["backend", "python", "django", "api"]
+    }
+  ]
+}
+```
+
+Workspace profiles **override** built-in profiles with the same `id` and are merged with any additional profiles defined in VS Code settings (`coogent.workerProfiles`).
+
+### JSON Schema Autocomplete
+
+When editing `.coogent/workers.json`, the IDE provides autocomplete and validation automatically via the bundled JSON Schema.
+
+### Worker Studio Tab
+
+View all loaded worker profiles in Mission Control:
+
+1. Open Mission Control (`Cmd+Shift+P` → `Coogent: Open Mission Control`)
+2. Click the **Workers** tab (next to **Phases**)
+3. Browse all loaded profiles with their names, IDs, descriptions, and skill tags
+
+### Configuration Priority (Cascading)
+
+Worker profiles are loaded in priority order (highest wins):
+
+1. **Workspace file** — `.coogent/workers.json` (project-specific overrides)
+2. **VS Code settings** — `coogent.workerProfiles` (user-level customization)
+3. **Built-in defaults** — `defaults.json` (shipped with the extension)
+
+---
+
 ## Usage Workflows
 
 ### Workflow 1: Plan → Review → Execute

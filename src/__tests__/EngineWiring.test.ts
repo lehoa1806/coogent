@@ -153,4 +153,71 @@ describe('wireEngine', () => {
 
         expect(engine.onWorkerFailed).toHaveBeenCalledWith(3, 'crash');
     });
+
+    // ── RACE-FIX: Handoff submission before FSM transition ────────────
+    it('worker:exited(0) awaits handoff submission before engine.onWorkerExited', async () => {
+        // Track call order
+        const callOrder: string[] = [];
+
+        const mockReport = { decisions: ['d1'], modified_files: ['f.ts'], unresolved_issues: [] };
+        const mockHandoffExtractor = {
+            extractHandoff: jest.fn().mockImplementation(async () => {
+                callOrder.push('extractHandoff');
+                return mockReport;
+            }),
+            generateDistillationPrompt: jest.fn().mockReturnValue(''),
+            buildNextContext: jest.fn().mockResolvedValue(''),
+        };
+        const mockMcpBridge = {
+            submitPhaseHandoff: jest.fn().mockImplementation(async () => {
+                callOrder.push('submitPhaseHandoff');
+            }),
+        };
+
+        svc.handoffExtractor = mockHandoffExtractor as any;
+        svc.mcpBridge = mockMcpBridge as any;
+        svc.currentSessionDir = '/workspace/.coogent/ipc/session-001';
+
+        // Provide a runbook with a phase that has an mcpPhaseId
+        engine.getRunbook.mockReturnValue({
+            phases: [{ id: 1, mcpPhaseId: 'phase-001-abc' }],
+        });
+        engine.onWorkerExited.mockImplementation(async () => {
+            callOrder.push('onWorkerExited');
+        });
+
+        wireEngine(svc, 'session-001', '/workspace', 60000);
+
+        // Pre-populate accumulated output
+        svc.workerOutputAccumulator.set(1, 'some output');
+
+        adk.emit('worker:exited', 1, 0);
+
+        // Wait for all async work to settle
+        await new Promise(r => setTimeout(r, 50));
+
+        expect(callOrder).toEqual(['extractHandoff', 'submitPhaseHandoff', 'onWorkerExited']);
+    });
+
+    it('worker:exited(0) still calls onWorkerExited when handoff extraction fails', async () => {
+        const mockHandoffExtractor = {
+            extractHandoff: jest.fn().mockRejectedValue(new Error('extraction boom')),
+            generateDistillationPrompt: jest.fn().mockReturnValue(''),
+            buildNextContext: jest.fn().mockResolvedValue(''),
+        };
+
+        svc.handoffExtractor = mockHandoffExtractor as any;
+        svc.currentSessionDir = '/workspace/.coogent/ipc/session-001';
+
+        wireEngine(svc, 'session-001', '/workspace', 60000);
+
+        svc.workerOutputAccumulator.set(2, 'output');
+
+        adk.emit('worker:exited', 2, 0);
+
+        await new Promise(r => setTimeout(r, 50));
+
+        // Engine transition must still fire despite handoff failure
+        expect(engine.onWorkerExited).toHaveBeenCalledWith(2, 0);
+    });
 });

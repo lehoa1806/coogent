@@ -1,25 +1,31 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
-<!--   @ mention & / workflow suggestions, file/image actions          -->
+<!--   ChatInput.svelte — Prompt input with suggestion & toolbar           -->
+<!--   Sprint 3 refactor: SuggestionPopup + InputToolbar extracted         -->
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
-    import { appState, postMessage, patchState } from "../stores/vscode.svelte.js";
+    import {
+        appState,
+        postMessage,
+        patchState,
+    } from "../stores/vscode.svelte.js";
     import type { ConversationMode } from "../types.js";
+    import MarkdownRenderer from "./MarkdownRenderer.svelte";
+    import SuggestionPopup from "./SuggestionPopup.svelte";
+    import InputToolbar from "./InputToolbar.svelte";
+    import type { SuggestionItem } from "./SuggestionPopup.svelte";
 
     let prompt = $state("");
     let textareaEl: HTMLTextAreaElement | undefined = $state(undefined);
 
+    // ── Preview/Raw toggle ──────────────────────────────────────────────
+    let inputMode: "raw" | "preview" = $state("raw");
+
     // ── Suggestion popup state ──────────────────────────────────────────
-    // Use dynamic suggestions from the store (populated by Extension Host)
     let mentionItems = $derived(appState.mentionItems);
     let workflowItems = $derived(appState.workflowItems);
 
     type SuggestionKind = "mention" | "workflow" | null;
-    interface SuggestionItem {
-        label: string;
-        description: string;
-        insert: string;
-    }
 
     let suggestionKind: SuggestionKind = $state(null);
     let filteredSuggestions: SuggestionItem[] = $state([]);
@@ -68,7 +74,6 @@
     // ── Plan Review approve state ────────────────────────────────────────
     let approveDisabled = $state(false);
 
-    // Reset approve state when entering PLAN_REVIEW
     $effect(() => {
         if (isPlanReview) approveDisabled = false;
     });
@@ -94,16 +99,12 @@
         if (!text) return;
 
         if (isPlanReview) {
-            // Send feedback to revise the plan
             postMessage({
                 type: "CMD_PLAN_REJECT",
                 payload: { feedback: text },
             });
         } else {
-            // Persist prompt for display during PLANNING state
             patchState({ lastPrompt: text });
-
-            // New plan request (IDLE) or re-plan after error
             postMessage({
                 type: "CMD_PLAN_REQUEST",
                 payload: { prompt: text },
@@ -111,11 +112,12 @@
         }
 
         prompt = "";
+        inputMode = "raw";
         closeSuggestions();
         autoResize();
     }
 
-    // ── Attachment listener ──────────────────────────────────────────────────
+    // ── Attachment listener ──────────────────────────────────────────────
     $effect(() => {
         function handleAttachment(event: MessageEvent) {
             const msg = event.data;
@@ -144,13 +146,11 @@
         const val = textareaEl.value;
         const pos = textareaEl.selectionStart ?? 0;
 
-        // Walk backward from cursor to find trigger
         let triggerStart = -1;
         for (let i = pos - 1; i >= 0; i--) {
             const ch = val[i];
             if (ch === " " || ch === "\n") break;
             if (ch === "@" || ch === "/") {
-                // Must be at start of line or after whitespace
                 if (i === 0 || val[i - 1] === " " || val[i - 1] === "\n") {
                     triggerStart = i;
                 }
@@ -199,7 +199,6 @@
         const val = textareaEl.value;
         const pos = textareaEl.selectionStart ?? 0;
 
-        // Find the trigger start
         let triggerStart = pos;
         for (let i = pos - 1; i >= 0; i--) {
             const ch = val[i];
@@ -216,7 +215,6 @@
 
         closeSuggestions();
 
-        // Restore cursor position after Svelte re-renders
         requestAnimationFrame(() => {
             if (textareaEl) {
                 const newPos = triggerStart + item.insert.length;
@@ -229,6 +227,17 @@
 
     // ── Input handling ──────────────────────────────────────────────────
     function handleKeydown(e: KeyboardEvent) {
+        // Toggle preview mode: Ctrl+Shift+P (Cmd+Shift+P on Mac)
+        if (
+            (e.ctrlKey || e.metaKey) &&
+            e.shiftKey &&
+            (e.key === "p" || e.key === "P")
+        ) {
+            e.preventDefault();
+            inputMode = inputMode === "raw" ? "preview" : "raw";
+            return;
+        }
+
         // Suggestion navigation
         if (suggestionKind) {
             if (e.key === "ArrowDown") {
@@ -280,133 +289,59 @@
 
 {#if isVisible}
     <div class="chat-input" class:planning={isPlanning}>
-        <!-- Suggestion popup -->
-        {#if suggestionKind && filteredSuggestions.length > 0}
-            <div class="suggestion-popup">
-                {#each filteredSuggestions as item, i}
-                    <button
-                        class="suggestion-item"
-                        class:selected={i === selectedSuggestionIndex}
-                        onmousedown={(e) => {
-                            e.preventDefault();
-                            acceptSuggestion(item);
-                        }}
-                        onmouseenter={() => (selectedSuggestionIndex = i)}
-                    >
-                        <span class="suggestion-label">{item.label}</span>
-                        <span class="suggestion-desc">{item.description}</span>
-                    </button>
-                {/each}
-            </div>
+        <!-- Suggestion popup (extracted) -->
+        {#if suggestionKind}
+            <SuggestionPopup
+                items={filteredSuggestions}
+                selectedIndex={selectedSuggestionIndex}
+                onaccept={acceptSuggestion}
+                onselect={(i) => (selectedSuggestionIndex = i)}
+            />
         {/if}
 
-        <!-- Toolbar row -->
-        <div class="toolbar-row">
-            <div class="toolbar-actions">
-                <button
-                    class="toolbar-btn"
-                    onclick={handleUploadFile}
-                    title="Attach file"
-                    id="chat-attach-file"
-                >
-                    <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                    >
-                        <path
-                            d="M14 8.5V13.5C14 14.0523 13.5523 14.5 13 14.5H3C2.44772 14.5 2 14.0523 2 13.5V8.5M8 1.5V10.5M8 1.5L11 4.5M8 1.5L5 4.5"
-                            stroke="currentColor"
-                            stroke-width="1.2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        />
-                    </svg>
-                </button>
-                <button
-                    class="toolbar-btn"
-                    onclick={handleUploadImage}
-                    title="Attach image"
-                    id="chat-attach-image"
-                >
-                    <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                    >
-                        <rect
-                            x="1.5"
-                            y="2.5"
-                            width="13"
-                            height="11"
-                            rx="1.5"
-                            stroke="currentColor"
-                            stroke-width="1.2"
-                        />
-                        <circle
-                            cx="5"
-                            cy="6"
-                            r="1.25"
-                            stroke="currentColor"
-                            stroke-width="1.2"
-                        />
-                        <path
-                            d="M1.5 11L5 8L8 10.5L11 8L14.5 11"
-                            stroke="currentColor"
-                            stroke-width="1.2"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                        />
-                    </svg>
-                </button>
-            </div>
-
-            <span class="toolbar-spacer"></span>
-
-            <!-- Inline conversation mode dropdown (hidden during plan review) -->
-            {#if !isPlanReview}
-                <select
-                    class="mode-select"
-                    value={appState.conversationMode}
-                    onchange={handleModeChange}
-                    id="chat-mode-select"
-                >
-                    {#each modes as { value, label }}
-                        <option {value}>{label}</option>
-                    {/each}
-                </select>
-            {/if}
-
-            <!-- Approve button (only during PLAN_REVIEW) -->
-            {#if isPlanReview}
-                <button
-                    class="approve-plan-btn"
-                    onclick={handleApprove}
-                    disabled={approveDisabled}
-                    title="Approve plan and start execution"
-                    id="plan-approve-button"
-                >
-                    {approveDisabled ? "✓ Approved" : "✓ Approve"}
-                </button>
-            {/if}
-        </div>
+        <!-- Toolbar (extracted) -->
+        <InputToolbar
+            {inputMode}
+            conversationMode={appState.conversationMode}
+            {isPlanReview}
+            {approveDisabled}
+            {modes}
+            onmodechange={handleModeChange}
+            oninputmodechange={(mode) => (inputMode = mode)}
+            onuploadfile={handleUploadFile}
+            onuploadimage={handleUploadImage}
+            onapprove={handleApprove}
+        />
 
         <!-- Input row -->
         <div class="input-row">
-            <textarea
-                bind:this={textareaEl}
-                bind:value={prompt}
-                {placeholder}
-                rows="1"
-                onkeydown={handleKeydown}
-                oninput={handleInput}
-                disabled={isPlanning}
-                id="chat-prompt-input"
-            ></textarea>
+            {#if inputMode === "raw"}
+                <textarea
+                    bind:this={textareaEl}
+                    bind:value={prompt}
+                    {placeholder}
+                    rows="1"
+                    onkeydown={handleKeydown}
+                    oninput={handleInput}
+                    disabled={isPlanning}
+                    id="chat-prompt-input"
+                ></textarea>
+            {:else}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+                <div
+                    class="preview-pane"
+                    onkeydown={handleKeydown}
+                    tabindex="0"
+                    id="chat-prompt-preview"
+                >
+                    {#if prompt.trim()}
+                        <MarkdownRenderer content={prompt} />
+                    {:else}
+                        <span class="preview-empty">Nothing to preview</span>
+                    {/if}
+                </div>
+            {/if}
             <button
                 class="send-btn"
                 onclick={handleSubmit}
@@ -446,7 +381,12 @@
             {:else}
                 <span
                     ><kbd>Enter</kbd> to send · <kbd>Shift+Enter</kbd> for
-                    newline · <kbd>@</kbd> mention · <kbd>/</kbd> workflow</span
+                    newline · <kbd>@</kbd> mention · <kbd>/</kbd> workflow ·
+                    <kbd
+                        >{navigator.platform.includes("Mac")
+                            ? "⌘"
+                            : "Ctrl"}+Shift+P</kbd
+                    > preview</span
                 >
             {/if}
         </div>
@@ -468,104 +408,6 @@
         flex-shrink: 0;
         animation: fade-in 0.2s ease-out;
         position: relative;
-    }
-
-    /* ── Toolbar ────────────────────────────────────────────────────── */
-
-    .toolbar-row {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        padding: 6px 0 4px;
-    }
-
-    .toolbar-actions {
-        display: flex;
-        gap: 2px;
-    }
-
-    .toolbar-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 28px;
-        height: 28px;
-        border: none;
-        border-radius: 4px;
-        background: transparent;
-        color: var(--vscode-descriptionForeground);
-        cursor: pointer;
-        transition: all 0.15s ease;
-    }
-
-    .toolbar-btn:hover {
-        background: var(
-            --vscode-editorWidget-background,
-            rgba(128, 128, 128, 0.1)
-        );
-        color: var(--vscode-foreground);
-    }
-
-    .toolbar-btn svg {
-        display: block;
-    }
-
-    .toolbar-spacer {
-        flex: 1;
-    }
-
-    /* ── Mode dropdown ──────────────────────────────────────────────── */
-
-    .mode-select {
-        font-family: var(--vscode-font-family);
-        font-size: 11px;
-        font-weight: 600;
-        padding: 3px 8px;
-        border-radius: 4px;
-        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
-        background: var(
-            --vscode-dropdown-background,
-            var(--vscode-editorWidget-background)
-        );
-        color: var(--vscode-dropdown-foreground, var(--vscode-foreground));
-        cursor: pointer;
-        outline: none;
-        transition: border-color 0.15s ease;
-        appearance: auto;
-    }
-
-    .mode-select:hover {
-        border-color: var(--vscode-focusBorder, #007fd4);
-    }
-
-    .mode-select:focus {
-        border-color: var(--vscode-focusBorder, #007fd4);
-    }
-
-    /* ── Approve plan button (PLAN_REVIEW only) ─────────────────────── */
-
-    .approve-plan-btn {
-        font-family: var(--vscode-font-family);
-        font-size: 11px;
-        font-weight: 600;
-        padding: 4px 14px;
-        border-radius: 4px;
-        border: none;
-        cursor: pointer;
-        transition: all 0.15s ease;
-        background: var(--vscode-testing-iconPassed, #388a34);
-        color: var(--vscode-button-foreground, #fff);
-        flex-shrink: 0;
-        white-space: nowrap;
-    }
-
-    .approve-plan-btn:hover:not(:disabled) {
-        filter: brightness(1.15);
-    }
-
-    .approve-plan-btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
     }
 
     /* ── Input row ──────────────────────────────────────────────────── */
@@ -658,6 +500,42 @@
         animation: spin 0.7s linear infinite;
     }
 
+    /* ── Preview pane ──────────────────────────────────────────────── */
+
+    .preview-pane {
+        flex: 1;
+        min-height: 36px;
+        max-height: 160px;
+        overflow-y: auto;
+        padding: 8px 10px;
+        border: 1px solid
+            var(
+                --vscode-input-border,
+                var(--vscode-panel-border, rgba(128, 128, 128, 0.35))
+            );
+        border-radius: 4px;
+        background: var(
+            --vscode-input-background,
+            var(--vscode-editorWidget-background)
+        );
+        font-size: var(--vscode-font-size, 13px);
+        line-height: 1.45;
+        cursor: default;
+    }
+
+    .preview-pane:focus {
+        outline: none;
+        border-color: var(--vscode-focusBorder, #007fd4);
+    }
+
+    .preview-empty {
+        color: var(
+            --vscode-input-placeholderForeground,
+            var(--vscode-descriptionForeground)
+        );
+        font-style: italic;
+    }
+
     /* ── Hint bar ───────────────────────────────────────────────────── */
 
     .hint {
@@ -688,86 +566,5 @@
     .planning-hint {
         color: var(--vscode-charts-purple, #a78bfa);
         animation: badge-pulse 2s ease-in-out infinite;
-    }
-
-    /* ── Suggestion popup ───────────────────────────────────────────── */
-
-    .suggestion-popup {
-        position: absolute;
-        bottom: 100%;
-        left: 12px;
-        right: 12px;
-        max-height: 180px;
-        overflow-y: auto;
-        background: var(
-            --vscode-editorSuggestWidget-background,
-            var(--vscode-editorWidget-background)
-        );
-        border: 1px solid
-            var(
-                --vscode-editorSuggestWidget-border,
-                var(--vscode-panel-border, rgba(128, 128, 128, 0.35))
-            );
-        border-radius: 6px;
-        box-shadow: 0 4px 12px
-            color-mix(
-                in srgb,
-                var(--vscode-widget-shadow, #000) 20%,
-                transparent
-            );
-        z-index: 100;
-        animation: fade-in 0.12s ease-out;
-    }
-
-    .suggestion-item {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        width: 100%;
-        padding: 6px 10px;
-        border: none;
-        background: transparent;
-        color: var(--vscode-foreground);
-        cursor: pointer;
-        font-family: var(--vscode-font-family);
-        font-size: 12px;
-        text-align: left;
-        transition: background 0.1s ease;
-    }
-
-    .suggestion-item:first-child {
-        border-radius: 6px 6px 0 0;
-    }
-
-    .suggestion-item:last-child {
-        border-radius: 0 0 6px 6px;
-    }
-
-    .suggestion-item:only-child {
-        border-radius: 6px;
-    }
-
-    .suggestion-item.selected,
-    .suggestion-item:hover {
-        background: var(
-            --vscode-editorSuggestWidget-selectedBackground,
-            var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.12))
-        );
-    }
-
-    .suggestion-label {
-        font-weight: 600;
-        font-family: var(--vscode-editor-font-family, monospace);
-        font-size: 12px;
-        color: var(--vscode-foreground);
-        white-space: nowrap;
-    }
-
-    .suggestion-desc {
-        font-size: 11px;
-        color: var(--vscode-descriptionForeground);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
     }
 </style>

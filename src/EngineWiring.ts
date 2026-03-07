@@ -45,6 +45,18 @@ export function wireEngine(
     engine.on('state:changed', (from, to, event) => {
         logger?.logStateTransition(from, to, event).catch(log.onError);
 
+        // LF-5 FIX: Purge stale task from ArtifactDB on session reset.
+        // Un-purged sessions retain valid masterTaskIds that pass the
+        // authorization gate in get_modified_file_content. Purging on
+        // RESET → IDLE closes this defense-in-depth gap.
+        if (to === EngineState.IDLE && from !== EngineState.IDLE && mcpServer) {
+            try {
+                mcpServer.purgeTask(sessionDirName);
+            } catch (err) {
+                log.warn('[EngineWiring] LF-5: Failed to purge stale task:', err);
+            }
+        }
+
         // Auto-create sandbox branch on first EXECUTING_WORKER per session
         if (to === 'EXECUTING_WORKER' && !sandboxBranchCreatedForSession.has(sessionDirName) && gitSandbox) {
             sandboxBranchCreatedForSession.add(sessionDirName);
@@ -132,22 +144,27 @@ export function wireEngine(
     adkController.on('worker:exited', (phaseId, exitCode) => {
         outputRegistry?.flushAndRemove(phaseId);
 
-        if (exitCode === 0 && handoffExtractor && svc.currentSessionDir) {
-            const accumulatedOutput = workerOutputAccumulator.get(phaseId) ?? '';
-            workerOutputAccumulator.delete(phaseId);
+        // RACE-FIX: Await handoff extraction + MCP submission BEFORE triggering
+        // the engine FSM transition. The FSM transition broadcasts STATE_SNAPSHOT
+        // to the webview, which immediately fetches the handoff URI. If submission
+        // hasn't completed, the webview gets "Phase not found".
+        const handoffPromise: Promise<void> = (async () => {
+            if (exitCode === 0 && handoffExtractor && svc.currentSessionDir) {
+                const accumulatedOutput = workerOutputAccumulator.get(phaseId) ?? '';
+                workerOutputAccumulator.delete(phaseId);
 
-            // Persist worker output to ArtifactDB so it survives session reloads
-            if (mcpServer && accumulatedOutput) {
-                const runbook = engine.getRunbook() ?? null;
-                const phaseObj = runbook?.phases.find(p => p.id === phaseId);
-                const phaseIdStr = phaseObj?.mcpPhaseId;
-                if (phaseIdStr) {
-                    mcpServer.upsertWorkerOutput(sessionDirName, phaseIdStr, accumulatedOutput);
+                // Persist worker output to ArtifactDB so it survives session reloads
+                if (mcpServer && accumulatedOutput) {
+                    const runbook = engine.getRunbook() ?? null;
+                    const phaseObj = runbook?.phases.find(p => p.id === phaseId);
+                    const phaseIdStr = phaseObj?.mcpPhaseId;
+                    if (phaseIdStr) {
+                        mcpServer.upsertWorkerOutput(sessionDirName, phaseIdStr, accumulatedOutput);
+                    }
                 }
-            }
 
-            handoffExtractor.extractHandoff(phaseId, accumulatedOutput, workspaceRoot)
-                .then(report => {
+                try {
+                    const report = await handoffExtractor.extractHandoff(phaseId, accumulatedOutput, workspaceRoot);
                     if (mcpBridge && report) {
                         const runbook = engine.getRunbook() ?? null;
                         const phaseObj = runbook?.phases.find(p => p.id === phaseId);
@@ -155,22 +172,40 @@ export function wireEngine(
                         if (!phaseIdStr) {
                             log.warn(`[Coogent] mcpPhaseId missing for phase ${phaseId} — skipping handoff submission.`);
                         } else {
-                            mcpBridge.submitPhaseHandoff(
+                            await mcpBridge.submitPhaseHandoff(
                                 sessionDirName,
                                 phaseIdStr,
                                 report.decisions ?? [],
                                 report.modified_files ?? [],
                                 report.unresolved_issues ?? []
-                            ).catch(err => log.error('[Coogent] Failed to store handoff in MCP:', err));
+                            );
                         }
                     }
-                })
-                .catch(err => log.error('[Coogent] Handoff extraction error:', err));
-        } else {
-            workerOutputAccumulator.delete(phaseId);
-        }
+                } catch (err) {
+                    log.error('[Coogent] Handoff extraction/submission error:', err);
+                    // LF-6 FIX: Surface handoff failure to the webview so users
+                    // know a child agent may be missing parent context.
+                    MissionControlPanel.broadcast({
+                        type: 'LOG_ENTRY',
+                        payload: {
+                            timestamp: asTimestamp(),
+                            level: 'warn',
+                            message: `⚠ Phase ${phaseId}: handoff extraction/submission failed — ` +
+                                `child phases may start without full parent context. ` +
+                                `(${err instanceof Error ? err.message : String(err)})`,
+                        },
+                    });
+                }
+            } else {
+                workerOutputAccumulator.delete(phaseId);
+            }
+        })();
 
-        engine.onWorkerExited(phaseId, exitCode).catch(log.onError);
+        // Engine FSM transition fires AFTER handoff is persisted (or fails gracefully).
+        // Errors in handoff extraction/submission are caught above and don't block the FSM.
+        handoffPromise
+            .then(() => engine.onWorkerExited(phaseId, exitCode))
+            .catch(log.onError);
     });
 
     adkController.on('worker:timeout', (phaseId) => {
@@ -328,7 +363,16 @@ async function executePhase(
         await logger.initRun(runbook.project_id);
     }
 
-    // Step 5.5: Build handoff context from dependent phases
+    // Step 5.5: Build handoff context from dependent phases.
+    //
+    // LF-2 NOTE — Dual-Path Context Injection (intentional design):
+    //   PATH A (inline metadata): `buildNextContext()` loads handoff metadata
+    //          (decisions, issues, next_steps) and emits Pull Model file-fetch
+    //          directives. This is injected directly into the effective prompt.
+    //   PATH B (MCP warm-start URIs): `mcpResourceUris.parentHandoffs` provides
+    //          `coogent://` URIs that workers can read via MCP read_resource.
+    //   Both paths coexist: Path A gives immediate context, Path B enables
+    //   on-demand retrieval. Consolidation into MCP-only is a V2 consideration.
     let handoffContext = '';
     if (handoffExtractor && currentSessionDir) {
         try {
@@ -338,9 +382,50 @@ async function executePhase(
         }
     }
 
+    // CF-2 FIX: Token budget accounting for handoffContext.
+    // After the Pull Model fix (CF-1), handoffContext contains only metadata
+    // and file-pointer directives (~2K tokens typical). This guard catches
+    // edge cases where many parents produce excessive metadata.
+    const HANDOFF_TOKEN_CAP = 30_000; // Reserve 70K for context_files + prompt
+    const CHARS_PER_TOKEN = 4;
+    const handoffTokenEstimate = Math.ceil(handoffContext.length / CHARS_PER_TOKEN);
+    if (handoffTokenEstimate > HANDOFF_TOKEN_CAP) {
+        log.warn(
+            `[EngineWiring] Phase ${phase.id}: handoffContext exceeds token cap ` +
+            `(~${handoffTokenEstimate} tokens > ${HANDOFF_TOKEN_CAP}). Truncating.`
+        );
+        MissionControlPanel.broadcast({
+            type: 'LOG_ENTRY',
+            payload: {
+                timestamp: asTimestamp(),
+                level: 'warn',
+                message: `⚠ Phase ${phase.id}: handoff context truncated (~${handoffTokenEstimate} tokens > ${HANDOFF_TOKEN_CAP} cap).`,
+            },
+        });
+        // Truncate to cap — use character count to stay within budget
+        handoffContext = handoffContext.slice(0, HANDOFF_TOKEN_CAP * CHARS_PER_TOKEN);
+    }
+
+    // Step 5.6: Resolve worker profile from WorkerRegistry
+    let workerSystemContext = '';
+    if (svc.workerRegistry) {
+        try {
+            const workerProfile = await svc.workerRegistry.getBestWorker(phase.required_skills ?? []);
+            log.info(`[EngineWiring] Phase ${phase.id}: routed to worker '${workerProfile.id}' (${workerProfile.name})`);
+            workerSystemContext = `## Worker Role: ${workerProfile.name}\n${workerProfile.system_prompt}\n\n`;
+        } catch (err) {
+            log.warn(`[EngineWiring] Phase ${phase.id}: WorkerRegistry lookup failed, using default prompt`, err);
+        }
+    } else {
+        log.debug(`[EngineWiring] Phase ${phase.id}: workerRegistry not available — skipping skill routing`);
+    }
+
     // Step 6: Build effective prompt
     const distillationPrompt = handoffExtractor?.generateDistillationPrompt(phase.id as number) ?? '';
     let effectivePrompt = phase.prompt;
+    if (workerSystemContext) {
+        effectivePrompt = `${workerSystemContext}${effectivePrompt}`;
+    }
     if (handoffContext) {
         effectivePrompt = `# Context from Previous Phases\n\n${handoffContext}\n---\n\n${effectivePrompt}`;
     }
@@ -359,11 +444,21 @@ async function executePhase(
 
     if (phase.depends_on && (phase.depends_on as unknown[]).length > 0 && engine) {
         const rb = engine.getRunbook();
+        // LF-3 FIX: O(1) Map lookup for phase resolution instead of O(n) find().
+        // Consistent with the Map-based pattern used in Scheduler.getReadyPhases().
+        const phaseMap = new Map(rb?.phases.map(p => [p.id, p]) ?? []);
         const parentHandoffs: string[] = [];
         for (const parentId of phase.depends_on) {
-            const parentPhase = rb?.phases.find(p => p.id === parentId);
-            if (parentPhase?.mcpPhaseId) {
+            const parentPhase = phaseMap.get(parentId);
+            // MF-3 FIX: Defense-in-depth — check parent is completed AND has mcpPhaseId.
+            // Log a warning if either is missing so silent context loss is visible.
+            if (parentPhase?.mcpPhaseId && parentPhase.status === 'completed') {
                 parentHandoffs.push(RESOURCE_URIS.phaseHandoff(masterTaskId, parentPhase.mcpPhaseId));
+            } else {
+                log.warn(
+                    `[EngineWiring] Phase ${phase.id}: parent ${parentId} missing mcpPhaseId ` +
+                    `or not completed (status=${parentPhase?.status}, mcpPhaseId=${parentPhase?.mcpPhaseId})`
+                );
             }
         }
         if (parentHandoffs.length > 0) {

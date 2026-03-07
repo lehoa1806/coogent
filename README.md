@@ -75,6 +75,8 @@ You: "Refactor the authentication module to use JWT"
 - **Secrets Detection** — Automatic scanning for API keys, private keys, and `.env` patterns before injecting files into AI workers
 - **Token Budgeting** — Prevents expensive failures by checking context size *before* calling the API
 - **post-Execution Reports** — Aggregated summary of all decisions and changes across phases
+- **Specialized Worker Library** — Skill-based routing assigns domain-expert workers (frontend, backend, QA, etc.) to each phase using Jaccard similarity matching
+- **Custom Worker Profiles** — Define project-specific worker profiles in `.coogent/workers.json` with custom system prompts and skill tags
 
 ## Screenshots
 

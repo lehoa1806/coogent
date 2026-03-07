@@ -676,4 +676,73 @@ describe('Engine', () => {
         const rb = engine.getRunbook()!;
         expect((rb.phases[0] as any).mcpPhaseId).toBe(emittedPhase.mcpPhaseId);
     });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ABORT-1: retry() works after abort (post-abort recovery)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('ABORT-1: retry works after abort — phase status is pending, engine is IDLE', async () => {
+        const executeSpy = jest.fn();
+        engine.on('phase:execute', executeSpy);
+
+        await engine.loadRunbook();
+        await engine.start();
+        expect(engine.getState()).toBe('EXECUTING_WORKER');
+
+        // Abort while executing
+        await engine.abort();
+        expect(engine.getState()).toBe('IDLE');
+        // After abort, running phases are set to 'pending'
+        expect(engine.getRunbook()!.phases[0].status).toBe('pending');
+
+        // Retry from IDLE — should work now
+        await engine.retry(0);
+        expect(engine.getState()).toBe('EXECUTING_WORKER');
+        expect(engine.getRunbook()!.phases[0].status).toBe('running');
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ABORT-2: restartPhase() works after abort
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('ABORT-2: restartPhase works after abort — IDLE state accepts START', async () => {
+        const executeSpy = jest.fn();
+        engine.on('phase:execute', executeSpy);
+
+        await engine.loadRunbook();
+        await engine.start();
+        expect(engine.getState()).toBe('EXECUTING_WORKER');
+
+        // Abort while executing
+        await engine.abort();
+        expect(engine.getState()).toBe('IDLE');
+
+        // Restart from IDLE — should work now
+        await engine.restartPhase(0);
+        expect(engine.getState()).toBe('EXECUTING_WORKER');
+        expect(engine.getRunbook()!.phases[0].status).toBe('running');
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  ABORT-3: skipPhase() works after abort
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('ABORT-3: skipPhase works after abort — advances to next phase', async () => {
+        const executeSpy = jest.fn();
+        engine.on('phase:execute', executeSpy);
+
+        await engine.loadRunbook();
+        await engine.start();
+        expect(engine.getState()).toBe('EXECUTING_WORKER');
+
+        // Abort while executing
+        await engine.abort();
+        expect(engine.getState()).toBe('IDLE');
+
+        // Skip from IDLE — should mark phase as completed and advance
+        await engine.skipPhase(0);
+        expect(engine.getRunbook()!.phases[0].status).toBe('completed');
+        // Phase 1 should now be dispatched
+        expect(executeSpy).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
+    });
 });

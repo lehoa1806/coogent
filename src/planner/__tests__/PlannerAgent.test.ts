@@ -1,12 +1,21 @@
+jest.mock('vscode', () => ({
+    commands: { registerCommand: jest.fn() },
+    window: { showWarningMessage: jest.fn(), showErrorMessage: jest.fn(), showInformationMessage: jest.fn() },
+    workspace: { workspaceFolders: [] },
+    Uri: { file: jest.fn() },
+}), { virtual: true });
+
 import { PlannerAgent } from '../PlannerAgent.js';
-import type { IADKAdapter, ADKSessionHandle, ADKSessionOptions } from '../../adk/ADKController.js';
+import type { AgentBackendProvider } from '../../adk/AgentBackendProvider.js';
+import type { ADKSessionHandle, ADKSessionOptions } from '../../adk/ADKController.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Mock ADK Adapter
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function createMockAdapter(): IADKAdapter {
+function createMockAdapter(): AgentBackendProvider {
     return {
+        name: 'test',
         createSession: jest.fn(async (_opts: ADKSessionOptions): Promise<ADKSessionHandle> => ({
             sessionId: 'mock-session-id',
             pid: 12345,
@@ -23,7 +32,7 @@ function createMockAdapter(): IADKAdapter {
 
 describe('PlannerAgent', () => {
     let agent: PlannerAgent;
-    let adapter: IADKAdapter;
+    let adapter: AgentBackendProvider;
 
     const validRunbookJson = JSON.stringify({
         project_id: 'test-project',

@@ -19,6 +19,7 @@ import type { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 import type { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
 import type { MCPClientBridge } from './mcp/MCPClientBridge.js';
 import type { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
+import type { WorkerRegistry } from './adk/WorkerRegistry.js';
 
 /**
  * Centralised container holding all extension service instances.
@@ -44,6 +45,7 @@ export class ServiceContainer {
     mcpServer: CoogentMCPServer | undefined;
     mcpBridge: MCPClientBridge | undefined;
     sidebarMenu: SidebarMenuProvider | undefined;
+    workerRegistry: WorkerRegistry | undefined;
 
     /** Accumulated worker stdout for handoff extraction (capped at 2 MB). */
     readonly workerOutputAccumulator = new Map<number, string>();
@@ -54,6 +56,64 @@ export class ServiceContainer {
      * switching sessions naturally invalidates the guard without explicit reset code.
      */
     readonly sandboxBranchCreatedForSession = new Set<string>();
+
+    /** Insertion-order tracker for debugging activation sequence. */
+    private readonly initOrder: (keyof ResolvableServices)[] = [];
+
+    /**
+     * Register a service instance with initialization-order tracking.
+     * Throws if the service key has already been registered (prevents
+     * accidental double-init bugs that silently replace instances).
+     *
+     * @example
+     *   container.register('engine', new Engine(...));
+     */
+    register<K extends keyof ResolvableServices>(key: K, instance: ResolvableServices[K]): void {
+        if (this[key] !== undefined) {
+            throw new Error(
+                `[ServiceContainer] Service '${key}' is already registered. ` +
+                `Call releaseAll() before re-registering.`
+            );
+        }
+        (this as any)[key] = instance;
+        this.initOrder.push(key);
+    }
+
+    /**
+     * Check whether a service has been registered.
+     */
+    isRegistered<K extends keyof ResolvableServices>(key: K): boolean {
+        return this[key] !== undefined;
+    }
+
+    /**
+     * Get the initialization order of registered services.
+     * Useful for debugging activation sequence issues.
+     */
+    getInitOrder(): ReadonlyArray<keyof ResolvableServices> {
+        return [...this.initOrder];
+    }
+
+    /**
+     * Type-safe service resolution with runtime initialization check.
+     * Throws a descriptive error if the service hasn't been registered yet,
+     * preventing the silent `undefined` cascade that previously required
+     * null-checks at every call site.
+     *
+     * @example
+     *   const engine = container.resolve('engine');
+     *   // `engine` is typed as `Engine` (never undefined)
+     */
+    resolve<K extends keyof ResolvableServices>(key: K): ResolvableServices[K] {
+        const instance = this[key];
+        if (instance === undefined) {
+            throw new Error(
+                `[ServiceContainer] Service '${key}' is not initialized. ` +
+                `Check activation order in extension.ts.`
+            );
+        }
+        return instance as ResolvableServices[K];
+    }
 
     /**
      * Release all references for GC.
@@ -76,7 +136,33 @@ export class ServiceContainer {
         this.mcpServer = undefined;
         this.mcpBridge = undefined;
         this.sidebarMenu = undefined;
+        this.workerRegistry = undefined;
         this.workerOutputAccumulator.clear();
         this.sandboxBranchCreatedForSession.clear();
+        this.initOrder.length = 0;
     }
 }
+
+/**
+ * Mapped type extracting the resolvable (nullable) service properties
+ * from `ServiceContainer`. Excludes `readonly` collections and methods.
+ */
+export type ResolvableServices = {
+    stateManager: StateManager;
+    engine: Engine;
+    adkController: ADKController;
+    contextScoper: ContextScoper;
+    logger: TelemetryLogger;
+    gitManager: GitManager;
+    gitSandbox: GitSandboxManager;
+    outputRegistry: OutputBufferRegistry;
+    plannerAgent: PlannerAgent;
+    sessionManager: SessionManager;
+    handoffExtractor: HandoffExtractor;
+    consolidationAgent: ConsolidationAgent;
+    currentSessionDir: string;
+    mcpServer: CoogentMCPServer;
+    mcpBridge: MCPClientBridge;
+    sidebarMenu: SidebarMenuProvider;
+    workerRegistry: WorkerRegistry;
+};

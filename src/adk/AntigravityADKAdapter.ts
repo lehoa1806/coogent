@@ -7,7 +7,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { watch, type FSWatcher } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import type { IADKAdapter, ADKSessionOptions, ADKSessionHandle } from './ADKController.js';
+import type { AgentBackendProvider } from './AgentBackendProvider.js';
+import type { ADKSessionOptions, ADKSessionHandle } from './ADKController.js';
 import type { ConversationMode } from '../types/index.js';
 import log from '../logger/log.js';
 
@@ -40,6 +41,9 @@ const IPC_DIR_NAME = '.coogent/ipc';
 
 /** Approximate chars-per-token ratio for token estimation. */
 const CHARS_PER_TOKEN = 4;
+
+/** Small delay after injection to let VS Code process the command before the next session. */
+const INJECTION_STAGGER_MS = 200;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  UUIDv7 Generator (time-ordered, no external dependency)
@@ -84,9 +88,18 @@ function uuidv7(): string {
  * Each `createSession()` call returns immediately with an `ADKSessionHandle`.
  * The actual work runs asynchronously.
  */
-export class AntigravityADKAdapter implements IADKAdapter {
+export class AntigravityADKAdapter implements AgentBackendProvider {
+    readonly name = 'antigravity';
     private activeSessions = new Map<string, ActiveSession>();
     private readonly ipcDir: string;
+
+    // ── Dispatch serialization ───────────────────────────────────────────────
+    /**
+     * Serialization lock: ensures `startNewConversation()` + `injectIntoChatPanel()`
+     * are atomic. Without this, parallel DAG phases race on the single chat panel,
+     * causing prompts to be injected into the wrong conversation or lost entirely.
+     */
+    private dispatchLock: Promise<void> = Promise.resolve();
 
     // ── Conversation mode state ──────────────────────────────────────────────
     /** Running estimate of tokens pumped into the current conversation. */
@@ -97,6 +110,27 @@ export class AntigravityADKAdapter implements IADKAdapter {
     }
 
     async createSession(options: ADKSessionOptions): Promise<ADKSessionHandle> {
+        // ── Serialize through dispatchLock ────────────────────────────────────
+        // Parallel DAG phases call createSession() concurrently. The chat panel
+        // is a single shared resource — `startNewConversation()` + `injectIntoChatPanel()`
+        // MUST be atomic. The lock guarantees sequential dispatch.
+        const previousLock = this.dispatchLock;
+        let releaseLock!: () => void;
+        this.dispatchLock = new Promise<void>(resolve => { releaseLock = resolve; });
+        await previousLock;
+
+        try {
+            return await this._createSessionInner(options);
+        } finally {
+            releaseLock();
+        }
+    }
+
+    /**
+     * Inner session-creation logic, called under the dispatch lock.
+     * Separated to keep the lock acquire/release in createSession() clean.
+     */
+    private async _createSessionInner(options: ADKSessionOptions): Promise<ADKSessionHandle> {
         const sessionId = uuidv7();
         log.info(`[AntigravityADK] Creating session ${sessionId}`);
         log.info(`[AntigravityADK] Prompt length: ${options.initialPrompt.length} chars`);
@@ -127,7 +161,9 @@ export class AntigravityADKAdapter implements IADKAdapter {
         log.info(`[AntigravityADK] ⚠️ No vscode.lm model available, using file-based IPC...`);
 
         // ─── Path B: File-based IPC via Antigravity chat ────────────────────
-        return this.createFileIpcSession(sessionId, options, session);
+        // createFileIpcSession is async — it completes the file-write + chat
+        // injection before returning, so the lock covers the critical section.
+        return await this.createFileIpcSession(sessionId, options, session);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -227,12 +263,16 @@ export class AntigravityADKAdapter implements IADKAdapter {
      *   1. Write prompt to a request file.
      *   2. Open the chat with a meta-prompt instructing the agent to respond via file.
      *   3. Watch for the response file, read it when stable.
+     *
+     * The file-write + chat-injection steps execute synchronously (awaited) so
+     * the dispatch lock in createSession() covers the full critical section.
+     * Only the response-watching phase runs in the background.
      */
-    private createFileIpcSession(
+    private async createFileIpcSession(
         sessionId: string,
         options: ADKSessionOptions,
         session: ActiveSession
-    ): ADKSessionHandle {
+    ): Promise<ADKSessionHandle> {
         let outputCallback: ((stream: 'stdout' | 'stderr', chunk: string) => void) | null = null;
         let exitCallback: ((code: number) => void) | null = null;
 
@@ -246,36 +286,50 @@ export class AntigravityADKAdapter implements IADKAdapter {
         const requestFile = path.join(subDir, 'request.md');
         const responseFile = path.join(subDir, 'response.md');
 
-        const runIpcSession = async () => {
+        // ── Critical section: file-write + chat injection ────────────────────
+        // These steps MUST complete before the next session starts, otherwise
+        // the next session's startNewConversation() replaces the active chat
+        // panel and this session's meta-prompt targets the wrong conversation.
+
+        // Step 1: Ensure sub-task directory exists
+        await fs.mkdir(subDir, { recursive: true });
+
+        // Step 2: Write the prompt to the request file
+        await fs.writeFile(requestFile, options.initialPrompt, 'utf-8');
+        log.info(`[AntigravityADK] IPC request written: ${requestFile} (${options.initialPrompt.length} chars)`);
+
+        // Step 3: Build the meta-prompt for the chat agent
+        // Use ABSOLUTE paths — relative paths broke when the agent's
+        // working directory differed from the VS Code workspace root.
+        const metaPrompt = [
+            `Read the instructions from the file: ${requestFile}`,
+            `Follow those instructions carefully.`,
+            `Write your COMPLETE response to the file: ${responseFile}`,
+            `Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
+            `Use the file editing tools to create/write to ${responseFile}.`,
+        ].join('\n');
+
+        // Step 4: Inject the meta-prompt into the chat panel
+        log.info(`[AntigravityADK] Injecting meta-prompt into chat...`);
+        const injected = await this.injectIntoChatPanel(metaPrompt);
+        if (!injected) {
+            // Return a dead handle — callbacks fire immediately on registration
+            this.cleanupSession(sessionId);
+            return {
+                sessionId,
+                pid: process.pid,
+                onOutput() { /* dead handle */ },
+                onExit(cb) { cb(1); },
+            };
+        }
+
+        // Brief stagger so the chat panel registers the prompt before
+        // the next session's startNewConversation() switches conversations.
+        await new Promise(r => setTimeout(r, INJECTION_STAGGER_MS));
+
+        // ── Non-critical: response watching runs in background ───────────────
+        const waitForResponse = async () => {
             try {
-                // Step 1: Ensure sub-task directory exists
-                await fs.mkdir(subDir, { recursive: true });
-
-                // Step 2: Write the prompt to the request file
-                await fs.writeFile(requestFile, options.initialPrompt, 'utf-8');
-                log.info(`[AntigravityADK] IPC request written: ${requestFile} (${options.initialPrompt.length} chars)`);
-
-                // Step 3: Build the meta-prompt for the chat agent
-                // Use ABSOLUTE paths — relative paths broke when the agent's
-                // working directory differed from the VS Code workspace root.
-                const metaPrompt = [
-                    `Read the instructions from the file: ${requestFile}`,
-                    `Follow those instructions carefully.`,
-                    `Write your COMPLETE response to the file: ${responseFile}`,
-                    `Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
-                    `Use the file editing tools to create/write to ${responseFile}.`,
-                ].join('\n');
-
-                // Step 4: Inject the meta-prompt into the chat panel
-                log.info(`[AntigravityADK] Injecting meta-prompt into chat...`);
-                const injected = await this.injectIntoChatPanel(metaPrompt);
-                if (!injected) {
-                    outputCallback?.('stderr', `[AntigravityADK] Failed to inject meta-prompt into chat\n`);
-                    exitCallback?.(1);
-                    this.cleanupSession(sessionId);
-                    return;
-                }
-
                 // Step 5: Watch for the response file
                 log.info(`[AntigravityADK] Waiting for response file: ${responseFile}`);
                 const content = await this.waitForResponseFile(
@@ -316,7 +370,7 @@ export class AntigravityADKAdapter implements IADKAdapter {
         };
 
         // Kick off after onOutput/onExit are registered
-        setImmediate(() => runIpcSession());
+        setImmediate(() => waitForResponse());
 
         return {
             sessionId,

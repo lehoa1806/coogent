@@ -120,6 +120,12 @@ export interface Phase {
      */
     max_retries?: number;
     /**
+     * Skill tags requested by the Planner for this phase.
+     * Used by the WorkerRegistry to select the best-matching WorkerProfile.
+     * When absent, the default generalist worker is used.
+     */
+    required_skills?: string[];
+    /**
      * The real MCP-server phase ID string (format: `phase-NNN-<uuid>`).
      * Set by the Engine when a phase is dispatched to a worker.
      * Used by the Webview to construct valid `coogent://` resource URIs.
@@ -213,6 +219,10 @@ export const STATE_TRANSITIONS: Record<
         [EngineEvent.PLAN_REQUEST]: EngineState.PLANNING,
         [EngineEvent.LOAD_RUNBOOK]: EngineState.PARSING,
         [EngineEvent.RESET]: EngineState.IDLE,
+        // Post-abort recovery: allow retry/skip/start from IDLE when a runbook is loaded
+        [EngineEvent.RETRY]: EngineState.EXECUTING_WORKER,
+        [EngineEvent.SKIP_PHASE]: EngineState.READY,
+        [EngineEvent.START]: EngineState.EXECUTING_WORKER,
     },
     [EngineState.PLANNING]: {
         [EngineEvent.PLAN_GENERATED]: EngineState.PLAN_REVIEW,
@@ -460,6 +470,12 @@ export interface AttachmentSelectedMessage {
  * Discriminated union of all messages the Extension Host sends to the Webview.
  * Use `HostToWebviewMessageType` for the `type` string literal union.
  */
+/** Workers loaded message — sends loaded worker profiles to the Webview. */
+export interface WorkersLoadedMessage {
+    readonly type: 'workers:loaded';
+    readonly workers: readonly WorkerProfile[];
+}
+
 export type HostToWebviewMessage =
     | StateSnapshotMessage
     | PhaseStatusMessage
@@ -477,7 +493,8 @@ export type HostToWebviewMessage =
     | ImplementationPlanMessage
     | MCPResourceDataMessage
     | SuggestionDataMessage
-    | AttachmentSelectedMessage;
+    | AttachmentSelectedMessage
+    | WorkersLoadedMessage;
 
 // ── Webview → Host (user commands) ──────────────────────────────────────────
 
@@ -659,6 +676,11 @@ export interface CmdUploadImageMessage {
     readonly type: 'CMD_UPLOAD_IMAGE';
 }
 
+/** Webview requests the list of loaded worker profiles. */
+export interface CmdWorkersRequestMessage {
+    readonly type: 'workers:request';
+}
+
 /**
  * Discriminated union of all messages the Webview sends to the Extension Host.
  * Use `WebviewToHostMessageType` for the `type` string literal union.
@@ -688,6 +710,7 @@ export type WebviewToHostMessage =
     | MCPFetchResourceMessage
     | CmdUploadFileMessage
     | CmdUploadImageMessage
+    | CmdWorkersRequestMessage
     | CmdListSessionsMessage
     | CmdSearchSessionsMessage
     | CmdLoadSessionMessage
@@ -791,6 +814,33 @@ export interface FileResolver {
      * V2: Walks the AST to discover transitive imports.
      */
     resolve(phase: Phase, workspaceRoot: string): Promise<string[]>;
+}
+
+/**
+ * A specialized worker profile loaded from the worker library.
+ * Profiles are immutable after load and matched to phases via skill tags.
+ */
+export interface WorkerProfile {
+    /** Unique identifier (e.g., "react_expert"). */
+    readonly id: string;
+    /** Display name for the UI. */
+    readonly name: string;
+    /** Brief description of capabilities. */
+    readonly description: string;
+    /** Hyper-specific LLM system prompt with guardrails. */
+    readonly system_prompt: string;
+    /** Tags for skill-based routing (e.g., ["frontend", "react"]). */
+    readonly tags: readonly string[];
+    /** (Future scope) Restrict MCP tool access per worker. */
+    readonly allowed_tools?: readonly string[];
+}
+
+/** Result of matching a phase's required_skills against available WorkerProfiles. */
+export interface WorkerAssignment {
+    /** The matched worker profile. */
+    readonly profile: WorkerProfile;
+    /** Match score (0.0 – 1.0). 0 means fallback to generalist. */
+    readonly score: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

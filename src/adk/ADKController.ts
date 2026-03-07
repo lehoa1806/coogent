@@ -9,29 +9,16 @@ import type { Phase, ConversationSettings } from '../types/index.js';
 import { DEFAULT_CONVERSATION_SETTINGS } from '../types/index.js';
 import log from '../logger/log.js';
 
+import type { AgentBackendProvider } from './AgentBackendProvider.js';
+
 // ═══════════════════════════════════════════════════════════════════════════════
-//  ADK Adapter Interface (decoupled from real ADK)
+//  ADK Adapter Interface (post-audit: delegated to AgentBackendProvider)
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Abstract interface over the Antigravity Agent Development Kit.
- * Decoupled from the real ADK to enable testing with MockADKAdapter.
+ * @deprecated Use `AgentBackendProvider` directly. Kept for backward compatibility.
  */
-export interface IADKAdapter {
-    /** Create an ephemeral agent session. */
-    createSession(options: ADKSessionOptions): Promise<ADKSessionHandle>;
-    /** Terminate an agent session. */
-    terminateSession(handle: ADKSessionHandle): Promise<void>;
-    /**
-     * W-9: Optional conversation mode helper.
-     * Determines whether a new conversation should be started based on mode and prompt size.
-     */
-    shouldStartNewConversation?(
-        mode: string,
-        promptLength: number,
-        smartSwitchTokenThreshold: number
-    ): boolean;
-}
+export type IADKAdapter = AgentBackendProvider;
 
 export interface ADKSessionOptions {
     /** Start with zero context (no history, no files). */
@@ -128,7 +115,7 @@ export class ADKController extends EventEmitter {
     private _disposed = false;
 
     constructor(
-        private readonly adapter: IADKAdapter,
+        private readonly adapter: AgentBackendProvider,
         private readonly workspaceRoot: string,
         pidDirName = '.coogent/pid'
     ) {

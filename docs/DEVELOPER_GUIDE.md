@@ -106,6 +106,51 @@ coogent/
 
 ---
 
+## Worker Registry & Skill Routing
+
+### WorkerRegistry API
+
+The `WorkerRegistry` class (`src/adk/WorkerRegistry.ts`) manages worker profile loading and skill-based matching.
+
+| Method | Signature | Description |
+|---|---|---|
+| `getBestWorker` | `(requiredSkills: string[]) → Promise<WorkerAssignment>` | Returns the best-matching profile using Jaccard similarity. Falls back to the generalist when no skills match above 0. |
+| `getAvailableTags` | `() → Promise<string[]>` | Returns all unique tags across all loaded profiles. Used by PlannerAgent to populate the prompt. |
+| `getWorkers` | `() → Promise<WorkerProfile[]>` | Returns all loaded profiles. Used by the Worker Studio UI. |
+
+### Adding New Built-In Profiles
+
+Edit `src/workers/defaults.json` to add a new built-in worker:
+
+```json
+{
+  "id": "mobile_expert",
+  "name": "Mobile Expert",
+  "description": "Specialist in React Native and Swift UI development",
+  "system_prompt": "You are a mobile expert specializing in React Native and SwiftUI...",
+  "tags": ["mobile", "react-native", "swift", "ios", "android"]
+}
+```
+
+Profiles must have unique `id` values. The `tags` array drives skill-based matching.
+
+### Testing Worker Routing
+
+Tests are in `src/adk/__tests__/WorkerRegistry.test.ts` and cover:
+
+- **Default loading** — Built-in profiles are loaded on first access
+- **Cascading overrides** — Workspace `.coogent/workers.json` overrides settings which override defaults
+- **Jaccard matching** — Verifies correct profile selection for various `required_skills` combinations
+- **Tag collection** — `getAvailableTags()` returns deduplicated tags
+- **Lazy initialization** — Registry loads profiles only on first method call
+
+Run targeted tests:
+```bash
+npx jest src/adk/__tests__/WorkerRegistry
+```
+
+---
+
 ## Debugging
 
 ### Extension Host (Node.js)

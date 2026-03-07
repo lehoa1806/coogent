@@ -194,9 +194,56 @@
           "minimum": 0,
           "maximum": 10,
           "description": "Number of rotated backup log files to keep."
+        },
+        "coogent.customWorkers": {
+          "type": "array",
+          "default": [],
+          "description": "Custom worker profiles for skill-based routing. These override built-in defaults by ID.",
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "description",
+              "system_prompt",
+              "tags"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "system_prompt": {
+                "type": "string"
+              },
+              "tags": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "allowed_tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
         }
       }
-    }
+    },
+    "jsonValidation": [
+      {
+        "fileMatch": "**/.coogent/workers.json",
+        "url": "./schemas/worker.schema.json"
+      }
+    ]
   },
   "repository": {
     "type": "git",

@@ -125,4 +125,54 @@ describe('ServiceContainer', () => {
         svc.sandboxBranchCreatedForSession.add(dirName);
         expect(svc.sandboxBranchCreatedForSession.has(dirName)).toBe(true);
     });
+
+    // ── register() / resolve() typed DI ───────────────────────────────
+    it('register() stores and resolve() returns the instance', () => {
+        const mockEngine = { fake: 'engine' } as any;
+        svc.register('engine', mockEngine);
+        expect(svc.resolve('engine')).toBe(mockEngine);
+    });
+
+    it('register() throws on double registration', () => {
+        svc.register('engine', {} as any);
+        expect(() => svc.register('engine', {} as any)).toThrow(
+            /already registered/
+        );
+    });
+
+    it('isRegistered() returns false before and true after registration', () => {
+        expect(svc.isRegistered('engine')).toBe(false);
+        svc.register('engine', {} as any);
+        expect(svc.isRegistered('engine')).toBe(true);
+    });
+
+    it('getInitOrder() tracks insertion order', () => {
+        svc.register('stateManager', {} as any);
+        svc.register('engine', {} as any);
+        svc.register('adkController', {} as any);
+
+        expect(svc.getInitOrder()).toEqual([
+            'stateManager',
+            'engine',
+            'adkController',
+        ]);
+    });
+
+    it('releaseAll() clears initOrder', () => {
+        svc.register('engine', {} as any);
+        expect(svc.getInitOrder()).toHaveLength(1);
+
+        svc.releaseAll();
+        expect(svc.getInitOrder()).toHaveLength(0);
+    });
+
+    it('register() works again after releaseAll()', () => {
+        svc.register('engine', {} as any);
+        svc.releaseAll();
+
+        // Should not throw — re-registration is allowed after release
+        const newEngine = { fresh: true } as any;
+        svc.register('engine', newEngine);
+        expect(svc.resolve('engine')).toBe(newEngine);
+    });
 });

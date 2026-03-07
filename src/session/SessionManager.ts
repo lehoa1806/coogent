@@ -166,8 +166,28 @@ export class SessionManager {
 
             // Verify the session directory actually exists
             const sessionDir = path.join(workspaceRoot, '.coogent', 'ipc', dirName);
-            fsSync.accessSync(sessionDir);
-            return dirName;
+            try {
+                fsSync.accessSync(sessionDir);
+                return dirName;
+            } catch {
+                // Fallback: scan for a directory ending with the stored name.
+                // Handles pre-fix installs where bare UUIDs were persisted
+                // instead of full YYYYMMDD-HHMMSS-<uuid> directory names.
+                try {
+                    const entries = fsSync.readdirSync(
+                        path.join(workspaceRoot, '.coogent', 'ipc'),
+                        { withFileTypes: true }
+                    );
+                    for (const e of entries) {
+                        if (e.isDirectory() && e.name.endsWith(dirName)) {
+                            return e.name;
+                        }
+                    }
+                } catch {
+                    // ipc directory may not exist
+                }
+                return null;
+            }
         } catch {
             return null;
         }

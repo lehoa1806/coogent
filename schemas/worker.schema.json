@@ -1,0 +1,51 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Coogent Worker Profiles",
+    "description": "Defines specialized AI worker profiles for skill-based routing in Coogent.",
+    "type": "array",
+    "items": {
+        "type": "object",
+        "required": [
+            "id",
+            "name",
+            "description",
+            "system_prompt",
+            "tags"
+        ],
+        "properties": {
+            "id": {
+                "type": "string",
+                "pattern": "^[a-z][a-z0-9_]*$",
+                "description": "Unique identifier (snake_case, e.g., 'react_expert')"
+            },
+            "name": {
+                "type": "string",
+                "description": "Display name for the UI"
+            },
+            "description": {
+                "type": "string",
+                "description": "Brief description of the worker's capabilities"
+            },
+            "system_prompt": {
+                "type": "string",
+                "description": "Hyper-specific LLM instructions injected into the worker session"
+            },
+            "tags": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "minItems": 1,
+                "description": "Skills/domains for routing (e.g., ['frontend', 'react'])"
+            },
+            "allowed_tools": {
+                "type": "array",
+                "items": {
+                    "type": "string"
+                },
+                "description": "(Future) Restrict MCP tool access"
+            }
+        },
+        "additionalProperties": false
+    }
+}

@@ -15,12 +15,15 @@
   import PhaseDetails from "./components/PhaseDetails.svelte";
   import WorkerTerminal from "./components/WorkerTerminal.svelte";
   import ChatInput from "./components/ChatInput.svelte";
+  import WorkerStudio from "./components/WorkerStudio.svelte";
 
   import ReportModal from "./components/ReportModal.svelte";
 
   let showTerminal = $state(false);
   /** Controls the View-All plan modal triggered from ExecutionControls */
   let showPlanModal = $state(false);
+  /** Active view tab: 'phases' (default) or 'workers' */
+  let activeView: "phases" | "workers" = $state("phases");
 
   function handleToggleTerminal() {
     showTerminal = !showTerminal;
@@ -39,6 +42,9 @@
   }
 
   let isPlanning = $derived(appState.engineState === "PLANNING");
+  let showTabs = $derived(
+    !isPlanning && appState.engineState !== "PLAN_REVIEW",
+  );
 
   /**
    * BUG FIX: Auto-select the currently running (or first pending) phase
@@ -105,10 +111,38 @@
         {/if}
       </div>
     {:else if appState.engineState !== "PLAN_REVIEW"}
-      <div class="app-body">
-        <PhaseNavigator />
-        <PhaseDetails />
-      </div>
+      <!-- Tab bar for Phases / Workers view toggle -->
+      {#if showTabs}
+        <div class="view-tabs" role="tablist">
+          <button
+            class="view-tab"
+            class:active={activeView === "phases"}
+            role="tab"
+            aria-selected={activeView === "phases"}
+            onclick={() => (activeView = "phases")}
+          >
+            Phases
+          </button>
+          <button
+            class="view-tab"
+            class:active={activeView === "workers"}
+            role="tab"
+            aria-selected={activeView === "workers"}
+            onclick={() => (activeView = "workers")}
+          >
+            Workers
+          </button>
+        </div>
+      {/if}
+
+      {#if activeView === "phases"}
+        <div class="app-body">
+          <PhaseNavigator />
+          <PhaseDetails />
+        </div>
+      {:else}
+        <WorkerStudio />
+      {/if}
     {/if}
   </div>
 
@@ -143,6 +177,46 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
+  }
+
+  /* ── View Tab Bar ─────────────────────────────────────────────────── */
+  .view-tabs {
+    display: flex;
+    gap: 0;
+    padding: 0 16px;
+    border-bottom: 1px solid
+      var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    background: var(
+      --vscode-sideBar-background,
+      var(--vscode-editor-background)
+    );
+    flex-shrink: 0;
+  }
+
+  .view-tab {
+    padding: 6px 16px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--vscode-descriptionForeground);
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    font-family: var(--vscode-font-family);
+    transition:
+      color 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .view-tab:hover {
+    color: var(--vscode-foreground);
+  }
+
+  .view-tab.active {
+    color: var(--vscode-focusBorder, #007fd4);
+    border-bottom-color: var(--vscode-focusBorder, #007fd4);
   }
 
   /* ── Planning View ───────────────────────────────────────────────────── */

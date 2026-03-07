@@ -3,10 +3,27 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Scans file content for common secret patterns before injecting into
 // ephemeral AI workers. Non-blocking: returns findings for logging only.
+//
+// Sprint 4 enhancement: Allowlist support to reduce false positives.
+
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
+import * as crypto from 'node:crypto';
+import log from '../logger/log.js';
 
 export interface ScanResult {
     safe: boolean;
     findings: string[];
+}
+
+/**
+ * Allowlist configuration loaded from `.coogent/secrets-allowlist.json`.
+ * - `patterns`: Compiled RegExp objects from user-defined pattern strings.
+ * - `hashes`: Set of SHA-256 hex digests for known-safe values.
+ */
+export interface Allowlist {
+    patterns: RegExp[];
+    hashes: Set<string>;
 }
 
 /**
@@ -56,21 +73,95 @@ export class SecretsGuard {
     /** Minimum length of a value to consider for entropy analysis. */
     private static readonly MIN_ENTROPY_VALUE_LENGTH = 16;
 
+    // ── Allowlist Cache ────────────────────────────────────────────────────
+
+    /** Cached allowlists keyed by workspace root to avoid re-reading per scan. */
+    private static readonly allowlistCache = new Map<string, Allowlist>();
+
+    // ── Allowlist Loader ───────────────────────────────────────────────────
+
+    /**
+     * Load the allowlist from `.coogent/secrets-allowlist.json` in the workspace.
+     * Returns an empty allowlist if the file doesn't exist or is malformed.
+     * Results are cached per workspace root.
+     */
+    static async loadAllowlist(workspaceRoot: string): Promise<Allowlist> {
+        const cached = SecretsGuard.allowlistCache.get(workspaceRoot);
+        if (cached) return cached;
+
+        const emptyAllowlist: Allowlist = { patterns: [], hashes: new Set() };
+        const filePath = path.join(workspaceRoot, '.coogent', 'secrets-allowlist.json');
+
+        try {
+            const raw = await fs.readFile(filePath, 'utf-8');
+            const parsed = JSON.parse(raw) as Record<string, unknown>;
+
+            const patterns: RegExp[] = [];
+            if (Array.isArray(parsed['allowed_patterns'])) {
+                for (const p of parsed['allowed_patterns']) {
+                    if (typeof p === 'string') {
+                        try {
+                            patterns.push(new RegExp(p));
+                        } catch {
+                            log.warn(`[SecretsGuard] Invalid allowlist pattern: ${p}`);
+                        }
+                    }
+                }
+            }
+
+            const hashes = new Set<string>();
+            if (Array.isArray(parsed['allowed_hashes'])) {
+                for (const h of parsed['allowed_hashes']) {
+                    if (typeof h === 'string' && /^[a-f0-9]{64}$/.test(h)) {
+                        hashes.add(h);
+                    }
+                }
+            }
+
+            const allowlist: Allowlist = { patterns, hashes };
+            SecretsGuard.allowlistCache.set(workspaceRoot, allowlist);
+            log.info(
+                `[SecretsGuard] Loaded allowlist: ${patterns.length} patterns, ${hashes.size} hashes`
+            );
+            return allowlist;
+        } catch (err: unknown) {
+            const isNotFound = (err as NodeJS.ErrnoException).code === 'ENOENT';
+            if (!isNotFound) {
+                log.warn('[SecretsGuard] Failed to load allowlist:', (err as Error).message);
+            }
+            SecretsGuard.allowlistCache.set(workspaceRoot, emptyAllowlist);
+            return emptyAllowlist;
+        }
+    }
+
+    /**
+     * Clear the allowlist cache. Useful for testing or when workspace config changes.
+     */
+    static clearAllowlistCache(): void {
+        SecretsGuard.allowlistCache.clear();
+    }
+
     // ── Public API ─────────────────────────────────────────────────────────
 
     /**
      * Scan file content for secret patterns.
      *
-     * @param content  - The raw file content to scan.
-     * @param filePath - Relative path (for human-readable findings).
+     * @param content   - The raw file content to scan.
+     * @param filePath  - Relative path (for human-readable findings).
+     * @param allowlist - Optional allowlist to suppress known-safe findings.
      * @returns ScanResult with `safe: true` if clean, or findings array.
      */
-    static scan(content: string, filePath: string): ScanResult {
+    static scan(content: string, filePath: string, allowlist?: Allowlist): ScanResult {
         const findings: string[] = [];
 
         // 1. API key patterns
         for (const { name, regex } of SecretsGuard.API_KEY_PATTERNS) {
-            if (regex.test(content)) {
+            const match = regex.exec(content);
+            if (match) {
+                const matchedValue = match[0];
+                if (allowlist && SecretsGuard.isAllowlisted(matchedValue, allowlist)) {
+                    continue;
+                }
                 findings.push(`${name} pattern detected in ${filePath}`);
             }
         }
@@ -82,19 +173,21 @@ export class SecretsGuard {
 
         // 3. Environment variable secrets (KEY=value with non-empty value)
         for (const key of SecretsGuard.ENV_SECRET_KEYS) {
-            const envRe = new RegExp(`${key}\\s*=\\s*['"]?([^'"\n\\s]+)`, 'i');
+            const envRe = new RegExp(`${key}\\s*=\\s*['"]?([^'"\\n\\s]+)`, 'i');
             const match = envRe.exec(content);
             if (match && match[1] && match[1].length > 0) {
-                // Skip placeholder values
                 const val = match[1];
                 if (!SecretsGuard.isPlaceholder(val)) {
+                    if (allowlist && SecretsGuard.isAllowlisted(val, allowlist)) {
+                        continue;
+                    }
                     findings.push(`Env secret ${key}=... detected in ${filePath}`);
                 }
             }
         }
 
         // 4. High-entropy strings in assignment-like patterns
-        const assignmentRe = /(?:['"]?\w+['"]?\s*[:=]\s*)['"]([A-Za-z0-9+/=_\-]{16,})['"/]/g;
+        const assignmentRe = /(?:['"]?\w+['"]?\s*[:=]\s*)['"]([A-Za-z0-9+/=_\-]{16,})['"\/]/g;
         let m: RegExpExecArray | null;
         while ((m = assignmentRe.exec(content)) !== null) {
             const value = m[1];
@@ -107,6 +200,9 @@ export class SecretsGuard {
                     ({ regex }) => regex.test(value)
                 );
                 if (!alreadyCaught) {
+                    if (allowlist && SecretsGuard.isAllowlisted(value, allowlist)) {
+                        continue;
+                    }
                     findings.push(`High-entropy value detected in ${filePath}`);
                     break; // One finding is enough
                 }
@@ -144,6 +240,23 @@ export class SecretsGuard {
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────
+
+    /**
+     * Check if a value is allowlisted by either pattern match or hash.
+     */
+    private static isAllowlisted(value: string, allowlist: Allowlist): boolean {
+        // Check pattern matches
+        for (const pattern of allowlist.patterns) {
+            if (pattern.test(value)) return true;
+        }
+
+        // Check hash matches
+        const hash = crypto
+            .createHash('sha256')
+            .update(value)
+            .digest('hex');
+        return allowlist.hashes.has(hash);
+    }
 
     /**
      * Calculate Shannon entropy of a string.

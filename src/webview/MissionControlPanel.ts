@@ -19,6 +19,7 @@ import type { MCPClientBridge } from '../mcp/MCPClientBridge.js';
 import { RESOURCE_URIS } from '../mcp/types.js';
 import { getWebviewHtml } from './webviewHtml.js';
 import log from '../logger/log.js';
+import type { WorkerRegistry } from '../adk/WorkerRegistry.js';
 
 /** Timeout (ms) for MCP resource fetch calls from the webview. Prevents infinite loading spinners. */
 const MCP_FETCH_TIMEOUT_MS = 15_000;
@@ -72,7 +73,8 @@ export class MissionControlPanel {
     preFlightGitCheck?: PreFlightGitCheckFn,
     onReset?: OnResetFn,
     mcpServer?: CoogentMCPServer,
-    mcpClientBridge?: MCPClientBridge
+    mcpClientBridge?: MCPClientBridge,
+    workerRegistry?: WorkerRegistry
   ): void {
     const column = vscode.window.activeTextEditor?.viewColumn;
 
@@ -101,7 +103,8 @@ export class MissionControlPanel {
       preFlightGitCheck,
       onReset,
       mcpServer,
-      mcpClientBridge
+      mcpClientBridge,
+      workerRegistry
     );
   }
 
@@ -118,7 +121,8 @@ export class MissionControlPanel {
     private readonly preFlightGitCheck?: PreFlightGitCheckFn,
     private readonly onReset?: OnResetFn,
     private readonly mcpServer?: CoogentMCPServer,
-    private readonly mcpClientBridge?: MCPClientBridge
+    private readonly mcpClientBridge?: MCPClientBridge,
+    private readonly workerRegistry?: WorkerRegistry
   ) {
     this.panel = panel;
     this.panel.webview.html = this.getHtmlForWebview();
@@ -280,33 +284,51 @@ export class MissionControlPanel {
         // ERR-01: Store the prompt before the async pre-flight check so it
         // can be echoed back if the user cancels the Git warning (prompt is never lost).
         const pendingPrompt = message.payload.prompt;
+        log.info('[MissionControl] CMD_PLAN_REQUEST: prompt received, starting pre-flight...');
 
         // Git pre-flight: offer bypass instead of hard-blocking
+        // FIX: Race against a timeout to prevent the handler from hanging
+        // if the git extension or showWarningMessage is unresponsive.
         if (this.preFlightGitCheck) {
-          const check = await this.preFlightGitCheck();
-          if (check.blocked) {
-            const choice = await vscode.window.showWarningMessage(
-              `Coogent: ${check.message} `,
-              'Continue on Current Branch',
-              'Cancel'
-            );
-            if (choice !== 'Continue on Current Branch') {
-              // ERR-01: Restore the prompt to the webview chat input via
-              // a LOG_ENTRY with the sentinel [LAST_PROMPT] prefix.
-              // The Svelte messageHandler reads this and populates lastPrompt.
-              this.sendToWebview({
-                type: 'LOG_ENTRY',
-                payload: {
-                  timestamp: asTimestamp(),
-                  level: 'warn',
-                  message: `[LAST_PROMPT] ${pendingPrompt}`,
-                },
-              });
-              return;
+          try {
+            const GIT_PREFLIGHT_TIMEOUT_MS = 5_000;
+            const check = await Promise.race([
+              this.preFlightGitCheck(),
+              new Promise<{ blocked: false }>((resolve) =>
+                setTimeout(() => {
+                  log.warn('[MissionControl] CMD_PLAN_REQUEST: pre-flight git check timed out — skipping.');
+                  resolve({ blocked: false });
+                }, GIT_PREFLIGHT_TIMEOUT_MS)
+              ),
+            ]);
+            log.info(`[MissionControl] CMD_PLAN_REQUEST: pre-flight result — blocked=${check.blocked}`);
+            if (check.blocked) {
+              const choice = await vscode.window.showWarningMessage(
+                `Coogent: ${check.message} `,
+                'Continue on Current Branch',
+                'Cancel'
+              );
+              if (choice !== 'Continue on Current Branch') {
+                // ERR-01: Restore the prompt to the webview chat input via
+                // a LOG_ENTRY with the sentinel [LAST_PROMPT] prefix.
+                // The Svelte messageHandler reads this and populates lastPrompt.
+                this.sendToWebview({
+                  type: 'LOG_ENTRY',
+                  payload: {
+                    timestamp: asTimestamp(),
+                    level: 'warn',
+                    message: `[LAST_PROMPT] ${pendingPrompt}`,
+                  },
+                });
+                return;
+              }
+              this._skipSandboxBranch = true;
             }
-            this._skipSandboxBranch = true;
+          } catch (err) {
+            log.warn('[MissionControl] CMD_PLAN_REQUEST: pre-flight check threw — skipping:', err);
           }
         }
+        log.info('[MissionControl] CMD_PLAN_REQUEST: invoking engine.planRequest()');
         this.engine.planRequest(pendingPrompt);
         break;
       }
@@ -341,7 +363,7 @@ export class MissionControlPanel {
           }
           const freshStateManager = new StateManager(newSessionDir);
           this.engine.reset(freshStateManager).catch(err => this.handleError(err));
-          this.sessionManager?.setCurrentSessionId(newSessionId);
+          this.sessionManager?.setCurrentSessionId(newSessionId, newSessionDirName);
           // Notify extension.ts to update currentSessionDir and plannerAgent
           this.onReset?.(newSessionDir, newSessionDirName);
         } else {
@@ -402,6 +424,22 @@ export class MissionControlPanel {
           'coogent.deleteSession',
           { session: { sessionId: message.payload.sessionId } }
         );
+        break;
+      }
+
+      // ── Worker Studio (webview-initiated) ─────────────────────────────
+      case 'workers:request': {
+        if (!this.workerRegistry) {
+          this.sendToWebview({ type: 'workers:loaded', workers: [] });
+          break;
+        }
+        try {
+          const workers = await this.workerRegistry.getWorkers();
+          this.sendToWebview({ type: 'workers:loaded', workers });
+        } catch (err) {
+          log.error('[MissionControl] workers:request failed:', err);
+          this.sendToWebview({ type: 'workers:loaded', workers: [] });
+        }
         break;
       }
 

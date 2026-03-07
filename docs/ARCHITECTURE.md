@@ -11,9 +11,10 @@
 3. [DAG-Aware Parallel Scheduling](#dag-aware-parallel-scheduling)
 4. [In-Process MCP Server](#in-process-mcp-server)
 5. [Context Diffusion Pipeline](#context-diffusion-pipeline)
-6. [Persistence & Crash Recovery](#persistence--crash-recovery)
-7. [Git Sandboxing](#git-sandboxing)
-8. [Tech Stack](#tech-stack)
+6. [Worker Registry & Skill-Based Routing](#worker-registry--skill-based-routing)
+7. [Persistence & Crash Recovery](#persistence--crash-recovery)
+8. [Git Sandboxing](#git-sandboxing)
+9. [Tech Stack](#tech-stack)
 
 ---
 
@@ -267,6 +268,68 @@ Phases may define a `evaluators: EvaluatorType[]` array for multi-evaluator asse
 - **Argument Blacklist**: Interpreter binaries (`node`, `python`, `python3`) block `-e`, `-c`, `--eval`, `exec` flags to prevent arbitrary code execution
 - **Strict Timeouts**: All evaluator child processes enforce configurable timeouts
 - **`execFile`**: All subprocess calls use `execFile` (no shell interpolation)
+
+---
+
+## Worker Registry & Skill-Based Routing
+
+The `WorkerRegistry` matches phase requirements to specialized worker profiles, ensuring each phase is executed by a domain-appropriate AI agent.
+
+### Three-Level Cascading Configuration
+
+Worker profiles are loaded and merged in priority order:
+
+| Priority | Source | Location |
+|---|---|---|
+| 1 (highest) | Workspace file | `.coogent/workers.json` |
+| 2 | VS Code settings | `coogent.workerProfiles` |
+| 3 (lowest) | Built-in defaults | `src/workers/defaults.json` |
+
+Higher-priority profiles with matching `id` values override lower-priority ones. Non-overlapping profiles are merged into a single collection.
+
+### Jaccard Similarity Matchmaker
+
+When a phase defines `required_skills: ["frontend", "react"]`, the engine queries `WorkerRegistry.getBestWorker()`:
+
+```
+                    |intersection(required, profile.tags)|
+Jaccard Score =  ────────────────────────────────────────────
+                      |union(required, profile.tags)|
+```
+
+The profile with the highest non-zero Jaccard score is selected. If no profile scores above 0, the generalist fallback worker is used (empty tags match everything by convention).
+
+### Data Flow
+
+```
+User Prompt → PlannerAgent
+                │
+                ├── getAvailableTags() → Injects skill tags into planner prompt
+                │
+                └── Generates phases with required_skills: [...]
+                                │
+                                ▼
+                          Engine.dispatchPhase()
+                                │
+                                ├── getBestWorker(phase.required_skills)
+                                │        │
+                                │        └── WorkerAssignment { profile, score }
+                                │
+                                └── ADKController.spawnWorker()
+                                         │
+                                         └── Injects profile.system_prompt
+                                             into the AI agent session
+```
+
+### Worker Studio UI
+
+The Mission Control webview includes a **Workers** tab that displays all loaded profiles:
+
+- Profile name and unique ID
+- Description of capabilities
+- Skill tags (used for Jaccard matching)
+
+The tab sends `workers:request` → receives `workers:loaded` via the standard IPC contract.
 
 ---
 

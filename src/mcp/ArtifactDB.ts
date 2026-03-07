@@ -142,16 +142,19 @@ export class ArtifactDB {
 
         let db: Database;
 
-        // Load existing DB from disk, or create a fresh one
-        if (fs.existsSync(dbPath)) {
-            const buffer = fs.readFileSync(dbPath);
-            db = new SQL.Database(buffer);
+        // Load existing DB from disk, or create a fresh one (async I/O)
+        let existingData: Buffer | null = null;
+        try {
+            existingData = await fsp.readFile(dbPath);
+        } catch {
+            // ENOENT — fresh database will be created below
+        }
+
+        if (existingData) {
+            db = new SQL.Database(existingData);
         } else {
             // Ensure parent directory exists
-            const dir = path.dirname(dbPath);
-            if (!fs.existsSync(dir)) {
-                fs.mkdirSync(dir, { recursive: true });
-            }
+            await fsp.mkdir(path.dirname(dbPath), { recursive: true });
             db = new SQL.Database();
         }
 
@@ -168,8 +171,8 @@ export class ArtifactDB {
 
         const instance = new ArtifactDB(db, dbPath);
 
-        // Initial flush to persist the schema to disk (synchronous for create)
-        instance.flushSync();
+        // Initial flush to persist the schema to disk (async — safe in factory)
+        await instance.flushAsync();
 
         return instance;
     }
@@ -623,7 +626,7 @@ export class ArtifactDB {
     }
 
     /**
-     * Synchronous flush for use in `close()` and initial `create()`.
+     * Synchronous flush for use in `close()` only.
      *
      * VS Code's `deactivate()` may not reliably await async operations,
      * so the final flush before WASM memory is freed must be synchronous.
