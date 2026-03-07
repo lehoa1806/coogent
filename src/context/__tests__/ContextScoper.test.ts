@@ -37,7 +37,7 @@ describe('ContextScoper', () => {
             expect(res.payload).toContain('Hello world');
             expect(res.payload).toContain('<<<FILE: file2.txt>>>');
             expect(res.payload).toContain('Foo bar');
-            expect(res.breakdown.length).toBe(2);
+            expect(res.breakdown.length).toBeGreaterThanOrEqual(2);
         }
     });
 

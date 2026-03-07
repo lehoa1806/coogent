@@ -2,7 +2,7 @@
 // src/evaluators/EvaluatorRegistry.ts — Strategy registry for phase evaluation
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { IEvaluator, EvaluatorType } from '../types/index.js';
+import type { IEvaluator, EvaluatorType, Phase } from '../types/index.js';
 import { ExitCodeEvaluatorV2 } from './ExitCodeEvaluator.js';
 import { RegexEvaluator } from './RegexEvaluator.js';
 import { ToolchainEvaluatorV2 } from './ToolchainEvaluator.js';
@@ -30,5 +30,19 @@ export class EvaluatorRegistryV2 {
      */
     getEvaluator(type?: EvaluatorType): IEvaluator {
         return this.evaluators.get(type ?? 'exit_code') ?? this.evaluators.get('exit_code')!;
+    }
+
+    /**
+     * Get the evaluator(s) for a phase.
+     * When `phase.evaluators` is set (composite mode), returns all matching evaluators.
+     * Otherwise falls back to `[getEvaluator(phase.evaluator)]`.
+     */
+    getEvaluators(phase: Phase): IEvaluator[] {
+        if (phase.evaluators && phase.evaluators.length > 0) {
+            return phase.evaluators
+                .filter(t => t !== 'composite') // skip 'composite' meta-type
+                .map(t => this.getEvaluator(t));
+        }
+        return [this.getEvaluator(phase.evaluator)];
     }
 }

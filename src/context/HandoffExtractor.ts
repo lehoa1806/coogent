@@ -6,6 +6,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import type { Phase, PhaseId } from '../types/index.js';
 import type { MCPClientBridge } from '../mcp/MCPClientBridge.js';
+import { SecretsGuard } from './SecretsGuard.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -99,12 +100,23 @@ export class HandoffExtractor {
             }
         }
 
+        // Redact any secrets that may have leaked into worker output before persisting
+        const decisions = (Array.isArray(parsed.decisions) ? parsed.decisions : []).map(
+            (d: string) => SecretsGuard.redact(String(d))
+        );
+        const unresolvedIssues = (Array.isArray(parsed.unresolved_issues) ? parsed.unresolved_issues : []).map(
+            (i: string) => SecretsGuard.redact(String(i))
+        );
+        const nextSteps = typeof parsed.next_steps_context === 'string'
+            ? SecretsGuard.redact(parsed.next_steps_context)
+            : '';
+
         return {
             phaseId,
-            decisions: Array.isArray(parsed.decisions) ? parsed.decisions : [],
+            decisions,
             modified_files: Array.isArray(parsed.modified_files) ? parsed.modified_files : [],
-            unresolved_issues: Array.isArray(parsed.unresolved_issues) ? parsed.unresolved_issues : [],
-            next_steps_context: typeof parsed.next_steps_context === 'string' ? parsed.next_steps_context : '',
+            unresolved_issues: unresolvedIssues,
+            next_steps_context: nextSteps,
             file_contents: fileContents,
             timestamp: Date.now(),
         };

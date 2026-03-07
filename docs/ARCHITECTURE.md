@@ -56,9 +56,9 @@
 │                                                                        │
 │  ┌──────────────┐  ┌─────────────┐  ┌───────────────────────────────┐  │
 │  │  appState     │  │  mcpStore   │  │  Components                   │  │
-│  │  (writable)   │  │  (factory)  │  │  PlanReview, PhaseDetails,    │  │
-│  │               │  │             │  │  PhaseHeader, PhaseActions,   │  │
-│  │               │  │             │  │  PhaseHandoff, Terminal, ...   │  │
+│  │  ($state)     │  │  ($state    │  │  PlanReview, PhaseDetails,    │  │
+│  │  ($derived)   │  │   factory)  │  │  PhaseHeader, PhaseActions,   │  │
+│  │  ($effect)    │  │             │  │  PhaseHandoff, Terminal, ...   │  │
 │  └──────────────┘  └─────────────┘  └───────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
@@ -103,23 +103,45 @@ The `Engine` class implements a strict 9-state FSM governing the entire task lif
 | `ERROR_PAUSED` | Phase failed or worker crashed; halted for user decision. |
 | `COMPLETED` | All phases passed. Terminal state. |
 
-### Transition Events
+### Transition Events (18 `EngineEvent` values)
 
-`PLAN`, `PLAN_READY`, `APPROVE`, `PARSE_OK`, `START`, `WORKER_EXITED`, `EVALUATE_OK`, `EVALUATE_FAIL`, `RETRY`, `ABORT`, `RESET`
+| Event | Trigger |
+|---|---|
+| `PLAN_REQUEST` | User submits a prompt |
+| `PLAN_GENERATED` | PlannerAgent produces a draft |
+| `PLAN_APPROVED` | User approves the plan |
+| `PLAN_REJECTED` | User rejects with feedback → re-plan |
+| `LOAD_RUNBOOK` | Existing runbook loaded from disk |
+| `PARSE_SUCCESS` | Runbook validated and parsed |
+| `PARSE_FAILURE` | Validation failed (schema or cycle) |
+| `START` | First dispatch of ready phases |
+| `RESUME` | Resume after pause (semantically distinct from `START`) |
+| `WORKER_EXITED` | Last active worker finished |
+| `ALL_PHASES_PASS` | All phases completed successfully |
+| `PHASE_PASS` | Current phase passed, more phases remain |
+| `PHASE_FAIL` | Phase evaluation failed |
+| `WORKER_TIMEOUT` | Worker exceeded time limit |
+| `WORKER_CRASH` | Worker process crashed unexpectedly |
+| `RETRY` | User or self-healer triggers retry |
+| `SKIP_PHASE` | User skips a phase |
+| `ABORT` | User aborts the entire run |
+| `RESET` | Reset engine to IDLE |
 
 ### State Transition Diagram
 
 ```
-IDLE ──PLAN──► PLANNING ──PLAN_READY──► PLAN_REVIEW ──APPROVE──► PARSING
-                                                                     │
-                                                                 PARSE_OK
-                                                                     │
-COMPLETED ◄──EVALUATE_OK── EVALUATING ◄──WORKER_EXITED── EXECUTING_WORKER ◄──START── READY
-                              │                                  ▲       │
-                         EVALUATE_FAIL                           │       │
-                              │                            (frontier     │
-                              ▼                             dispatch)    │
-                        ERROR_PAUSED ──RETRY──► READY ───────────────────┘
+IDLE ──PLAN_REQUEST──► PLANNING ──PLAN_GENERATED──► PLAN_REVIEW ──PLAN_APPROVED──► PARSING
+         ▲                ▲                              │                            │
+       RESET         PLAN_REJECTED                       │                      PARSE_SUCCESS
+         │                                               │                            │
+COMPLETED ◄──ALL_PHASES_PASS── EVALUATING ◄──WORKER_EXITED── EXECUTING_WORKER ◄──START── READY
+                                   │                                ▲       │
+                              PHASE_FAIL                            │       │
+                              WORKER_TIMEOUT                  (frontier     │
+                              WORKER_CRASH                    dispatch)     │
+                                   │                                        │
+                                   ▼                                        │
+                             ERROR_PAUSED ──RETRY──► READY ─────────────────┘
 ```
 
 ---
@@ -204,10 +226,12 @@ The `ContextScoper` prepares minimal file payloads for workers:
 
 - **Discovery**: Reads paths from the runbook phase `context_files` (with AST-based import resolution via `ASTFileResolver`)
 - **Guards**: File existence checks + binary detection (null-byte heuristic in first 8KB)
-- **Secrets Detection**: `SecretsGuard` scans file content for API keys, private keys, `.env` patterns, and high-entropy strings (Shannon entropy > 4.5). Findings are logged as warnings (non-blocking)
+- **Secrets Detection**: `SecretsGuard` scans file content for API keys (AWS, OpenAI, Stripe, Google, JWT), private keys, `.env` patterns, and high-entropy strings (Shannon entropy > 4.5). Detected secrets are redacted with `[REDACTED]`
+- **Repo Map**: `RepoMap` generates a lightweight directory listing (~500 tokens) prepended to the file payload, giving workers structural awareness of the repository
 - **Formatting**: Each file wrapped in `<<<FILE: path>>>\n{content}\n<<<END FILE>>>`
 - **Budget Enforcement**: If assembled payload exceeds `coogent.tokenLimit`, execution halts with user notification
-- **Output Batching**: Worker output streams through `OutputBufferRegistry` (100ms timer / 4KB buffer) to prevent IPC channel saturation
+- **Output Scanning**: Worker output streams are scanned by `SecretsGuard` and redacted before broadcasting to the UI
+- **Output Batching**: Worker output streams through `OutputBufferRegistry` (100ms timer / 4KB buffer, 1MB upper bound) to prevent IPC channel saturation
 
 ### Tokenizers
 
@@ -215,6 +239,34 @@ The `ContextScoper` prepares minimal file payloads for workers:
 |---|---|---|
 | V1 (current, default) | `TiktokenEncoder` | Model-accurate via `js-tiktoken` WASM (`cl100k_base`), lazy-initialized |
 | V1 (fallback) | `CharRatioEncoder` | Fast, dependency-free (~4 chars/token) — used if tiktoken init fails |
+
+---
+
+## Pluggable Evaluator System (V2)
+
+The `EvaluatorRegistryV2` implements the **Strategy pattern** for phase success evaluation.
+
+### Evaluator Types
+
+| Type | Criteria Format | Behavior |
+|---|---|---|
+| `exit_code` | `exit_code:N` | Match worker process exit code (default: 0) |
+| `regex` | `regex:<pattern>` or `regex_fail:<pattern>` | Match/reject stdout against a regular expression |
+| `toolchain` | `toolchain:<cmd>` | Run a whitelisted binary via `execFile` (no shell) |
+| `test_suite` | `test_suite:<cmd>` | Run a test command, parse pass/fail results |
+
+All evaluators return `EvaluationResult { passed, reason, retryPrompt? }`. The optional `retryPrompt` integrates with `SelfHealingController.buildHealingPromptWithContext()` for intelligent retry feedback.
+
+### Composite Evaluation
+
+Phases may define a `evaluators: EvaluatorType[]` array for multi-evaluator assessment. The Engine runs all evaluators in sequence using **fail-fast** semantics — the first failure halts evaluation and aggregates `retryPrompt` strings. When `evaluators` is absent, the single `evaluator` field is used (defaulting to `exit_code`).
+
+### Security Boundaries
+
+- **Binary Whitelist**: `TOOLCHAIN_WHITELIST` restricts executable binaries to `node`, `npm`, `npx`, `python`, `python3`, `cargo`, `go`, `make`
+- **Argument Blacklist**: Interpreter binaries (`node`, `python`, `python3`) block `-e`, `-c`, `--eval`, `exec` flags to prevent arbitrary code execution
+- **Strict Timeouts**: All evaluator child processes enforce configurable timeouts
+- **`execFile`**: All subprocess calls use `execFile` (no shell interpolation)
 
 ---
 

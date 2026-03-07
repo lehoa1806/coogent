@@ -74,8 +74,8 @@ coogent/
 │   ├── state/                    ← StateManager (WAL + mutex + AJV validation)
 │   ├── mcp/                      ← CoogentMCPServer, MCPClientBridge, ArtifactDB (SQLite)
 │   ├── adk/                      ← ADKController, ADKAdapter, OutputBuffer, OutputBufferRegistry
-│   ├── context/                  ← ContextScoper, ASTFileResolver, TokenPruner, TiktokenEncoder, SecretsGuard
-│   ├── evaluators/               ← CompilerEvaluator (exit_code, regex, toolchain, test_suite)
+│   ├── context/                  ← ContextScoper, ASTFileResolver, TokenPruner, TiktokenEncoder, SecretsGuard, RepoMap
+│   ├── evaluators/               ← EvaluatorRegistryV2 (exit_code, regex, toolchain, test_suite) + constants
 │   ├── git/                      ← GitManager (execFile), GitSandboxManager (VS Code Git API)
 │   ├── consolidation/            ← ConsolidationAgent (phase aggregation → report)
 │   ├── session/                  ← SessionManager (history, search, pruning)

@@ -31,6 +31,8 @@ export class SecretsGuard {
         { name: 'GitLab PAT', regex: /glpat-[A-Za-z0-9\-_]{20,}/ },
         { name: 'Stripe Secret Key', regex: /sk_live_[A-Za-z0-9]{24,}/ },
         { name: 'Stripe Restricted Key', regex: /rk_live_[A-Za-z0-9]{24,}/ },
+        { name: 'JWT Token', regex: /eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/ },
+        { name: 'Google API Key', regex: /AIza[0-9A-Za-z\-_]{35}/ },
     ];
 
     private static readonly PRIVATE_KEY_RE =
@@ -114,6 +116,31 @@ export class SecretsGuard {
         return findings.length > 0
             ? { safe: false, findings }
             : { safe: true, findings: [] };
+    }
+
+    /**
+     * Redact detected secret patterns in content, replacing matches with
+     * `[REDACTED]`. Used on worker output streams before broadcasting
+     * to the UI and persisting to telemetry logs.
+     *
+     * @param content - The raw content (stdout/stderr) to redact.
+     * @returns Content with detected secrets replaced by `[REDACTED]`.
+     */
+    static redact(content: string): string {
+        let result = content;
+
+        // 1. API key patterns
+        for (const { regex } of SecretsGuard.API_KEY_PATTERNS) {
+            result = result.replace(new RegExp(regex.source, 'g'), '[REDACTED]');
+        }
+
+        // 2. Private key headers
+        result = result.replace(
+            new RegExp(SecretsGuard.PRIVATE_KEY_RE.source, 'g'),
+            '[REDACTED]'
+        );
+
+        return result;
     }
 
     // ── Helpers ─────────────────────────────────────────────────────────────

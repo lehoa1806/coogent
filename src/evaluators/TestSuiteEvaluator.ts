@@ -6,21 +6,14 @@ import type { IEvaluator, EvaluatorType, Phase, EvaluationResult } from '../type
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import log from '../logger/log.js';
+import {
+    TOOLCHAIN_WHITELIST,
+    INTERPRETER_BINARIES,
+    BLOCKED_ARGS,
+    TEST_SUITE_TIMEOUT_MS,
+} from './constants.js';
 
 const execFileAsync = promisify(execFile);
-
-/** Allowed binaries (shared with ToolchainEvaluator). */
-const TOOLCHAIN_WHITELIST = new Set([
-    'make', 'npm', 'npx', 'tsc', 'node',
-    'cargo', 'go', 'python', 'python3',
-    'swift', 'swiftc', 'xcodebuild',
-    'gcc', 'g++', 'clang', 'clang++',
-    'cmake', 'gradle', 'mvn',
-    'dotnet', 'rustc',
-]);
-
-/** Maximum execution time for test suites (ms). */
-const TEST_SUITE_TIMEOUT_MS = 300_000;
 
 /** Known failure patterns across common test frameworks. */
 const FAILURE_PATTERNS: { pattern: RegExp; framework: string }[] = [
@@ -41,8 +34,9 @@ const FAILURE_PATTERNS: { pattern: RegExp; framework: string }[] = [
  *
  * Security:
  * - Only binaries in TOOLCHAIN_WHITELIST are allowed.
+ * - Interpreter binaries (node, python) blocked from -e/-c arbitrary execution.
  * - Uses execFile (no shell) to prevent command injection.
- * - Strict timeout of 300 seconds.
+ * - Strict timeout enforced via TOOLCHAIN_TIMEOUT_MS.
  */
 export class TestSuiteEvaluatorV2 implements IEvaluator {
     readonly type: EvaluatorType = 'test_suite';
@@ -82,6 +76,18 @@ export class TestSuiteEvaluatorV2 implements IEvaluator {
                 passed: false,
                 reason: `Binary "${binary}" is not in the allowed whitelist.`,
             };
+        }
+
+        // Block arbitrary code execution via interpreter flags (-e, -c, --eval)
+        if (INTERPRETER_BINARIES.has(binary)) {
+            const blocked = args.find(a => BLOCKED_ARGS.has(a));
+            if (blocked) {
+                log.error(`[TestSuiteEvaluatorV2] Blocked dangerous flag "${blocked}" for interpreter "${binary}"`);
+                return {
+                    passed: false,
+                    reason: `Flag "${blocked}" is blocked for interpreter "${binary}" to prevent arbitrary code execution.`,
+                };
+            }
         }
 
         try {

@@ -1,7 +1,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { ADKController, MockADKAdapter } from '../ADKController.js';
+import { ADKController } from '../ADKController.js';
+import { MockADKAdapter } from './mocks/MockADKAdapter.js';
 import type { Phase } from '../../types/index.js';
 import { asPhaseId } from '../../types/index.js';
 

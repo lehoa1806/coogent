@@ -10,6 +10,7 @@ import type { FileResolver } from '../types/index.js';
 import { TokenPruner, type PrunableEntry } from './TokenPruner.js';
 import { TiktokenEncoder } from './TiktokenEncoder.js';
 import { SecretsGuard } from './SecretsGuard.js';
+import { generateRepoMap } from './RepoMap.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -204,16 +205,33 @@ export class ContextScoper {
         }
 
         // Assemble delimited payload
-        const payload = pruneResult.entries
+        const filePayload = pruneResult.entries
             .map(e => `<<<FILE: ${e.path}>>>\n${e.content}\n<<<END FILE>>>`)
             .join('\n\n');
+
+        // Prepend repo-map for structural awareness (token cost deducted below)
+        let repoMap = '';
+        try {
+            repoMap = await generateRepoMap(workspaceRoot);
+        } catch {
+            log.warn('[ContextScoper] RepoMap generation failed — skipping.');
+        }
+
+        const repoMapTokens = repoMap ? this.encoder.countTokens(repoMap) : 0;
+        const totalWithMap = pruneResult.totalTokens + repoMapTokens;
+        const payload = repoMap
+            ? `${repoMap}\n\n${filePayload}`
+            : filePayload;
 
         return {
             ok: true,
             payload,
-            totalTokens: pruneResult.totalTokens,
+            totalTokens: totalWithMap,
             limit: pruneResult.limit,
-            breakdown: pruneResult.breakdown,
+            breakdown: [
+                ...(repoMap ? [{ path: '<repo-map>', tokens: repoMapTokens }] : []),
+                ...pruneResult.breakdown,
+            ],
         };
     }
 }

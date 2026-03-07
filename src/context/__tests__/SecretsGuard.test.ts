@@ -188,4 +188,47 @@ describe('SecretsGuard', () => {
         expect(result.safe).toBe(false);
         expect(result.findings[0]).toContain('src/config/keys.ts');
     });
+
+    // ── JWT and Google API Key Patterns ───────────────────────────────────
+
+    it('detects JWT tokens', () => {
+        const content = 'Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0';
+        const result = SecretsGuard.scan(content, 'auth.ts');
+        expect(result.safe).toBe(false);
+        expect(result.findings).toEqual(
+            expect.arrayContaining([expect.stringContaining('JWT Token')])
+        );
+    });
+
+    it('detects Google API keys', () => {
+        const content = 'const apiKey = "AIzaSyC0X1Y2Z3a4B5c6D7E8F9G0H1I2J3K4L5M"';
+        const result = SecretsGuard.scan(content, 'maps.ts');
+        expect(result.safe).toBe(false);
+        expect(result.findings).toEqual(
+            expect.arrayContaining([expect.stringContaining('Google API Key')])
+        );
+    });
+
+    // ── Redact ────────────────────────────────────────────────────────────
+
+    it('redact() replaces JWT tokens', () => {
+        const input = 'Token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0 found';
+        const result = SecretsGuard.redact(input);
+        expect(result).toContain('[REDACTED]');
+        expect(result).not.toContain('eyJhbGci');
+    });
+
+    it('redact() replaces Google API keys', () => {
+        const input = 'key=AIzaSyC0X1Y2Z3a4B5c6D7E8F9G0H1I2J3K4L5M';
+        const result = SecretsGuard.redact(input);
+        expect(result).toContain('[REDACTED]');
+        expect(result).not.toContain('AIzaSy');
+    });
+
+    it('redact() replaces AWS keys', () => {
+        const input = 'key=AKIAIOSFODNN7EXAMPLE';
+        const result = SecretsGuard.redact(input);
+        expect(result).toContain('[REDACTED]');
+        expect(result).not.toContain('AKIA');
+    });
 });

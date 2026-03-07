@@ -211,4 +211,43 @@ describe('EvaluatorRegistryV2', () => {
         const evaluator = registry.getEvaluator('unknown' as any);
         expect(evaluator).toBeInstanceOf(ExitCodeEvaluatorV2);
     });
+
+    // ── Composite evaluator support (getEvaluators) ──────────────────────
+
+    it('getEvaluators() returns single evaluator for phase with evaluator field', () => {
+        const phase = makePhase({ evaluator: 'regex' });
+        const evaluators = registry.getEvaluators(phase);
+        expect(evaluators).toHaveLength(1);
+        expect(evaluators[0]).toBeInstanceOf(RegexEvaluator);
+    });
+
+    it('getEvaluators() returns multiple evaluators for phase with evaluators array', () => {
+        const phase = makePhase({ evaluators: ['exit_code', 'regex'] });
+        const evaluators = registry.getEvaluators(phase);
+        expect(evaluators).toHaveLength(2);
+        expect(evaluators[0]).toBeInstanceOf(ExitCodeEvaluatorV2);
+        expect(evaluators[1]).toBeInstanceOf(RegexEvaluator);
+    });
+
+    it('getEvaluators() falls back to evaluator field when evaluators is empty', () => {
+        const phase = makePhase({ evaluator: 'toolchain', evaluators: [] });
+        const evaluators = registry.getEvaluators(phase);
+        expect(evaluators).toHaveLength(1);
+        expect(evaluators[0]).toBeInstanceOf(ToolchainEvaluatorV2);
+    });
+
+    it('getEvaluators() filters out composite meta-type', () => {
+        const phase = makePhase({ evaluators: ['composite', 'exit_code', 'regex'] });
+        const evaluators = registry.getEvaluators(phase);
+        expect(evaluators).toHaveLength(2);
+        expect(evaluators[0]).toBeInstanceOf(ExitCodeEvaluatorV2);
+        expect(evaluators[1]).toBeInstanceOf(RegexEvaluator);
+    });
+
+    it('getEvaluators() defaults to exit_code when phase has no evaluator fields', () => {
+        const phase = makePhase();
+        const evaluators = registry.getEvaluators(phase);
+        expect(evaluators).toHaveLength(1);
+        expect(evaluators[0]).toBeInstanceOf(ExitCodeEvaluatorV2);
+    });
 });

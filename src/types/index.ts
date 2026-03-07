@@ -109,6 +109,12 @@ export interface Phase {
      */
     evaluator?: EvaluatorType;
     /**
+     * List of evaluators to run in composite mode.
+     * When present, takes precedence over `evaluator` — all evaluators
+     * run in sequence and the phase fails if ANY evaluator fails.
+     */
+    evaluators?: EvaluatorType[];
+    /**
      * Maximum number of self-healing retries for this phase.
      * Overrides the global `maxRetries` setting.
      */
@@ -792,7 +798,7 @@ export interface FileResolver {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /** Evaluator type discriminant. */
-export type EvaluatorType = 'exit_code' | 'regex' | 'toolchain' | 'test_suite';
+export type EvaluatorType = 'exit_code' | 'regex' | 'toolchain' | 'test_suite' | 'composite';
 
 /** Result of evaluating a phase's success criteria. */
 export interface EvaluationResult {
@@ -831,21 +837,6 @@ export interface IEvaluator {
     ): Promise<EvaluationResult>;
 }
 
-/**
- * Pluggable interface for evaluating phase success.
- * Implementations can verify exit codes, regex on stdout, compiler output, etc.
- * @deprecated Use {@link IEvaluator} instead, which returns structured {@link EvaluationResult}
- * with diagnostic feedback for the SelfHealingController.
- */
-export interface SuccessEvaluator {
-    /** Unique type identifier (matches `phase.evaluator`). */
-    readonly type: EvaluatorType;
-    /**
-     * Evaluate whether a phase succeeded.
-     * @returns `true` if the phase should be marked as passed.
-     */
-    evaluate(criteria: string, exitCode: number, stdout: string, stderr: string): Promise<boolean>;
-}
 
 /** Result of a self-healing attempt. */
 export interface HealingAttempt {
