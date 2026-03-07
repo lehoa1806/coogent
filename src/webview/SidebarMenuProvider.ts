@@ -183,6 +183,7 @@ export class SidebarMenuProvider implements vscode.TreeDataProvider<vscode.TreeI
 function formatRelativeTime(timestamp: number): string {
     if (!timestamp) return '';
     const diff = Date.now() - timestamp;
+    if (diff < 0) return '';  // Future timestamp (e.g. UUIDv4 sessions) — skip
     const seconds = Math.floor(diff / 1000);
     const minutes = Math.floor(seconds / 60);
     const hours = Math.floor(minutes / 60);

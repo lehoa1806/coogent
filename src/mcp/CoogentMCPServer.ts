@@ -248,6 +248,22 @@ export class CoogentMCPServer {
     }
 
     /**
+     * Persist accumulated worker output for a phase.
+     * Called by EngineWiring on worker exit to survive session loads.
+     */
+    upsertWorkerOutput(masterTaskId: string, phaseId: string, output: string): void {
+        this.db.upsertWorkerOutput(masterTaskId, phaseId, output);
+    }
+
+    /**
+     * Retrieve all persisted worker outputs for a task, keyed by phase_id.
+     * Used during session load to hydrate the webview.
+     */
+    getWorkerOutputs(masterTaskId: string): Record<string, string> {
+        return this.db.getWorkerOutputs(masterTaskId);
+    }
+
+    /**
      * Register a listener for the `phaseCompleted` event.
      * Fires whenever `submit_phase_handoff` is called successfully.
      */
