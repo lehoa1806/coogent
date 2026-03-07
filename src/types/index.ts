@@ -794,9 +794,48 @@ export interface FileResolver {
 /** Evaluator type discriminant. */
 export type EvaluatorType = 'exit_code' | 'regex' | 'toolchain' | 'test_suite';
 
+/** Result of evaluating a phase's success criteria. */
+export interface EvaluationResult {
+    /** Whether the phase passed the evaluation. */
+    readonly passed: boolean;
+    /** Human-readable reason for the verdict. */
+    readonly reason: string;
+    /**
+     * Optional augmented prompt to feed back to the SelfHealingController
+     * when the phase fails. Contains diagnostic output (capped at 4KB).
+     */
+    readonly retryPrompt?: string;
+}
+
+/**
+ * Pluggable evaluator interface (V2).
+ * Implementations verify phase success and produce diagnostic feedback
+ * for the SelfHealingController on failure.
+ */
+export interface IEvaluator {
+    /** Unique type identifier (matches `phase.evaluator`). */
+    readonly type: EvaluatorType;
+    /**
+     * Evaluate whether a phase succeeded.
+     * @param phase - The phase configuration (for access to success_criteria, evaluator type, etc.).
+     * @param exitCode - The worker process exit code.
+     * @param stdout - Captured stdout from the worker.
+     * @param stderr - Captured stderr from the worker.
+     * @returns An EvaluationResult with pass/fail verdict, reason, and optional retry prompt.
+     */
+    evaluate(
+        phase: Phase,
+        exitCode: number,
+        stdout: string,
+        stderr: string
+    ): Promise<EvaluationResult>;
+}
+
 /**
  * Pluggable interface for evaluating phase success.
  * Implementations can verify exit codes, regex on stdout, compiler output, etc.
+ * @deprecated Use {@link IEvaluator} instead, which returns structured {@link EvaluationResult}
+ * with diagnostic feedback for the SelfHealingController.
  */
 export interface SuccessEvaluator {
     /** Unique type identifier (matches `phase.evaluator`). */

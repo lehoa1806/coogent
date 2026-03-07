@@ -18,11 +18,12 @@ import type {
     Phase,
     PhaseId,
     HostToWebviewMessage,
+    EvaluationResult,
 } from '../types/index.js';
 import { StateManager } from '../state/StateManager.js';
 import { Scheduler } from './Scheduler.js';
 import { SelfHealingController } from './SelfHealing.js';
-import { EvaluatorRegistry } from '../evaluators/CompilerEvaluator.js';
+import { EvaluatorRegistryV2 } from '../evaluators/EvaluatorRegistry.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Engine Events — typed EventEmitter
@@ -110,7 +111,7 @@ export class Engine extends EventEmitter {
     // ── Pillar 2+3 subsystems ────────────────────────────────────────────
     private readonly scheduler: Scheduler;
     private readonly healer: SelfHealingController;
-    private evaluatorRegistry: EvaluatorRegistry | null = null;
+    private evaluatorRegistry: EvaluatorRegistryV2 | null = null;
 
     constructor(
         private stateManager: StateManager,
@@ -124,7 +125,7 @@ export class Engine extends EventEmitter {
         this.scheduler = options?.scheduler ?? new Scheduler();
         this.healer = options?.healer ?? new SelfHealingController();
         if (options?.workspaceRoot) {
-            this.evaluatorRegistry = new EvaluatorRegistry(options.workspaceRoot);
+            this.evaluatorRegistry = new EvaluatorRegistryV2(options.workspaceRoot);
         }
     }
 
@@ -833,15 +834,15 @@ export class Engine extends EventEmitter {
             this.activeWorkerCount = Math.max(0, this.activeWorkerCount - 1);
             const isLastWorker = this.activeWorkerCount === 0;
 
-            const passed = await this.evaluatePhaseResult(phase, exitCode, stdout, stderr);
+            const result = await this.evaluatePhaseResult(phase, exitCode, stdout, stderr);
 
             if (isLastWorker) {
                 // Last worker exited — do full FSM transition
                 this.transition(EngineEvent.WORKER_EXITED);
-                await this.applyVerdict(phase, passed, exitCode, stderr);
+                await this.applyVerdict(phase, result, exitCode, stderr);
             } else {
                 // Other workers still running — evaluate in-place without FSM transition
-                await this.applyVerdictInPlace(phase, passed, exitCode, stderr);
+                await this.applyVerdictInPlace(phase, result, exitCode, stderr);
             }
         });
         return this.workerExitLock;
@@ -857,12 +858,29 @@ export class Engine extends EventEmitter {
         exitCode: number,
         stdout: string,
         stderr: string
-    ): Promise<boolean> {
+    ): Promise<EvaluationResult> {
         if (this.evaluatorRegistry) {
-            const evaluator = this.evaluatorRegistry.get(phase.evaluator);
-            return evaluator.evaluate(phase.success_criteria, exitCode, stdout, stderr);
+            const evaluator = this.evaluatorRegistry.getEvaluator(phase.evaluator);
+            const result = await evaluator.evaluate(phase, exitCode, stdout, stderr);
+            log.info(`[Engine] Evaluator (${evaluator.type}) verdict: ${result.passed ? 'PASS' : 'FAIL'} — ${result.reason}`);
+            return result;
         }
-        return this.evaluateSuccess(phase.success_criteria, exitCode);
+        // Fallback: simple exit code matching (V1 compat)
+        const passed = this.evaluateSuccess(phase.success_criteria, exitCode);
+        const reason = passed
+            ? `Exit code ${exitCode} matches criteria.`
+            : `Exit code ${exitCode} does not match criteria "${phase.success_criteria}".`;
+
+        if (passed) {
+            return { passed: true, reason };
+        }
+
+        const trimmedStderr = stderr.slice(-4096);
+        return {
+            passed: false,
+            reason,
+            ...(trimmedStderr ? { retryPrompt: trimmedStderr } : {}),
+        };
     }
 
     /**
@@ -871,13 +889,13 @@ export class Engine extends EventEmitter {
      */
     public async applyVerdict(
         phase: Phase,
-        passed: boolean,
+        result: EvaluationResult,
         exitCode: number,
         stderr: string
     ): Promise<void> {
         if (!this.runbook) return;
 
-        if (passed) {
+        if (result.passed) {
             phase.status = 'completed';
             this.healer.clearAttempts(phase.id);
             this.emitUIMessage({
@@ -926,7 +944,9 @@ export class Engine extends EventEmitter {
             this.healer.recordFailure(phase.id, exitCode, stderr);
 
             if (this.healer.canRetryWithPhase(phase)) {
-                const augmentedPrompt = this.healer.buildHealingPrompt(phase);
+                const augmentedPrompt = result.retryPrompt
+                    ? this.healer.buildHealingPromptWithContext(phase, result.retryPrompt)
+                    : this.healer.buildHealingPrompt(phase);
                 const delay = this.healer.getRetryDelay(phase.id);
                 const attempt = this.healer.getAttemptCount(phase.id);
 
@@ -979,13 +999,13 @@ export class Engine extends EventEmitter {
      */
     private async applyVerdictInPlace(
         phase: Phase,
-        passed: boolean,
+        result: EvaluationResult,
         exitCode: number,
         stderr: string
     ): Promise<void> {
         if (!this.runbook) return;
 
-        if (passed) {
+        if (result.passed) {
             phase.status = 'completed';
             this.healer.clearAttempts(phase.id);
             this.emitUIMessage({
@@ -1001,7 +1021,9 @@ export class Engine extends EventEmitter {
             this.healer.recordFailure(phase.id, exitCode, stderr);
 
             if (this.healer.canRetryWithPhase(phase)) {
-                const augmentedPrompt = this.healer.buildHealingPrompt(phase);
+                const augmentedPrompt = result.retryPrompt
+                    ? this.healer.buildHealingPromptWithContext(phase, result.retryPrompt)
+                    : this.healer.buildHealingPrompt(phase);
                 const delay = this.healer.getRetryDelay(phase.id);
                 phase.status = 'pending';
                 await this.persist();
