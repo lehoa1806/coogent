@@ -3,8 +3,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as fs from 'node:fs';
+import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import type { TaskState, PhaseArtifacts, PhaseHandoff } from './types.js';
+import log from '../logger/log.js';
 
 // sql.js ships without TS declarations — resolved via dynamic import()
 // inside the create() factory method. This avoids CJS require() in an
@@ -63,12 +65,28 @@ CREATE TABLE IF NOT EXISTS handoffs (
 `;
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  Flush Configuration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Debounce window for coalescing consecutive writes (ms). */
+const FLUSH_DEBOUNCE_MS = 500;
+
+/** File permissions for artifacts.db — owner-only read/write. */
+const DB_FILE_MODE = 0o600;
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  ArtifactDB
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
  * Thin, typed data-access layer wrapping sql.js for persistent MCP artifact
  * storage. All data is persisted to a single SQLite file on disk.
+ *
+ * Flush strategy:
+ *   - Write operations schedule a debounced async flush (500ms window).
+ *   - Consecutive writes within the window are coalesced into a single I/O.
+ *   - `close()` performs a final synchronous flush for deactivation safety.
+ *   - Writes use atomic rename (tmp → real) to prevent corruption on crash.
  *
  * Usage:
  *   const db = await ArtifactDB.create('/path/to/coogent.db');
@@ -79,6 +97,12 @@ CREATE TABLE IF NOT EXISTS handoffs (
 export class ArtifactDB {
     private db: Database;
     private readonly dbPath: string;
+
+    /** Handle for the debounced flush timer (cleared on immediate flush). */
+    private flushTimer: ReturnType<typeof setTimeout> | undefined;
+
+    /** Promise chain serialising async flushes to prevent concurrent writes. */
+    private flushLock: Promise<void> = Promise.resolve();
 
     // ── Private constructor — use ArtifactDB.create() ────────────────────
     private constructor(db: Database, dbPath: string) {
@@ -136,8 +160,8 @@ export class ArtifactDB {
 
         const instance = new ArtifactDB(db, dbPath);
 
-        // Initial flush to persist the schema to disk
-        instance.flush();
+        // Initial flush to persist the schema to disk (synchronous for create)
+        instance.flushSync();
 
         return instance;
     }
@@ -149,9 +173,17 @@ export class ArtifactDB {
     /**
      * Export the database to disk one final time and free WASM memory.
      * After calling `close()`, the instance must not be used.
+     *
+     * Uses synchronous flush because VS Code's `deactivate()` may not
+     * await async operations reliably.
      */
     close(): void {
-        this.flush();
+        // Cancel any pending debounced flush
+        if (this.flushTimer !== undefined) {
+            clearTimeout(this.flushTimer);
+            this.flushTimer = undefined;
+        }
+        this.flushSync();
         this.db.close();
     }
 
@@ -202,7 +234,7 @@ export class ArtifactDB {
             this.db.run('ROLLBACK');
             throw e;
         }
-        this.flush();
+        this.scheduleFlush();
     }
 
     /**
@@ -319,7 +351,7 @@ export class ArtifactDB {
             'DELETE FROM tasks WHERE master_task_id = ?',
             [masterTaskId]
         );
-        this.flush();
+        this.scheduleFlush();
     }
 
     /**
@@ -375,7 +407,7 @@ export class ArtifactDB {
             [masterTaskId, phaseId, plan]
         );
 
-        this.flush();
+        this.scheduleFlush();
     }
 
     /**
@@ -446,7 +478,7 @@ export class ArtifactDB {
             this.db.run('ROLLBACK');
             throw e;
         }
-        this.flush();
+        this.scheduleFlush();
     }
 
     /**
@@ -501,12 +533,59 @@ export class ArtifactDB {
     // ─────────────────────────────────────────────────────────────────────
 
     /**
-     * Export the in-memory database to disk.
-     * Called after every write operation to ensure durability.
+     * Schedule an async flush with debouncing. Multiple calls within the
+     * debounce window (500ms) are coalesced into a single disk write.
+     * This prevents event-loop blocking during rapid phase completions.
      */
-    private flush(): void {
-        const data = this.db.export();
-        const buffer = Buffer.from(data);
-        fs.writeFileSync(this.dbPath, buffer);
+    private scheduleFlush(): void {
+        if (this.flushTimer !== undefined) {
+            clearTimeout(this.flushTimer);
+        }
+        this.flushTimer = setTimeout(() => {
+            this.flushTimer = undefined;
+            this.flushAsync().catch(log.onError);
+        }, FLUSH_DEBOUNCE_MS);
+    }
+
+    /**
+     * Async flush: export the in-memory DB to disk using atomic rename.
+     * Writes are serialised through `flushLock` to prevent concurrent I/O.
+     *
+     * Pattern: write to `.tmp` → rename to real path (atomic on POSIX).
+     * If the write fails, the previous DB file remains intact.
+     */
+    private async flushAsync(): Promise<void> {
+        const ticket = this.flushLock.then(async () => {
+            try {
+                const data = this.db.export();
+                const buffer = Buffer.from(data);
+                const tmpPath = this.dbPath + '.tmp';
+                await fsp.writeFile(tmpPath, buffer, { mode: DB_FILE_MODE });
+                await fsp.rename(tmpPath, this.dbPath);
+            } catch (err) {
+                log.error(`ArtifactDB: flush failed: ${err}`);
+            }
+        });
+        this.flushLock = ticket.catch(() => { /* swallow — errors already logged */ });
+        return ticket;
+    }
+
+    /**
+     * Synchronous flush for use in `close()` and initial `create()`.
+     *
+     * VS Code's `deactivate()` may not reliably await async operations,
+     * so the final flush before WASM memory is freed must be synchronous.
+     * Uses atomic rename (tmp → real) and sets owner-only permissions.
+     */
+    private flushSync(): void {
+        try {
+            const data = this.db.export();
+            const buffer = Buffer.from(data);
+            const tmpPath = this.dbPath + '.tmp';
+            fs.writeFileSync(tmpPath, buffer, { mode: DB_FILE_MODE });
+            fs.renameSync(tmpPath, this.dbPath);
+        } catch (err) {
+            log.error(`ArtifactDB: flushSync failed: ${err}`);
+        }
     }
 }

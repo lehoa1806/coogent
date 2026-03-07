@@ -97,6 +97,36 @@ describe('HandoffExtractor', () => {
             expect(report.decisions).toEqual(['second']);
             expect(report.next_steps_context).toBe('final');
         });
+
+        it('should redact secrets in decisions, unresolved_issues, and next_steps_context', async () => {
+            // Construct synthetic keys from parts to avoid GitHub Push Protection (GH013)
+            const stripeKey = ['sk', 'live', '4eC39HqLyjWDarjtT1zdp7dc'].join('_');
+
+            const workerOutput = [
+                '```json',
+                JSON.stringify({
+                    decisions: ['Used key AKIAIOSFODNN7EXAMPLE for auth'],
+                    modified_files: [],
+                    unresolved_issues: ['Token sk-AbCdEfGhIjKlMnOpQrStUvWx needs rotation'],
+                    next_steps_context: `Stripe key ${stripeKey} requires vault`,
+                }),
+                '```',
+            ].join('\n');
+
+            const report = await extractor.extractHandoff(10, workerOutput, tmpDir);
+
+            // AWS key should be redacted in decisions
+            expect(report.decisions[0]).toContain('[REDACTED]');
+            expect(report.decisions[0]).not.toContain('AKIAIOSFODNN7EXAMPLE');
+
+            // OpenAI key should be redacted in unresolved_issues
+            expect(report.unresolved_issues[0]).toContain('[REDACTED]');
+            expect(report.unresolved_issues[0]).not.toContain('sk-AbCdEfGhIjKl');
+
+            // Stripe key should be redacted in next_steps_context
+            expect(report.next_steps_context).toContain('[REDACTED]');
+            expect(report.next_steps_context).not.toContain('sk_live_');
+        });
     });
 
     // ═════════════════════════════════════════════════════════════════════════

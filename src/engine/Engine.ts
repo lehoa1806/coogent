@@ -860,10 +860,31 @@ export class Engine extends EventEmitter {
         stderr: string
     ): Promise<EvaluationResult> {
         if (this.evaluatorRegistry) {
-            const evaluator = this.evaluatorRegistry.getEvaluator(phase.evaluator);
-            const result = await evaluator.evaluate(phase, exitCode, stdout, stderr);
-            log.info(`[Engine] Evaluator (${evaluator.type}) verdict: ${result.passed ? 'PASS' : 'FAIL'} — ${result.reason}`);
-            return result;
+            const evaluators = this.evaluatorRegistry.getEvaluators(phase);
+
+            // Composite: run all evaluators, fail fast on first failure
+            const retryParts: string[] = [];
+            for (const evaluator of evaluators) {
+                const result = await evaluator.evaluate(phase, exitCode, stdout, stderr);
+                log.info(`[Engine] Evaluator (${evaluator.type}) verdict: ${result.passed ? 'PASS' : 'FAIL'} — ${result.reason}`);
+
+                if (!result.passed) {
+                    if (result.retryPrompt) retryParts.push(result.retryPrompt);
+                    return {
+                        passed: false as const,
+                        reason: result.reason,
+                        ...(retryParts.length > 0 ? { retryPrompt: retryParts.join('\n---\n') } : {}),
+                    };
+                }
+            }
+
+            // All evaluators passed
+            return {
+                passed: true,
+                reason: evaluators.length > 1
+                    ? `All ${evaluators.length} evaluators passed.`
+                    : evaluators[0] ? `Evaluator (${evaluators[0].type}) passed.` : 'Passed.',
+            };
         }
         // Fallback: simple exit code matching (V1 compat)
         const passed = this.evaluateSuccess(phase.success_criteria, exitCode);

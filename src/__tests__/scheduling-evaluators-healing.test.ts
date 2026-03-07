@@ -5,11 +5,6 @@
 
 import { Scheduler } from '../engine/Scheduler';
 import { SelfHealingController } from '../engine/SelfHealing';
-import {
-    ExitCodeEvaluator,
-    RegexOutputEvaluator,
-    EvaluatorRegistry,
-} from '../evaluators/CompilerEvaluator';
 import { TokenPruner, PrunableEntry } from '../context/TokenPruner';
 import { ExplicitFileResolver } from '../context/FileResolver';
 import type { Phase } from '../types/index';
@@ -138,66 +133,7 @@ describe('Scheduler — DAG-aware phase scheduling', () => {
     });
 });
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Evaluator Tests
-// ═══════════════════════════════════════════════════════════════════════════════
-
-describe('ExitCodeEvaluator — exit code matching', () => {
-    const evaluator = new ExitCodeEvaluator();
-
-    it('passes when exit code matches criteria', async () => {
-        expect(await evaluator.evaluate('exit_code:0', 0, '', '')).toBe(true);
-    });
-
-    it('fails when exit code does not match', async () => {
-        expect(await evaluator.evaluate('exit_code:0', 1, '', '')).toBe(false);
-    });
-
-    it('defaults to exit code 0 for unknown criteria', async () => {
-        expect(await evaluator.evaluate('unknown', 0, '', '')).toBe(true);
-        expect(await evaluator.evaluate('unknown', 1, '', '')).toBe(false);
-    });
-});
-
-describe('RegexOutputEvaluator — stdout/stderr pattern matching', () => {
-    const evaluator = new RegexOutputEvaluator();
-
-    it('passes when regex matches output', async () => {
-        expect(
-            await evaluator.evaluate('regex:Tests Passed', 0, 'All Tests Passed!', '')
-        ).toBe(true);
-    });
-
-    it('fails when regex does not match', async () => {
-        expect(
-            await evaluator.evaluate('regex:Tests Passed', 0, 'Build failed', '')
-        ).toBe(false);
-    });
-
-    it('fails when regex_fail pattern is found', async () => {
-        expect(
-            await evaluator.evaluate('regex_fail:ERROR', 0, '', 'ERROR: something broke')
-        ).toBe(false);
-    });
-});
-
-describe('EvaluatorRegistry — evaluator type resolution', () => {
-    const registry = new EvaluatorRegistry('/tmp');
-
-    it('returns exit_code evaluator by default', () => {
-        expect(registry.get().type).toBe('exit_code');
-    });
-
-    it('returns the correct evaluator by type', () => {
-        expect(registry.get('regex').type).toBe('regex');
-        expect(registry.get('toolchain').type).toBe('toolchain');
-        expect(registry.get('test_suite').type).toBe('test_suite');
-    });
-
-    it('falls back to exit_code for undefined type', () => {
-        expect(registry.get(undefined).type).toBe('exit_code');
-    });
-});
+// V1 Evaluator tests removed — V2 evaluators are tested in EvaluatorV2.test.ts
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  SelfHealingController Tests
