@@ -1,3 +1,7 @@
+jest.mock('vscode', () => ({
+    workspace: { workspaceFolders: [] },
+}), { virtual: true });
+
 import { ASTFileResolver } from '../FileResolver.js';
 import { asPhaseId } from '../../types/index.js';
 

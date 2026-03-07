@@ -99,6 +99,10 @@ export class PlanningController {
         // Save the draft as the active runbook
         await this.engine.getStateManager().saveRunbook(this.planDraft, this.engine.getState());
 
+        // M1 audit fix: Emit plan:approved so PlannerWiring can persist the
+        // approved revision to plan_revisions with status='approved'.
+        this.engine.emit('plan:approved', this.planDraft);
+
         // Transition to PARSING and load the saved runbook
         const result = this.engine.transition(EngineEvent.PLAN_APPROVED);
         if (result === null) return;

@@ -24,11 +24,14 @@ function createMockEngine(): EventEmitter & { abort: jest.Mock } {
     return engine;
 }
 
-function createMockPlannerAgent(): EventEmitter & { plan: jest.Mock; retryParse: jest.Mock; hasTimeoutOutput: jest.Mock } {
+function createMockPlannerAgent(): EventEmitter & { plan: jest.Mock; retryParse: jest.Mock; hasTimeoutOutput: jest.Mock; getDraft: jest.Mock; setAvailableTags: jest.Mock; getLastSystemPrompt: jest.Mock } {
     const agent = new EventEmitter() as any;
     agent.plan = jest.fn().mockResolvedValue(undefined);
     agent.retryParse = jest.fn().mockResolvedValue(undefined);
     agent.hasTimeoutOutput = jest.fn().mockReturnValue(false);
+    agent.getDraft = jest.fn().mockReturnValue(null);
+    agent.setAvailableTags = jest.fn();
+    agent.getLastSystemPrompt = jest.fn().mockReturnValue(null);
     return agent;
 }
 
@@ -71,9 +74,11 @@ describe('wirePlanner', () => {
         expect(planner.plan).toHaveBeenCalledWith('Refactor auth module');
     });
 
-    it('plan:rejected triggers plannerAgent.plan(prompt, feedback)', () => {
+    it('plan:rejected triggers plannerAgent.plan(prompt, feedback)', async () => {
         wirePlanner(svc, 'session-001');
         engine.emit('plan:rejected', 'Refactor auth', 'Add more phases');
+        // The handler wraps in an async IIFE — flush microtasks to let it complete
+        await new Promise(r => setTimeout(r, 10));
         expect(planner.plan).toHaveBeenCalledWith('Refactor auth', 'Add more phases');
     });
 

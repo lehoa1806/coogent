@@ -3,6 +3,10 @@
 // Phase Evaluators, SelfHealingController, TokenPruner, and FileResolver
 // ─────────────────────────────────────────────────────────────────────────────
 
+jest.mock('vscode', () => ({
+    workspace: { workspaceFolders: [] },
+}), { virtual: true });
+
 import { Scheduler } from '../engine/Scheduler';
 import { SelfHealingController } from '../engine/SelfHealing';
 import { TokenPruner, PrunableEntry } from '../context/TokenPruner';

@@ -85,6 +85,8 @@ export class PlannerAgent extends EventEmitter {
     private lastIpcSessionDir: string | null = null;
     /** Master task ID (session dir name) for nesting IPC files under YYYYMMDD-HHMMSS-<uuid>. */
     private masterTaskId: string | undefined;
+    /** Last system prompt sent to the planner worker (S2 audit: enables prompt lineage). */
+    private lastSystemPrompt = '';
 
     constructor(
         private readonly adapter: AgentBackendProvider,
@@ -152,6 +154,7 @@ export class PlannerAgent extends EventEmitter {
                 techStack,
                 this.config.availableTags,
             );
+            this.lastSystemPrompt = systemPrompt;
             log.info(`[PlannerAgent] Prompt built: ${systemPrompt.length} chars`);
 
             // Step 3: Spawn the planner worker
@@ -237,6 +240,11 @@ export class PlannerAgent extends EventEmitter {
     /** Get the user's original prompt. */
     getPrompt(): string {
         return this.userPrompt;
+    }
+
+    /** Get the last system prompt sent to the planner worker (S2 audit). */
+    getLastSystemPrompt(): string {
+        return this.lastSystemPrompt;
     }
 
     /** Terminate any active planning session. */

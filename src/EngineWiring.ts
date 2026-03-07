@@ -34,7 +34,8 @@ export function wireEngine(
 ): void {
     const { engine, adkController, logger, gitSandbox, gitManager, mcpBridge, mcpServer,
         handoffExtractor, consolidationAgent, outputRegistry,
-        workerOutputAccumulator, sandboxBranchCreatedForSession } = svc;
+        workerOutputAccumulator, workerStderrAccumulator,
+        sandboxBranchCreatedForSession } = svc;
 
     if (!engine || !adkController) return;
 
@@ -89,6 +90,11 @@ export function wireEngine(
 
     // ── Engine → run:completed ──────────────────────────────────────────
     engine.on('run:completed', (runbook) => {
+        // Persist task completion timestamp (BL-5 audit fix)
+        if (mcpServer) {
+            mcpServer.setTaskCompleted(sessionDirName);
+        }
+
         const phaseCount = runbook.phases.length;
         const completedCount = runbook.phases.filter(p => p.status === 'completed').length;
         log.info(
@@ -155,15 +161,17 @@ export function wireEngine(
         const handoffPromise: Promise<void> = (async () => {
             if (exitCode === 0 && handoffExtractor && svc.currentSessionDir) {
                 const accumulatedOutput = workerOutputAccumulator.get(phaseId) ?? '';
+                const accumulatedStderr = workerStderrAccumulator.get(phaseId) ?? '';
                 workerOutputAccumulator.delete(phaseId);
+                workerStderrAccumulator.delete(phaseId);
 
-                // Persist worker output to ArtifactDB so it survives session reloads
-                if (mcpServer && accumulatedOutput) {
+                // Persist worker output + stderr to ArtifactDB so it survives session reloads
+                if (mcpServer && (accumulatedOutput || accumulatedStderr)) {
                     const runbook = engine.getRunbook() ?? null;
                     const phaseObj = runbook?.phases.find(p => p.id === phaseId);
                     const phaseIdStr = phaseObj?.mcpPhaseId;
                     if (phaseIdStr) {
-                        mcpServer.upsertWorkerOutput(sessionDirName, phaseIdStr, accumulatedOutput);
+                        mcpServer.upsertWorkerOutput(sessionDirName, phaseIdStr, accumulatedOutput, accumulatedStderr);
                     }
                 }
 
@@ -202,6 +210,7 @@ export function wireEngine(
                 }
             } else {
                 workerOutputAccumulator.delete(phaseId);
+                workerStderrAccumulator.delete(phaseId);
             }
         })();
 
@@ -227,11 +236,44 @@ export function wireEngine(
 
     adkController.on('worker:timeout', (phaseId) => {
         outputRegistry?.flushAndRemove(phaseId);
+
+        // M3 audit fix: Flush accumulated stdout/stderr to DB before marking failure
+        // so crash diagnostics survive for debugging.
+        if (mcpServer) {
+            const accOut = workerOutputAccumulator.get(phaseId) ?? '';
+            const accErr = workerStderrAccumulator.get(phaseId) ?? '';
+            if (accOut || accErr) {
+                const rb = engine.getRunbook() ?? null;
+                const pObj = rb?.phases.find(p => p.id === phaseId);
+                if (pObj?.mcpPhaseId) {
+                    mcpServer.upsertWorkerOutput(sessionDirName, pObj.mcpPhaseId, accOut, accErr);
+                }
+            }
+        }
+        workerOutputAccumulator.delete(phaseId);
+        workerStderrAccumulator.delete(phaseId);
+
         engine.onWorkerFailed(phaseId, 'timeout').catch(log.onError);
     });
 
     adkController.on('worker:crash', (phaseId) => {
         outputRegistry?.flushAndRemove(phaseId);
+
+        // M3 audit fix: Flush accumulated stdout/stderr to DB before marking failure
+        if (mcpServer) {
+            const accOut = workerOutputAccumulator.get(phaseId) ?? '';
+            const accErr = workerStderrAccumulator.get(phaseId) ?? '';
+            if (accOut || accErr) {
+                const rb = engine.getRunbook() ?? null;
+                const pObj = rb?.phases.find(p => p.id === phaseId);
+                if (pObj?.mcpPhaseId) {
+                    mcpServer.upsertWorkerOutput(sessionDirName, pObj.mcpPhaseId, accOut, accErr);
+                }
+            }
+        }
+        workerOutputAccumulator.delete(phaseId);
+        workerStderrAccumulator.delete(phaseId);
+
         engine.onWorkerFailed(phaseId, 'crash').catch(log.onError);
     });
 
@@ -243,14 +285,25 @@ export function wireEngine(
         logger?.logPhaseOutput(phaseId, stream, chunk).catch(log.onError);
 
         // Accumulate stdout for handoff extraction (capped at 2 MB)
+        const MAX_ACCUMULATOR_SIZE = 2 * 1024 * 1024;
         if (stream === 'stdout') {
             const existing = workerOutputAccumulator.get(phaseId) ?? '';
-            const MAX_ACCUMULATOR_SIZE = 2 * 1024 * 1024;
             if (existing.length + chunk.length <= MAX_ACCUMULATOR_SIZE) {
                 workerOutputAccumulator.set(phaseId, existing + chunk);
             } else if (existing.length < MAX_ACCUMULATOR_SIZE) {
                 const remaining = MAX_ACCUMULATOR_SIZE - existing.length;
                 workerOutputAccumulator.set(phaseId, existing + chunk.slice(0, remaining));
+            }
+        }
+
+        // S3 audit fix: Accumulate stderr for persistence (capped at 2 MB)
+        if (stream === 'stderr') {
+            const existing = workerStderrAccumulator.get(phaseId) ?? '';
+            if (existing.length + chunk.length <= MAX_ACCUMULATOR_SIZE) {
+                workerStderrAccumulator.set(phaseId, existing + chunk);
+            } else if (existing.length < MAX_ACCUMULATOR_SIZE) {
+                const remaining = MAX_ACCUMULATOR_SIZE - existing.length;
+                workerStderrAccumulator.set(phaseId, existing + chunk.slice(0, remaining));
             }
         }
     });
@@ -457,6 +510,14 @@ async function executePhase(
         effectivePrompt = `${effectivePrompt}\n\n---\n\n${distillationPrompt}`;
     }
     const effectivePhase = { ...phase, prompt: effectivePrompt };
+
+    // S2 audit fix: Persist the effective prompt (includes handoff context, worker
+    // system prompt, and distillation directives) to phase_logs.request_context.
+    if (svc.mcpServer && phase.mcpPhaseId) {
+        svc.mcpServer.upsertPhaseLog(masterTaskId, phase.mcpPhaseId, {
+            requestContext: effectivePrompt,
+        });
+    }
 
     // MCP warm-start URIs
     const mcpResourceUris: {

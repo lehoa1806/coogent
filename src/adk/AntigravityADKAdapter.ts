@@ -43,6 +43,9 @@ const IPC_DIR_NAME = '.coogent/ipc';
 const CHARS_PER_TOKEN = 4;
 
 /** Small delay after injection to let VS Code process the command before the next session. */
+
+/** Delay after startNewConversation to let the chat panel fully initialize (ms). */
+const NEW_CONVERSATION_SETTLE_MS = 500;
 const INJECTION_STAGGER_MS = 200;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -558,6 +561,12 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
             }
         }
 
+        // Settlement delay: the VS Code command resolves when dispatched,
+        // not when the new conversation panel is fully initialized.
+        // Without this, the next prompt injection may target the old conversation.
+        await new Promise(r => setTimeout(r, NEW_CONVERSATION_SETTLE_MS));
+        log.info(`[AntigravityADK] New conversation settled (${NEW_CONVERSATION_SETTLE_MS}ms)`);
+
         this.conversationTokens = 0;
     }
 
@@ -638,10 +647,47 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
     }
 
     /**
-     * No-op: IPC files are preserved for audit/debugging.
-     * Previously removed all IPC files from the `.coogent/ipc/` directory.
+     * TTL-based IPC cleanup: delete session directories older than 7 days.
+     * Parses the UUIDv7 timestamp embedded in the directory name to determine age.
+     * Preserves the current session and any directories younger than the TTL.
      */
     async cleanupAllIpc(): Promise<void> {
-        log.info('[AntigravityADK] cleanupAllIpc() is no-op (files preserved).');
+        const TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+        const cutoff = Date.now() - TTL_MS;
+        const SESSION_DIR_REGEX = /^\d{8}-\d{6}-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+        let entries: import('node:fs').Dirent[];
+        try {
+            entries = await fs.readdir(this.ipcDir, { withFileTypes: true });
+        } catch {
+            // ipcDir may not exist yet — nothing to clean
+            log.info('[AntigravityADK] cleanupAllIpc(): ipc directory not found, skipping.');
+            return;
+        }
+
+        let cleaned = 0;
+        for (const entry of entries) {
+            if (!entry.isDirectory()) continue;
+            const match = entry.name.match(SESSION_DIR_REGEX);
+            if (!match) continue;
+
+            // Extract timestamp from UUIDv7 portion
+            const uuid = match[1];
+            const parts = uuid.split('-');
+            if (parts.length < 2) continue;
+            const tsMs = parseInt(parts[0] + parts[1], 16) || 0;
+
+            if (tsMs > 0 && tsMs < cutoff) {
+                const dirPath = path.join(this.ipcDir, entry.name);
+                try {
+                    await fs.rm(dirPath, { recursive: true, force: true });
+                    cleaned++;
+                } catch (err) {
+                    log.warn(`[AntigravityADK] Failed to clean IPC dir ${entry.name}:`, err);
+                }
+            }
+        }
+
+        log.info(`[AntigravityADK] cleanupAllIpc(): cleaned ${cleaned} old session(s).`);
     }
 }

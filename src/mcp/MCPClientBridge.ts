@@ -244,6 +244,25 @@ export class MCPClientBridge {
         });
     }
 
+    /**
+     * Submit the structured consolidation report JSON for a master task.
+     * S6b audit fix: Stores the typed ConsolidationReport object so
+     * programmatic queries don't need to re-parse Markdown.
+     *
+     * @param masterTaskId  Master task ID.
+     * @param json          JSON-stringified ConsolidationReport.
+     */
+    async submitConsolidationReportJson(
+        masterTaskId: string,
+        json: string
+    ): Promise<void> {
+        // Direct DB access — no MCP tool protocol needed for internal persistence
+        const db = this.mcpServer.getArtifactDB?.();
+        if (db) {
+            db.upsertTask(masterTaskId, { consolidationReportJson: json });
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  Internal Helpers
     // ═══════════════════════════════════════════════════════════════════════════

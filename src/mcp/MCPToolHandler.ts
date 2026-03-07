@@ -137,6 +137,13 @@ export class MCPToolHandler {
                                     description:
                                         'Unresolved issues or blockers encountered.',
                                 },
+                                // M2 audit fix: optional context for downstream phases
+                                next_steps_context: {
+                                    type: 'string',
+                                    maxLength: 4096,
+                                    description:
+                                        'Optional context or recommendations for downstream phases.',
+                                },
                             },
                         },
                     },
@@ -278,6 +285,11 @@ export class MCPToolHandler {
             { maxItemLength: 500, maxItems: 20 }
         );
 
+        // M2 audit fix: extract optional next_steps_context
+        const nextStepsContext = typeof args['next_steps_context'] === 'string'
+            ? args['next_steps_context'].slice(0, 4096)
+            : undefined;
+
         const handoff: PhaseHandoff = {
             phaseId,
             masterTaskId,
@@ -285,6 +297,7 @@ export class MCPToolHandler {
             modifiedFiles,
             blockers,
             completedAt: Date.now(),
+            nextStepsContext,
         };
 
         // Persist handoff to DB — upsertHandoff ensures parent task/phase rows exist

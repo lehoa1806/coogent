@@ -20,6 +20,7 @@ import type { ArtifactDB } from './ArtifactDB.js';
  *   - coogent://tasks/{masterTaskId}/summary
  *   - coogent://tasks/{masterTaskId}/implementation_plan
  *   - coogent://tasks/{masterTaskId}/consolidation_report
+ *   - coogent://tasks/{masterTaskId}/consolidation_report_json
  *   - coogent://tasks/{masterTaskId}/phases/{phaseId}/implementation_plan
  *   - coogent://tasks/{masterTaskId}/phases/{phaseId}/handoff
  */
@@ -65,6 +66,11 @@ export class MCPResourceHandler {
                     uri: RESOURCE_URIS.taskReport(taskId),
                     name: `Task ${taskId} — Consolidation Report`,
                     mimeType: 'text/markdown',
+                });
+                resources.push({
+                    uri: RESOURCE_URIS.taskReportJson(taskId),
+                    name: `Task ${taskId} — Consolidation Report (JSON)`,
+                    mimeType: 'application/json',
                 });
 
                 // Phase-level resources — lightweight query avoids full task deserialization
@@ -161,6 +167,14 @@ export class MCPResourceHandler {
                         }
                         content = task.consolidationReport;
                         break;
+                    case 'consolidation_report_json':
+                        if (!task.consolidationReportJson) {
+                            throw new Error(
+                                `Resource not yet available: structured consolidation report has not been submitted for task ${parsed.masterTaskId}.`
+                            );
+                        }
+                        content = task.consolidationReportJson;
+                        break;
                     default:
                         throw new Error(`Unknown task resource: ${parsed.resource}`);
                 }
@@ -171,7 +185,7 @@ export class MCPResourceHandler {
                     {
                         uri,
                         text: content,
-                        mimeType: parsed.resource === 'handoff'
+                        mimeType: parsed.resource === 'handoff' || parsed.resource === 'consolidation_report_json'
                             ? 'application/json'
                             : parsed.resource === 'summary'
                                 ? 'text/plain'

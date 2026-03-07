@@ -175,10 +175,10 @@ describe('HandoffExtractor', () => {
     });
 
     // ═════════════════════════════════════════════════════════════════════════
-    //  saveHandoff / loadHandoff
+    //  saveHandoff (MCP-only — Sprint 4: file fallback removed)
     // ═════════════════════════════════════════════════════════════════════════
 
-    describe('saveHandoff / loadHandoff', () => {
+    describe('saveHandoff (MCP-only)', () => {
         const sampleReport: HandoffReport = {
             phaseId: 1,
             decisions: ['Decision A'],
@@ -188,30 +188,31 @@ describe('HandoffExtractor', () => {
             timestamp: 1700000000000,
         };
 
-        it('should save and load a handoff report round-trip', async () => {
-            await extractor.saveHandoff(1, sampleReport, tmpDir);
-
-            // Verify file was created
-            const filePath = path.join(tmpDir, 'handoffs', 'phase-1.json');
-            const raw = await fs.readFile(filePath, 'utf-8');
-            const parsed = JSON.parse(raw);
-            expect(parsed.phaseId).toBe(1);
-
-            // Load
-            const loaded = await extractor.loadHandoff(1, tmpDir);
-            expect(loaded).toEqual(sampleReport);
+        it('should submit handoff via MCP bridge when available', async () => {
+            const mockBridge = {
+                submitPhaseHandoff: jest.fn().mockResolvedValue(undefined),
+            };
+            await extractor.saveHandoff(
+                1,
+                sampleReport,
+                tmpDir,
+                mockBridge as any,
+                'task-001',
+            );
+            expect(mockBridge.submitPhaseHandoff).toHaveBeenCalledWith(
+                'task-001',
+                expect.stringContaining('phase-001'),
+                sampleReport.decisions,
+                sampleReport.modified_files,
+                sampleReport.unresolved_issues,
+            );
         });
 
-        it('should return null for a non-existent handoff', async () => {
-            const loaded = await extractor.loadHandoff(999, tmpDir);
-            expect(loaded).toBeNull();
-        });
-
-        it('should create the handoffs directory automatically', async () => {
-            await extractor.saveHandoff(2, { ...sampleReport, phaseId: 2 }, tmpDir);
-            const dirPath = path.join(tmpDir, 'handoffs');
-            const stat = await fs.stat(dirPath);
-            expect(stat.isDirectory()).toBe(true);
+        it('should not crash when no MCP bridge is provided', async () => {
+            // Should log a warning but not throw
+            await expect(
+                extractor.saveHandoff(1, sampleReport, tmpDir),
+            ).resolves.toBeUndefined();
         });
     });
 
@@ -233,33 +234,37 @@ describe('HandoffExtractor', () => {
             expect(ctx).toBe('');
         });
 
-        it('should build context from dependent phases', async () => {
-            // Create a workspace file
-            const testFile = path.join(tmpDir, 'src', 'bar.ts');
-            await fs.mkdir(path.dirname(testFile), { recursive: true });
-            await fs.writeFile(testFile, 'export const bar = true;', 'utf-8');
-
-            // Save handoff for phase 1
-            const report1: HandoffReport = {
-                phaseId: 1,
-                decisions: ['Chose TypeScript'],
-                modified_files: ['src/bar.ts'],
-                unresolved_issues: ['Need tests'],
-                next_steps_context: 'Bar module ready',
-                timestamp: 1700000000000,
+        it('should build context from dependent phases via DB', async () => {
+            // Wire a mock ArtifactDB that returns handoff data for phases 1 and 2
+            const masterTaskId = 'test-task';
+            const mockHandoffs: Record<string, any> = {
+                'phase-001-00000000-0000-0000-0000-000000000000': {
+                    phaseId: 'phase-001-00000000-0000-0000-0000-000000000000',
+                    masterTaskId,
+                    decisions: ['Chose TypeScript'],
+                    modifiedFiles: ['src/bar.ts'],
+                    blockers: ['Need tests'],
+                    completedAt: 1700000000000,
+                    nextStepsContext: 'Bar module ready',
+                },
+                'phase-002-00000000-0000-0000-0000-000000000000': {
+                    phaseId: 'phase-002-00000000-0000-0000-0000-000000000000',
+                    masterTaskId,
+                    decisions: ['Added validation'],
+                    modifiedFiles: [],
+                    blockers: [],
+                    completedAt: 1700000001000,
+                    nextStepsContext: 'Validation done',
+                },
             };
-            await extractor.saveHandoff(1, report1, tmpDir);
-
-            // Save handoff for phase 2
-            const report2: HandoffReport = {
-                phaseId: 2,
-                decisions: ['Added validation'],
-                modified_files: [],
-                unresolved_issues: [],
-                next_steps_context: 'Validation done',
-                timestamp: 1700000001000,
+            const mockDB = {
+                getHandoff: (_tid: string, pid: string) => mockHandoffs[pid] ?? undefined,
             };
-            await extractor.saveHandoff(2, report2, tmpDir);
+            extractor.setArtifactDB(mockDB as any, masterTaskId);
+            extractor.setPhaseIdMap([
+                { id: 1, mcpPhaseId: 'phase-001-00000000-0000-0000-0000-000000000000' },
+                { id: 2, mcpPhaseId: 'phase-002-00000000-0000-0000-0000-000000000000' },
+            ]);
 
             const phase: Phase = {
                 id: asPhaseId(3),

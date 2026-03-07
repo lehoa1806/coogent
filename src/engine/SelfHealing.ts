@@ -4,6 +4,8 @@
 
 import type { Phase, HealingAttempt } from '../types/index.js';
 import { asPhaseId, asTimestamp } from '../types/index.js';
+import type { ArtifactDB } from '../mcp/ArtifactDB.js';
+import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Self-Healing Controller
@@ -26,10 +28,20 @@ export class SelfHealingController {
     private maxRetries: number;
     private readonly baseDelayMs: number;
     private readonly attempts = new Map<number, HealingAttempt[]>();
+    private db: ArtifactDB | undefined;
+    private masterTaskId: string = '';
 
     constructor(options?: { maxRetries?: number; baseDelayMs?: number }) {
         this.maxRetries = options?.maxRetries ?? 2;
         this.baseDelayMs = options?.baseDelayMs ?? 2_000;
+    }
+
+    /**
+     * S3 audit fix: Inject DB instance for persisting healing attempts.
+     */
+    setArtifactDB(db: ArtifactDB, masterTaskId: string): void {
+        this.db = db;
+        this.masterTaskId = masterTaskId;
     }
 
     /**
@@ -42,8 +54,10 @@ export class SelfHealingController {
 
     /**
      * Record a failed attempt for a phase.
+     * @param mcpPhaseId — Optional full phase ID (format: phase-NNN-UUID) for
+     *   DB persistence. When omitted, falls back to truncated `phase-NNN`.
      */
-    recordFailure(phaseId: number, exitCode: number, stderr: string): void {
+    recordFailure(phaseId: number, exitCode: number, stderr: string, mcpPhaseId?: string): void {
         const existing = this.attempts.get(phaseId) ?? [];
         existing.push({
             attemptNumber: existing.length + 1,
@@ -53,6 +67,22 @@ export class SelfHealingController {
             timestamp: asTimestamp(),
         });
         this.attempts.set(phaseId, existing);
+
+        // S3 audit fix: Persist healing attempt to DB (best-effort)
+        // H1 audit fix: Use full mcpPhaseId when available for cross-table join consistency
+        if (this.db && this.masterTaskId) {
+            try {
+                const phaseIdStr = mcpPhaseId ?? `phase-${String(phaseId).padStart(3, '0')}`;
+                this.db.upsertHealingAttempt(this.masterTaskId, phaseIdStr, {
+                    attemptNumber: existing.length,
+                    exitCode,
+                    stderrTail: stderr.slice(-4096),
+                    createdAt: Date.now(),
+                });
+            } catch (err) {
+                log.warn('[SelfHealingController] Failed to persist healing attempt:', err);
+            }
+        }
     }
 
     /**

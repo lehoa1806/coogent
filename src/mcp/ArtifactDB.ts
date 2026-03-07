@@ -41,7 +41,13 @@ CREATE TABLE IF NOT EXISTS tasks (
   master_task_id TEXT PRIMARY KEY,
   summary TEXT,
   implementation_plan TEXT,
-  consolidation_report TEXT
+  consolidation_report TEXT,
+  consolidation_report_json TEXT,
+  runbook_json TEXT,
+  created_at INTEGER NOT NULL DEFAULT 0,
+  completed_at INTEGER,
+  updated_at INTEGER,
+  status TEXT NOT NULL DEFAULT 'running'
 );
 
 CREATE TABLE IF NOT EXISTS phases (
@@ -59,6 +65,7 @@ CREATE TABLE IF NOT EXISTS handoffs (
   modified_files TEXT NOT NULL,
   blockers TEXT NOT NULL,
   completed_at INTEGER NOT NULL,
+  next_steps_context TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (master_task_id, phase_id),
   FOREIGN KEY (master_task_id, phase_id) REFERENCES phases(master_task_id, phase_id) ON DELETE CASCADE
 );
@@ -67,7 +74,33 @@ CREATE TABLE IF NOT EXISTS worker_outputs (
   master_task_id TEXT NOT NULL,
   phase_id TEXT NOT NULL,
   output TEXT NOT NULL DEFAULT '',
+  stderr TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (master_task_id, phase_id),
+  FOREIGN KEY (master_task_id) REFERENCES tasks(master_task_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS evaluation_results (
+  master_task_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  passed INTEGER NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  retry_prompt TEXT,
+  evaluator_type TEXT,
+  evaluated_at INTEGER NOT NULL,
+  PRIMARY KEY (master_task_id, phase_id, attempt),
+  FOREIGN KEY (master_task_id) REFERENCES tasks(master_task_id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS healing_attempts (
+  master_task_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  attempt_number INTEGER NOT NULL,
+  exit_code INTEGER,
+  stderr_tail TEXT,
+  augmented_prompt TEXT,
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (master_task_id, phase_id, attempt_number),
   FOREIGN KEY (master_task_id) REFERENCES tasks(master_task_id) ON DELETE CASCADE
 );
 
@@ -75,7 +108,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   session_dir_name TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
   prompt TEXT NOT NULL DEFAULT '',
-  created_at INTEGER NOT NULL DEFAULT 0
+  created_at INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (session_dir_name) REFERENCES tasks(master_task_id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS phase_logs (
@@ -83,13 +117,36 @@ CREATE TABLE IF NOT EXISTS phase_logs (
   phase_id TEXT NOT NULL,
   prompt TEXT NOT NULL DEFAULT '',
   request_context TEXT NOT NULL DEFAULT '',
-  response TEXT NOT NULL DEFAULT '',
+  response TEXT NOT NULL DEFAULT '',  -- DEPRECATED (BL-3): dead schema, never populated. Worker output stored in worker_outputs table.
   exit_code INTEGER,
   started_at INTEGER NOT NULL DEFAULT 0,
   completed_at INTEGER,
-  PRIMARY KEY (master_task_id, phase_id)
+  PRIMARY KEY (master_task_id, phase_id),
+  FOREIGN KEY (master_task_id) REFERENCES tasks(master_task_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS plan_revisions (
+  master_task_id TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  feedback TEXT,
+  draft_json TEXT NOT NULL,
+  implementation_plan_md TEXT,
+  status TEXT NOT NULL DEFAULT 'draft',
+  created_at INTEGER NOT NULL,
+  PRIMARY KEY (master_task_id, version),
+  FOREIGN KEY (master_task_id) REFERENCES tasks(master_task_id) ON DELETE CASCADE
+);
+
+-- Sprint 4: Performance indexes
+CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_eval_task_phase ON evaluation_results(master_task_id, phase_id);
+CREATE INDEX IF NOT EXISTS idx_heal_task_phase ON healing_attempts(master_task_id, phase_id);
+CREATE INDEX IF NOT EXISTS idx_plan_task ON plan_revisions(master_task_id);
+
+-- Sprint 4: Unique constraint on session_id (prevents duplicate session rows)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id);
 `;
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Flush Configuration
@@ -230,14 +287,17 @@ export class ArtifactDB {
             summary?: string;
             implementationPlan?: string;
             consolidationReport?: string;
+            consolidationReportJson?: string;
+            runbookJson?: string;
+            completedAt?: number;
         }
     ): void {
         this.db.run('BEGIN');
         try {
-            // Ensure the row exists
+            // Ensure the row exists (set created_at on initial creation)
             this.db.run(
-                'INSERT OR IGNORE INTO tasks (master_task_id) VALUES (?)',
-                [masterTaskId]
+                'INSERT OR IGNORE INTO tasks (master_task_id, created_at) VALUES (?, ?)',
+                [masterTaskId, Date.now()]
             );
 
             if (fields.summary !== undefined) {
@@ -258,6 +318,30 @@ export class ArtifactDB {
                     [fields.consolidationReport, masterTaskId]
                 );
             }
+            if (fields.runbookJson !== undefined) {
+                this.db.run(
+                    'UPDATE tasks SET runbook_json = ? WHERE master_task_id = ?',
+                    [fields.runbookJson, masterTaskId]
+                );
+            }
+            if (fields.consolidationReportJson !== undefined) {
+                this.db.run(
+                    'UPDATE tasks SET consolidation_report_json = ? WHERE master_task_id = ?',
+                    [fields.consolidationReportJson, masterTaskId]
+                );
+            }
+            if (fields.completedAt !== undefined) {
+                this.db.run(
+                    'UPDATE tasks SET completed_at = ? WHERE master_task_id = ?',
+                    [fields.completedAt, masterTaskId]
+                );
+            }
+
+            // Always set updated_at on any upsert
+            this.db.run(
+                'UPDATE tasks SET updated_at = ? WHERE master_task_id = ?',
+                [Date.now(), masterTaskId]
+            );
 
             this.db.run('COMMIT');
         } catch (e) {
@@ -277,7 +361,7 @@ export class ArtifactDB {
     getTask(masterTaskId: string): TaskState | undefined {
         // ── Task row ─────────────────────────────────────────────────────
         const taskStmt = this.db.prepare(
-            'SELECT master_task_id, summary, implementation_plan, consolidation_report FROM tasks WHERE master_task_id = ?'
+            'SELECT master_task_id, summary, implementation_plan, consolidation_report, consolidation_report_json, runbook_json FROM tasks WHERE master_task_id = ?'
         );
         taskStmt.bind([masterTaskId]);
 
@@ -291,6 +375,8 @@ export class ArtifactDB {
             summary: string | null;
             implementation_plan: string | null;
             consolidation_report: string | null;
+            consolidation_report_json: string | null;
+            runbook_json: string | null;
         };
         taskStmt.free();
 
@@ -367,6 +453,8 @@ export class ArtifactDB {
             summary: taskRow.summary ?? undefined,
             implementationPlan: taskRow.implementation_plan ?? undefined,
             consolidationReport: taskRow.consolidation_report ?? undefined,
+            consolidationReportJson: taskRow.consolidation_report_json ?? undefined,
+            runbookJson: taskRow.runbook_json ?? undefined,
             phases,
         };
 
@@ -380,10 +468,15 @@ export class ArtifactDB {
     deleteTask(masterTaskId: string): void {
         this.db.run('BEGIN');
         try {
+            this.db.run('DELETE FROM evaluation_results WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM healing_attempts WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM plan_revisions WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM handoffs WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM worker_outputs WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM phase_logs WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM phases WHERE master_task_id = ?', [masterTaskId]);
+            // H3 audit fix: Cascade to sessions (prevents orphan session rows)
+            this.db.run('DELETE FROM sessions WHERE session_dir_name = ?', [masterTaskId]);
             this.db.run('DELETE FROM tasks WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('COMMIT');
         } catch (e) {
@@ -478,7 +571,7 @@ export class ArtifactDB {
      * Ensures the parent task and phase rows exist first.
      */
     upsertHandoff(handoff: PhaseHandoff): void {
-        const { masterTaskId, phaseId, decisions, modifiedFiles, blockers, completedAt } = handoff;
+        const { masterTaskId, phaseId, decisions, modifiedFiles, blockers, completedAt, nextStepsContext } = handoff;
 
         this.db.run('BEGIN');
         try {
@@ -495,13 +588,14 @@ export class ArtifactDB {
             );
 
             this.db.run(
-                `INSERT INTO handoffs (master_task_id, phase_id, decisions, modified_files, blockers, completed_at)
-                 VALUES (?, ?, ?, ?, ?, ?)
+                `INSERT INTO handoffs (master_task_id, phase_id, decisions, modified_files, blockers, completed_at, next_steps_context)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(master_task_id, phase_id)
                  DO UPDATE SET decisions = excluded.decisions,
                                modified_files = excluded.modified_files,
                                blockers = excluded.blockers,
-                               completed_at = excluded.completed_at`,
+                               completed_at = excluded.completed_at,
+                               next_steps_context = excluded.next_steps_context`,
                 [
                     masterTaskId,
                     phaseId,
@@ -509,6 +603,7 @@ export class ArtifactDB {
                     JSON.stringify(modifiedFiles),
                     JSON.stringify(blockers),
                     completedAt,
+                    nextStepsContext ?? '',
                 ]
             );
 
@@ -525,7 +620,7 @@ export class ArtifactDB {
      */
     getHandoff(masterTaskId: string, phaseId: string): PhaseHandoff | undefined {
         const stmt = this.db.prepare(
-            'SELECT phase_id, decisions, modified_files, blockers, completed_at FROM handoffs WHERE master_task_id = ? AND phase_id = ?'
+            'SELECT phase_id, decisions, modified_files, blockers, completed_at, next_steps_context FROM handoffs WHERE master_task_id = ? AND phase_id = ?'
         );
         stmt.bind([masterTaskId, phaseId]);
 
@@ -540,6 +635,7 @@ export class ArtifactDB {
             modified_files: string;
             blockers: string;
             completed_at: number;
+            next_steps_context: string;
         };
         stmt.free();
 
@@ -564,6 +660,7 @@ export class ArtifactDB {
             modifiedFiles,
             blockers,
             completedAt: row.completed_at,
+            nextStepsContext: row.next_steps_context || undefined,
         };
     }
 
@@ -575,7 +672,7 @@ export class ArtifactDB {
      * Persist accumulated worker output for a phase.
      * Each phase's output is stored as a single TEXT blob.
      */
-    upsertWorkerOutput(masterTaskId: string, phaseId: string, output: string): void {
+    upsertWorkerOutput(masterTaskId: string, phaseId: string, output: string, stderr: string = ''): void {
         // Ensure parent task exists
         this.db.run(
             'INSERT OR IGNORE INTO tasks (master_task_id) VALUES (?)',
@@ -583,11 +680,11 @@ export class ArtifactDB {
         );
 
         this.db.run(
-            `INSERT INTO worker_outputs (master_task_id, phase_id, output)
-             VALUES (?, ?, ?)
+            `INSERT INTO worker_outputs (master_task_id, phase_id, output, stderr)
+             VALUES (?, ?, ?, ?)
              ON CONFLICT(master_task_id, phase_id)
-             DO UPDATE SET output = excluded.output`,
-            [masterTaskId, phaseId, output]
+             DO UPDATE SET output = excluded.output, stderr = excluded.stderr`,
+            [masterTaskId, phaseId, output, stderr]
         );
 
         this.scheduleFlush();
@@ -625,6 +722,12 @@ export class ArtifactDB {
         prompt: string,
         createdAt: number
     ): void {
+        // FK safety: ensure parent task row exists (matches upsertHandoff pattern)
+        this.db.run(
+            'INSERT OR IGNORE INTO tasks (master_task_id, created_at) VALUES (?, ?)',
+            [dirName, createdAt]
+        );
+
         this.db.run(
             `INSERT INTO sessions (session_dir_name, session_id, prompt, created_at)
              VALUES (?, ?, ?, ?)
@@ -665,6 +768,58 @@ export class ArtifactDB {
             prompt: row.prompt,
             createdAt: row.created_at,
         };
+    }
+
+    /**
+     * List all sessions, joined with tasks to include runbook status.
+     * Ordered by created_at descending (most recent first).
+     * Used by SessionManager to replace the IPC-based directory scan.
+     */
+    listSessions(): Array<{
+        sessionDirName: string;
+        sessionId: string;
+        prompt: string;
+        createdAt: number;
+        runbookJson: string | null;
+        status: string | null;
+    }> {
+        const stmt = this.db.prepare(
+            `SELECT s.session_dir_name, s.session_id, s.prompt, s.created_at,
+                    t.runbook_json, t.status
+             FROM sessions s
+             LEFT JOIN tasks t ON s.session_dir_name = t.master_task_id
+             ORDER BY s.created_at DESC`
+        );
+
+        const results: Array<{
+            sessionDirName: string;
+            sessionId: string;
+            prompt: string;
+            createdAt: number;
+            runbookJson: string | null;
+            status: string | null;
+        }> = [];
+
+        while (stmt.step()) {
+            const row = stmt.getAsObject() as {
+                session_dir_name: string;
+                session_id: string;
+                prompt: string;
+                created_at: number;
+                runbook_json: string | null;
+                status: string | null;
+            };
+            results.push({
+                sessionDirName: row.session_dir_name,
+                sessionId: row.session_id,
+                prompt: row.prompt,
+                createdAt: row.created_at,
+                runbookJson: row.runbook_json,
+                status: row.status,
+            });
+        }
+        stmt.free();
+        return results;
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -783,6 +938,291 @@ export class ArtifactDB {
             startedAt: row.started_at,
             completedAt: row.completed_at,
         };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Evaluation Result CRUD
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Persist an evaluation result for a phase attempt.
+     */
+    upsertEvaluationResult(
+        masterTaskId: string,
+        phaseId: string,
+        fields: {
+            attempt?: number;
+            passed: boolean;
+            reason?: string;
+            retryPrompt?: string;
+            evaluatorType?: string;
+            evaluatedAt: number;
+        }
+    ): void {
+        const attempt = fields.attempt ?? 1;
+        this.db.run(
+            `INSERT INTO evaluation_results (master_task_id, phase_id, attempt, passed, reason, retry_prompt, evaluator_type, evaluated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(master_task_id, phase_id, attempt)
+             DO UPDATE SET passed = excluded.passed,
+                           reason = excluded.reason,
+                           retry_prompt = excluded.retry_prompt,
+                           evaluator_type = excluded.evaluator_type,
+                           evaluated_at = excluded.evaluated_at`,
+            [
+                masterTaskId,
+                phaseId,
+                attempt,
+                fields.passed ? 1 : 0,
+                fields.reason ?? '',
+                fields.retryPrompt ?? null,
+                fields.evaluatorType ?? null,
+                fields.evaluatedAt,
+            ]
+        );
+        this.scheduleFlush();
+    }
+
+    /**
+     * Retrieve evaluation results for a task, optionally filtered by phase.
+     */
+    getEvaluationResults(
+        masterTaskId: string,
+        phaseId?: string
+    ): Array<{
+        phaseId: string;
+        attempt: number;
+        passed: boolean;
+        reason: string;
+        retryPrompt: string | null;
+        evaluatorType: string | null;
+        evaluatedAt: number;
+    }> {
+        const sql = phaseId
+            ? 'SELECT phase_id, attempt, passed, reason, retry_prompt, evaluator_type, evaluated_at FROM evaluation_results WHERE master_task_id = ? AND phase_id = ? ORDER BY attempt'
+            : 'SELECT phase_id, attempt, passed, reason, retry_prompt, evaluator_type, evaluated_at FROM evaluation_results WHERE master_task_id = ? ORDER BY phase_id, attempt';
+        const stmt = this.db.prepare(sql);
+        stmt.bind(phaseId ? [masterTaskId, phaseId] : [masterTaskId]);
+
+        const results: Array<{
+            phaseId: string;
+            attempt: number;
+            passed: boolean;
+            reason: string;
+            retryPrompt: string | null;
+            evaluatorType: string | null;
+            evaluatedAt: number;
+        }> = [];
+
+        while (stmt.step()) {
+            const row = stmt.getAsObject() as {
+                phase_id: string;
+                attempt: number;
+                passed: number;
+                reason: string;
+                retry_prompt: string | null;
+                evaluator_type: string | null;
+                evaluated_at: number;
+            };
+            results.push({
+                phaseId: row.phase_id,
+                attempt: row.attempt,
+                passed: row.passed !== 0,
+                reason: row.reason,
+                retryPrompt: row.retry_prompt,
+                evaluatorType: row.evaluator_type,
+                evaluatedAt: row.evaluated_at,
+            });
+        }
+        stmt.free();
+        return results;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Healing Attempt CRUD
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Persist a self-healing attempt for a phase.
+     */
+    upsertHealingAttempt(
+        masterTaskId: string,
+        phaseId: string,
+        fields: {
+            attemptNumber: number;
+            exitCode?: number;
+            stderrTail?: string;
+            augmentedPrompt?: string;
+            createdAt: number;
+        }
+    ): void {
+        this.db.run(
+            `INSERT INTO healing_attempts (master_task_id, phase_id, attempt_number, exit_code, stderr_tail, augmented_prompt, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(master_task_id, phase_id, attempt_number)
+             DO UPDATE SET exit_code = excluded.exit_code,
+                           stderr_tail = excluded.stderr_tail,
+                           augmented_prompt = excluded.augmented_prompt,
+                           created_at = excluded.created_at`,
+            [
+                masterTaskId,
+                phaseId,
+                fields.attemptNumber,
+                fields.exitCode ?? null,
+                fields.stderrTail ?? null,
+                fields.augmentedPrompt ?? null,
+                fields.createdAt,
+            ]
+        );
+        this.scheduleFlush();
+    }
+
+    /**
+     * Retrieve healing attempts for a task, optionally filtered by phase.
+     */
+    getHealingAttempts(
+        masterTaskId: string,
+        phaseId?: string
+    ): Array<{
+        phaseId: string;
+        attemptNumber: number;
+        exitCode: number | null;
+        stderrTail: string | null;
+        augmentedPrompt: string | null;
+        createdAt: number;
+    }> {
+        const sql = phaseId
+            ? 'SELECT phase_id, attempt_number, exit_code, stderr_tail, augmented_prompt, created_at FROM healing_attempts WHERE master_task_id = ? AND phase_id = ? ORDER BY attempt_number'
+            : 'SELECT phase_id, attempt_number, exit_code, stderr_tail, augmented_prompt, created_at FROM healing_attempts WHERE master_task_id = ? ORDER BY phase_id, attempt_number';
+        const stmt = this.db.prepare(sql);
+        stmt.bind(phaseId ? [masterTaskId, phaseId] : [masterTaskId]);
+
+        const results: Array<{
+            phaseId: string;
+            attemptNumber: number;
+            exitCode: number | null;
+            stderrTail: string | null;
+            augmentedPrompt: string | null;
+            createdAt: number;
+        }> = [];
+
+        while (stmt.step()) {
+            const row = stmt.getAsObject() as {
+                phase_id: string;
+                attempt_number: number;
+                exit_code: number | null;
+                stderr_tail: string | null;
+                augmented_prompt: string | null;
+                created_at: number;
+            };
+            results.push({
+                phaseId: row.phase_id,
+                attemptNumber: row.attempt_number,
+                exitCode: row.exit_code,
+                stderrTail: row.stderr_tail,
+                augmentedPrompt: row.augmented_prompt,
+                createdAt: row.created_at,
+            });
+        }
+        stmt.free();
+        return results;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Plan Revision CRUD
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Persist a plan revision with auto-incrementing version.
+     */
+    upsertPlanRevision(
+        masterTaskId: string,
+        fields: {
+            feedback?: string;
+            draftJson: string;
+            implementationPlanMd?: string;
+            status?: string;
+        }
+    ): void {
+        // Ensure parent task exists
+        this.db.run(
+            'INSERT OR IGNORE INTO tasks (master_task_id) VALUES (?)',
+            [masterTaskId]
+        );
+
+        // Determine next version number
+        const versionStmt = this.db.prepare(
+            'SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM plan_revisions WHERE master_task_id = ?'
+        );
+        versionStmt.bind([masterTaskId]);
+        versionStmt.step();
+        const nextVersion = (versionStmt.getAsObject() as { next_version: number }).next_version;
+        versionStmt.free();
+
+        this.db.run(
+            `INSERT INTO plan_revisions (master_task_id, version, feedback, draft_json, implementation_plan_md, status, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [
+                masterTaskId,
+                nextVersion,
+                fields.feedback ?? null,
+                fields.draftJson,
+                fields.implementationPlanMd ?? null,
+                fields.status ?? 'draft',
+                Date.now(),
+            ]
+        );
+
+        this.scheduleFlush();
+    }
+
+    /**
+     * Retrieve all plan revisions for a task, ordered by version.
+     */
+    getPlanRevisions(
+        masterTaskId: string
+    ): Array<{
+        version: number;
+        feedback: string | null;
+        draftJson: string;
+        implementationPlanMd: string | null;
+        status: string;
+        createdAt: number;
+    }> {
+        const stmt = this.db.prepare(
+            'SELECT version, feedback, draft_json, implementation_plan_md, status, created_at FROM plan_revisions WHERE master_task_id = ? ORDER BY version'
+        );
+        stmt.bind([masterTaskId]);
+
+        const results: Array<{
+            version: number;
+            feedback: string | null;
+            draftJson: string;
+            implementationPlanMd: string | null;
+            status: string;
+            createdAt: number;
+        }> = [];
+
+        while (stmt.step()) {
+            const row = stmt.getAsObject() as {
+                version: number;
+                feedback: string | null;
+                draft_json: string;
+                implementation_plan_md: string | null;
+                status: string;
+                created_at: number;
+            };
+            results.push({
+                version: row.version,
+                feedback: row.feedback,
+                draftJson: row.draft_json,
+                implementationPlanMd: row.implementation_plan_md,
+                status: row.status,
+                createdAt: row.created_at,
+            });
+        }
+        stmt.free();
+        return results;
     }
 
     // ─────────────────────────────────────────────────────────────────────

@@ -8,6 +8,7 @@ import * as path from 'node:path';
 import { RUNBOOK_FILENAME } from '../types/index.js';
 import type { Runbook, RunbookStatus } from '../types/index.js';
 import { StateManager } from '../state/StateManager.js';
+import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -98,10 +99,21 @@ export class SessionManager {
     /** The current session dir name (YYYYMMDD-HHMMSS-<uuid>). */
     private currentSessionDirName: string;
 
+    /** Optional ArtifactDB reference for DB-first session queries. */
+    private db?: ArtifactDB;
+
     constructor(storageBase: string, currentSessionId: string, currentSessionDirName?: string) {
         this.ipcDir = path.join(storageBase, 'ipc');
         this.currentSessionId = currentSessionId;
         this.currentSessionDirName = currentSessionDirName ?? currentSessionId;
+    }
+
+    /**
+     * Wire the ArtifactDB for DB-first session listing.
+     * After calling this, `listSessions()` queries the DB with IPC fallback.
+     */
+    public setArtifactDB(db: ArtifactDB): void {
+        this.db = db;
     }
 
     /** Update the active session ID (e.g. after switching sessions). */
@@ -127,7 +139,7 @@ export class SessionManager {
      * `<storageBase>/ipc/YYYYMMDD-HHMMSS-<uuid>/`, and writes metadata JSON.
      * @returns The new session ID.
      */
-    public async createSession(prompt: string): Promise<string> {
+    public async createSession(_prompt: string): Promise<string> {
         const sessionId = generateUUIDv7();
         const dirName = formatSessionDirName(sessionId);
         const sessionDir = path.join(this.ipcDir, dirName);
@@ -135,18 +147,8 @@ export class SessionManager {
         // Create session directory (recursively creates .coogent/ipc/ if needed)
         await fs.mkdir(sessionDir, { recursive: true });
 
-        // Write metadata JSON with prompt and timestamp
-        const metadata = {
-            sessionId,
-            prompt: prompt.trim(),
-            createdAt: Date.now(),
-            createdAtISO: new Date().toISOString(),
-        };
-        await fs.writeFile(
-            path.join(sessionDir, 'metadata.json'),
-            JSON.stringify(metadata, null, 2),
-            'utf-8'
-        );
+        // Session metadata is persisted via ArtifactDB.upsertSession() —
+        // no metadata.json file needed (BL-2 audit fix: removed dead write).
 
         return sessionId;
     }
@@ -163,12 +165,65 @@ export class SessionManager {
     /**
      * List all past sessions, sorted by most recent first.
      * Excludes the currently active session.
+     *
+     * DB-first: queries ArtifactDB if available, falling back to IPC
+     * directory scan for legacy sessions not yet in the database.
      */
     public async listSessions(): Promise<SessionSummary[]> {
-        const dirs = await this.discoverSessionDirs();
+        const seenDirNames = new Set<string>();
         const summaries: SessionSummary[] = [];
 
+        // ── Primary: DB query ────────────────────────────────────────
+        if (this.db) {
+            try {
+                const rows = this.db.listSessions();
+                for (const row of rows) {
+                    // Exclude current active session
+                    if (row.sessionDirName === this.currentSessionDirName) continue;
+                    if (row.sessionId === this.currentSessionId) continue;
+
+                    seenDirNames.add(row.sessionDirName);
+
+                    // Try to build summary from runbook JSON if present
+                    if (row.runbookJson) {
+                        try {
+                            const runbook = JSON.parse(row.runbookJson) as Runbook;
+                            if (runbook && runbook.project_id && Array.isArray(runbook.phases)) {
+                                summaries.push(this.runbookToSummary(
+                                    stripSessionDirPrefix(row.sessionDirName),
+                                    runbook,
+                                    row.createdAt,
+                                ));
+                                continue;
+                            }
+                        } catch { /* fall through to prompt-only summary */ }
+                    }
+
+                    // Minimal summary from session row (no runbook available yet)
+                    summaries.push({
+                        sessionId: row.sessionId || stripSessionDirPrefix(row.sessionDirName),
+                        projectId: '(pending)',
+                        status: (row.status as RunbookStatus) || 'idle',
+                        phaseCount: 0,
+                        completedPhases: 0,
+                        createdAt: row.createdAt,
+                        firstPrompt: row.prompt
+                            ? (row.prompt.length > MAX_PROMPT_LENGTH
+                                ? row.prompt.slice(0, MAX_PROMPT_LENGTH) + '…'
+                                : row.prompt)
+                            : '(empty)',
+                    });
+                }
+            } catch (err) {
+                log.warn('[SessionManager] DB listSessions failed, using IPC fallback:', err);
+            }
+        }
+
+        // ── Fallback: IPC directory scan (legacy sessions not in DB) ──
+        const dirs = await this.discoverSessionDirs();
         for (const dir of dirs) {
+            const dirName = path.basename(dir);
+            if (seenDirNames.has(dirName)) continue; // already from DB
             const summary = await this.readSessionSummary(dir);
             if (summary) summaries.push(summary);
         }
@@ -229,15 +284,55 @@ export class SessionManager {
     /**
      * Deep search — also searches across ALL phase prompts for a session.
      * More expensive than `searchSessions()` since it reads full runbooks.
+     *
+     * DB-first: uses DB runbook JSON when available, IPC fallback for legacy sessions.
      */
     public async deepSearchSessions(query: string): Promise<SessionSummary[]> {
         if (!query.trim()) return this.listSessions();
 
-        const dirs = await this.discoverSessionDirs();
         const q = query.toLowerCase();
         const results: SessionSummary[] = [];
+        const seenDirNames = new Set<string>();
 
+        // ── Primary: DB search ───────────────────────────────────────
+        if (this.db) {
+            try {
+                const rows = this.db.listSessions();
+                for (const row of rows) {
+                    if (row.sessionDirName === this.currentSessionDirName) continue;
+                    seenDirNames.add(row.sessionDirName);
+
+                    if (!row.runbookJson) continue;
+                    try {
+                        const runbook = JSON.parse(row.runbookJson) as Runbook;
+                        if (!runbook || !runbook.project_id || !Array.isArray(runbook.phases)) continue;
+
+                        const matchesProject = runbook.project_id.toLowerCase().includes(q);
+                        const matchesPrompt = runbook.phases.some(p =>
+                            p.prompt.toLowerCase().includes(q)
+                        );
+                        const matchesSessionPrompt = (row.prompt || '').toLowerCase().includes(q);
+
+                        if (matchesProject || matchesPrompt || matchesSessionPrompt) {
+                            results.push(this.runbookToSummary(
+                                stripSessionDirPrefix(row.sessionDirName),
+                                runbook,
+                                row.createdAt,
+                            ));
+                        }
+                    } catch { /* skip malformed runbook */ }
+                }
+            } catch (err) {
+                log.warn('[SessionManager] DB deepSearch failed, using IPC fallback:', err);
+            }
+        }
+
+        // ── Fallback: IPC directory scan (legacy) ────────────────────
+        const dirs = await this.discoverSessionDirs();
         for (const dir of dirs) {
+            const dirName = path.basename(dir);
+            if (seenDirNames.has(dirName)) continue;
+
             const runbook = await this.readRunbook(dir);
             if (!runbook) continue;
 
@@ -258,8 +353,26 @@ export class SessionManager {
 
     /**
      * Load the full runbook for a specific session.
+     * DB-first: reads from tasks.runbook_json, IPC fallback.
      */
     public async getSessionRunbook(sessionId: string): Promise<Runbook | null> {
+        // Try DB first via session dir name lookup
+        if (this.db) {
+            try {
+                const rows = this.db.listSessions();
+                const match = rows.find(r =>
+                    stripSessionDirPrefix(r.sessionDirName) === sessionId ||
+                    r.sessionId === sessionId
+                );
+                if (match?.runbookJson) {
+                    const runbook = JSON.parse(match.runbookJson) as Runbook;
+                    if (runbook && runbook.project_id && Array.isArray(runbook.phases)) {
+                        return runbook;
+                    }
+                }
+            } catch { /* fall through to IPC */ }
+        }
+
         const dir = this.getSessionDir(sessionId);
         return this.readRunbook(dir);
     }
@@ -350,8 +463,11 @@ export class SessionManager {
         return this.runbookToSummary(sessionId, runbook);
     }
 
-    /** Convert a runbook + session ID into a SessionSummary. */
-    private runbookToSummary(sessionId: string, runbook: Runbook): SessionSummary {
+    /**
+     * Convert a runbook + session ID into a SessionSummary.
+     * If `overrideCreatedAt` is provided, it is used instead of extracting from the UUID.
+     */
+    private runbookToSummary(sessionId: string, runbook: Runbook, overrideCreatedAt?: number): SessionSummary {
         const firstPrompt = runbook.phases[0]?.prompt || '(empty)';
         return {
             sessionId,
@@ -359,7 +475,7 @@ export class SessionManager {
             status: runbook.status,
             phaseCount: runbook.phases.length,
             completedPhases: runbook.phases.filter(p => p.status === 'completed').length,
-            createdAt: extractUUIDv7Timestamp(sessionId),
+            createdAt: overrideCreatedAt ?? extractUUIDv7Timestamp(sessionId),
             firstPrompt: firstPrompt.length > MAX_PROMPT_LENGTH
                 ? firstPrompt.slice(0, MAX_PROMPT_LENGTH) + '…'
                 : firstPrompt,

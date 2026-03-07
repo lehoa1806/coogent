@@ -25,6 +25,10 @@ describe('ConsolidationAgent', () => {
 
     // ─── Helpers ─────────────────────────────────────────────────────────
 
+    const MCP_PHASE_0_DEFAULT = 'phase-000-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+    const MCP_PHASE_1_DEFAULT = 'phase-001-11111111-2222-3333-4444-555555555555';
+    const DEFAULT_MASTER_TASK_ID = 'default-master-task-id';
+
     function makeRunbook(overrides: Partial<Runbook> = {}): Runbook {
         return {
             project_id: 'test-project',
@@ -37,6 +41,7 @@ describe('ConsolidationAgent', () => {
                     prompt: 'Phase 0 prompt',
                     context_files: [],
                     success_criteria: 'exit_code:0',
+                    mcpPhaseId: MCP_PHASE_0_DEFAULT,
                 },
                 {
                     id: asPhaseId(1),
@@ -44,6 +49,7 @@ describe('ConsolidationAgent', () => {
                     prompt: 'Phase 1 prompt',
                     context_files: [],
                     success_criteria: 'exit_code:0',
+                    mcpPhaseId: MCP_PHASE_1_DEFAULT,
                 },
             ],
             ...overrides,
@@ -62,14 +68,27 @@ describe('ConsolidationAgent', () => {
         };
     }
 
-    async function writeHandoff(sessionDir: string, phaseId: number, report: HandoffReport): Promise<void> {
-        const handoffsDir = path.join(sessionDir, 'handoffs');
-        await fs.mkdir(handoffsDir, { recursive: true });
-        await fs.writeFile(
-            path.join(handoffsDir, `phase-${phaseId}.json`),
-            JSON.stringify(report, null, 2),
-            'utf-8',
-        );
+    function makeMcpHandoffJson(report: HandoffReport) {
+        return JSON.stringify({
+            decisions: report.decisions,
+            modifiedFiles: report.modified_files,
+            blockers: report.unresolved_issues,
+            completedAt: report.timestamp,
+        });
+    }
+
+    function makeDefaultMcpBridge(phase0: HandoffReport, phase1?: HandoffReport) {
+        const responses: Record<string, string> = {};
+        responses[`coogent://tasks/${DEFAULT_MASTER_TASK_ID}/phases/${MCP_PHASE_0_DEFAULT}/handoff`] = makeMcpHandoffJson(phase0);
+        if (phase1) {
+            responses[`coogent://tasks/${DEFAULT_MASTER_TASK_ID}/phases/${MCP_PHASE_1_DEFAULT}/handoff`] = makeMcpHandoffJson(phase1);
+        }
+        return {
+            readResource: jest.fn((uri: string) => {
+                if (responses[uri]) return Promise.resolve(responses[uri]);
+                return Promise.reject(new Error(`Resource not found: ${uri}`));
+            }),
+        } as unknown as import('../../mcp/MCPClientBridge.js').MCPClientBridge;
     }
 
     // ─── generateReport ─────────────────────────────────────────────────
@@ -77,10 +96,9 @@ describe('ConsolidationAgent', () => {
     describe('generateReport', () => {
         it('should aggregate all handoff reports into a consolidation report', async () => {
             const runbook = makeRunbook();
-            await writeHandoff(tmpDir, 0, makeHandoff(0));
-            await writeHandoff(tmpDir, 1, makeHandoff(1));
+            const mockBridge = makeDefaultMcpBridge(makeHandoff(0), makeHandoff(1));
 
-            const report = await agent.generateReport(tmpDir, runbook);
+            const report = await agent.generateReport(tmpDir, runbook, mockBridge, DEFAULT_MASTER_TASK_ID);
 
             expect(report.projectId).toBe('test-project');
             expect(report.totalPhases).toBe(2);
@@ -100,12 +118,12 @@ describe('ConsolidationAgent', () => {
             expect(report.generatedAt).toBeGreaterThan(0);
         });
 
-        it('should handle missing handoff files gracefully (mark as skipped)', async () => {
+        it('should handle missing handoff gracefully (mark as skipped)', async () => {
             const runbook = makeRunbook();
-            // Only write handoff for phase 0, not phase 1
-            await writeHandoff(tmpDir, 0, makeHandoff(0));
+            // Only provide handoff for phase 0, not phase 1
+            const mockBridge = makeDefaultMcpBridge(makeHandoff(0));
 
-            const report = await agent.generateReport(tmpDir, runbook);
+            const report = await agent.generateReport(tmpDir, runbook, mockBridge, DEFAULT_MASTER_TASK_ID);
 
             expect(report.successfulPhases).toBe(1);
             expect(report.skippedPhases).toBe(1);
@@ -122,6 +140,7 @@ describe('ConsolidationAgent', () => {
                         prompt: 'p0',
                         context_files: [],
                         success_criteria: 'exit_code:0',
+                        mcpPhaseId: MCP_PHASE_0_DEFAULT,
                     },
                     {
                         id: asPhaseId(1),
@@ -129,13 +148,13 @@ describe('ConsolidationAgent', () => {
                         prompt: 'p1',
                         context_files: [],
                         success_criteria: 'exit_code:0',
+                        mcpPhaseId: MCP_PHASE_1_DEFAULT,
                     },
                 ],
             });
-            await writeHandoff(tmpDir, 0, makeHandoff(0));
-            await writeHandoff(tmpDir, 1, makeHandoff(1));
+            const mockBridge = makeDefaultMcpBridge(makeHandoff(0), makeHandoff(1));
 
-            const report = await agent.generateReport(tmpDir, runbook);
+            const report = await agent.generateReport(tmpDir, runbook, mockBridge, DEFAULT_MASTER_TASK_ID);
 
             expect(report.successfulPhases).toBe(1);
             expect(report.failedPhases).toBe(1);
@@ -143,20 +162,24 @@ describe('ConsolidationAgent', () => {
 
         it('should deduplicate modified files across phases', async () => {
             const runbook = makeRunbook();
-            await writeHandoff(tmpDir, 0, makeHandoff(0, { modified_files: ['shared.ts'] }));
-            await writeHandoff(tmpDir, 1, makeHandoff(1, { modified_files: ['shared.ts'] }));
+            const mockBridge = makeDefaultMcpBridge(
+                makeHandoff(0, { modified_files: ['shared.ts'] }),
+                makeHandoff(1, { modified_files: ['shared.ts'] }),
+            );
 
-            const report = await agent.generateReport(tmpDir, runbook);
+            const report = await agent.generateReport(tmpDir, runbook, mockBridge, DEFAULT_MASTER_TASK_ID);
 
             expect(report.allModifiedFiles).toEqual(['shared.ts']);
         });
 
         it('should aggregate unresolved issues from all phases', async () => {
             const runbook = makeRunbook();
-            await writeHandoff(tmpDir, 0, makeHandoff(0, { unresolved_issues: ['Issue A'] }));
-            await writeHandoff(tmpDir, 1, makeHandoff(1, { unresolved_issues: ['Issue B', 'Issue C'] }));
+            const mockBridge = makeDefaultMcpBridge(
+                makeHandoff(0, { unresolved_issues: ['Issue A'] }),
+                makeHandoff(1, { unresolved_issues: ['Issue B', 'Issue C'] }),
+            );
 
-            const report = await agent.generateReport(tmpDir, runbook);
+            const report = await agent.generateReport(tmpDir, runbook, mockBridge, DEFAULT_MASTER_TASK_ID);
 
             expect(report.unresolvedIssues).toEqual(['Issue A', 'Issue B', 'Issue C']);
         });
@@ -386,10 +409,17 @@ describe('ConsolidationAgent', () => {
             expect(report.unresolvedIssues).toEqual(['blocker-1']);
         });
 
-        it('should fall back to file-based loading when mcpPhaseId is absent', async () => {
-            const runbook = makeRunbook(); // no mcpPhaseId on phases
-            await writeHandoff(tmpDir, 0, makeHandoff(0));
-            await writeHandoff(tmpDir, 1, makeHandoff(1));
+        it('should skip phases without mcpPhaseId (Sprint 4: no file fallback)', async () => {
+            // Phases without mcpPhaseId are skipped — no file fallback
+            const runbook: import('../../types/index.js').Runbook = {
+                project_id: 'no-mcp-test',
+                status: 'completed',
+                current_phase: 0,
+                phases: [
+                    { id: asPhaseId(0), status: 'completed', prompt: 'P0', context_files: [], success_criteria: 'exit_code:0' },
+                    { id: asPhaseId(1), status: 'completed', prompt: 'P1', context_files: [], success_criteria: 'exit_code:0' },
+                ],
+            };
 
             const mockBridge = {
                 readResource: jest.fn(),
@@ -399,24 +429,22 @@ describe('ConsolidationAgent', () => {
 
             // MCP bridge should NOT have been called (no mcpPhaseId)
             expect(mockBridge.readResource).not.toHaveBeenCalled();
-            // But file-based loading should work
-            expect(report.successfulPhases).toBe(2);
+            // Sprint 4: no file fallback — both phases should be skipped
+            expect(report.skippedPhases).toBe(2);
+            expect(report.successfulPhases).toBe(0);
         });
 
-        it('should fall back to file when MCP read fails', async () => {
+        it('should skip phase when MCP read fails (Sprint 4: no file fallback)', async () => {
             const mockBridge = {
                 readResource: jest.fn().mockRejectedValue(new Error('MCP error -32603')),
             } as unknown as import('../../mcp/MCPClientBridge.js').MCPClientBridge;
 
-            await writeHandoff(tmpDir, 0, makeHandoff(0, { decisions: ['file-based'] }));
-            await writeHandoff(tmpDir, 1, makeHandoff(1));
-
             const runbook = makeRunbookWithMcpIds();
             const report = await agent.generateReport(tmpDir, runbook, mockBridge, MASTER_TASK_ID);
 
-            // Should still succeed via file fallback
-            expect(report.successfulPhases).toBe(2);
-            expect(report.allDecisions).toContain('file-based');
+            // Sprint 4: no file fallback — failed MCP reads skip the phase
+            expect(report.skippedPhases).toBe(2);
+            expect(report.successfulPhases).toBe(0);
         });
     });
 
@@ -424,27 +452,27 @@ describe('ConsolidationAgent', () => {
 
     describe('end-to-end', () => {
         it('should generate, format, and submit a complete report via MCP', async () => {
-            const mockBridge = {
-                submitConsolidationReport: jest.fn().mockResolvedValue(undefined),
-            } as unknown as import('../../mcp/MCPClientBridge.js').MCPClientBridge;
-
             const runbook = makeRunbook();
-            await writeHandoff(tmpDir, 0, makeHandoff(0, {
-                decisions: ['Created base module'],
-                modified_files: ['src/base.ts'],
-                unresolved_issues: ['Needs documentation'],
-            }));
-            await writeHandoff(tmpDir, 1, makeHandoff(1, {
-                decisions: ['Added tests'],
-                modified_files: ['src/base.test.ts'],
-                unresolved_issues: [],
-            }));
+            const readBridge = makeDefaultMcpBridge(
+                makeHandoff(0, {
+                    decisions: ['Created base module'],
+                    modified_files: ['src/base.ts'],
+                    unresolved_issues: ['Needs documentation'],
+                }),
+                makeHandoff(1, {
+                    decisions: ['Added tests'],
+                    modified_files: ['src/base.test.ts'],
+                    unresolved_issues: [],
+                }),
+            );
+            // Add submitConsolidationReport to the bridge for saveReport
+            (readBridge as any).submitConsolidationReport = jest.fn().mockResolvedValue(undefined);
 
-            const report = await agent.generateReport(tmpDir, runbook);
-            await agent.saveReport(tmpDir, report, mockBridge, 'e2e-master-task');
+            const report = await agent.generateReport(tmpDir, runbook, readBridge, DEFAULT_MASTER_TASK_ID);
+            await agent.saveReport(tmpDir, report, readBridge, 'e2e-master-task');
 
-            expect(mockBridge.submitConsolidationReport).toHaveBeenCalledTimes(1);
-            const submittedMarkdown = (mockBridge.submitConsolidationReport as jest.Mock).mock.calls[0][1] as string;
+            expect((readBridge as any).submitConsolidationReport).toHaveBeenCalledTimes(1);
+            const submittedMarkdown = ((readBridge as any).submitConsolidationReport as jest.Mock).mock.calls[0][1] as string;
             expect(submittedMarkdown).toContain('Created base module');
             expect(submittedMarkdown).toContain('Added tests');
             expect(submittedMarkdown).toContain('+ src/base.ts');

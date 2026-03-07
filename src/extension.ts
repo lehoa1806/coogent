@@ -150,13 +150,37 @@ export function activate(context: vscode.ExtensionContext): void {
     log.info('[Coogent] WorkerRegistry initialized');
 
     // ── Initialize MCP Server & Client Bridge ──────────────────────────
+    // DB lives in workspace .coogent/ alongside IPC files — not in VS Code
+    // extension storage — so users can manage/reset all state in one place.
+    const coogentDir = path.join(primaryRoot, '.coogent');
     svc.mcpServer = new CoogentMCPServer(primaryRoot);
     svc.mcpBridge = new MCPClientBridge(svc.mcpServer, primaryRoot);
-    svc.mcpServer.init(storageBase)
-      .then(() => {
+    svc.mcpServer.init(coogentDir)
+      .then(async () => {
         log.info('[Coogent] ArtifactDB initialised.');
         // Persist session metadata to SQLite (replaces old current-session file)
         svc.mcpServer!.upsertSession(sessionDirName, sessionId, '', Date.now());
+        // Wire StateManager → DB for runbook persistence (S1 audit fix)
+        const db = svc.mcpServer!.getArtifactDB();
+        if (db) {
+          svc.stateManager?.setArtifactDB(db, sessionDirName);
+          svc.sessionManager?.setArtifactDB(db);
+          log.info('[Coogent] StateManager + SessionManager wired to ArtifactDB.');
+        }
+
+        // ── Crash recovery (must run AFTER DB wiring so loadRunbook() hits DB) ──
+        const recovered = await svc.stateManager!.recoverFromCrash();
+        if (recovered) {
+          try {
+            await svc.engine?.loadRunbook();
+          } catch (err) {
+            log.error('[Coogent] Failed to load recovered runbook:', err);
+          }
+          vscode.window.showWarningMessage(
+            'Coogent: Recovered from an interrupted session. Review state before continuing.'
+          );
+        }
+
         return svc.mcpBridge!.connect();
       })
       .then(() => log.info('[Coogent] MCP Client Bridge connected.'))
@@ -220,22 +244,11 @@ export function activate(context: vscode.ExtensionContext): void {
     });
     context.subscriptions.push(watcher);
 
-    // ── Orphan cleanup & crash recovery ────────────────────────────────
-    log.info('[Coogent] All event handlers wired — running cleanup & crash recovery...');
+    // ── Orphan cleanup ─────────────────────────────────────────────────
+    // NOTE: Crash recovery is now sequenced inside the DB init chain above
+    // so that setArtifactDB() is guaranteed to run before loadRunbook().
+    log.info('[Coogent] All event handlers wired — running orphan cleanup...');
     svc.adkController.cleanupOrphanedWorkers().catch(log.onError);
-
-    svc.stateManager.recoverFromCrash().then(async (recovered) => {
-      if (recovered) {
-        try {
-          await svc.engine?.loadRunbook();
-        } catch (err) {
-          log.error('[Coogent] Failed to load recovered runbook:', err);
-        }
-        vscode.window.showWarningMessage(
-          'Coogent: Recovered from an interrupted session. Review state before continuing.'
-        );
-      }
-    }).catch(log.onError);
 
     log.info('[Coogent] Extension activated.');
 

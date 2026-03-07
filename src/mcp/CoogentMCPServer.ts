@@ -235,6 +235,11 @@ export class CoogentMCPServer {
         return this.server;
     }
 
+    /** Get the underlying ArtifactDB for direct DB access (e.g., StateManager runbook mirror). */
+    getArtifactDB(): ArtifactDB {
+        return this.db;
+    }
+
     /** Get the full task state for internal use (e.g., from the engine). */
     getTaskState(masterTaskId: string): TaskState | undefined {
         return this.db.getTask(masterTaskId);
@@ -260,11 +265,20 @@ export class CoogentMCPServer {
     }
 
     /**
+     * Mark a task as completed with a timestamp.
+     * Called by EngineWiring on `run:completed` event.
+     */
+    setTaskCompleted(masterTaskId: string): void {
+        this.db.upsertTask(masterTaskId, { completedAt: Date.now() });
+        log.info(`[CoogentMCPServer] Task marked completed: ${masterTaskId}`);
+    }
+
+    /**
      * Persist accumulated worker output for a phase.
      * Called by EngineWiring on worker exit to survive session loads.
      */
-    upsertWorkerOutput(masterTaskId: string, phaseId: string, output: string): void {
-        this.db.upsertWorkerOutput(masterTaskId, phaseId, output);
+    upsertWorkerOutput(masterTaskId: string, phaseId: string, output: string, stderr: string = ''): void {
+        this.db.upsertWorkerOutput(masterTaskId, phaseId, output, stderr);
     }
 
     /**
