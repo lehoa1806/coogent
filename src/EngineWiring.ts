@@ -30,7 +30,7 @@ export function wireEngine(
     workspaceRoot: string,
     workerTimeoutMs: number
 ): void {
-    const { engine, adkController, logger, gitSandbox, gitManager, mcpBridge,
+    const { engine, adkController, logger, gitSandbox, gitManager, mcpBridge, mcpServer,
         handoffExtractor, consolidationAgent, outputRegistry,
         workerOutputAccumulator, sandboxBranchCreatedForSession } = svc;
 
@@ -135,6 +135,17 @@ export function wireEngine(
         if (exitCode === 0 && handoffExtractor && svc.currentSessionDir) {
             const accumulatedOutput = workerOutputAccumulator.get(phaseId) ?? '';
             workerOutputAccumulator.delete(phaseId);
+
+            // Persist worker output to ArtifactDB so it survives session reloads
+            if (mcpServer && accumulatedOutput) {
+                const runbook = engine.getRunbook() ?? null;
+                const phaseObj = runbook?.phases.find(p => p.id === phaseId);
+                const phaseIdStr = phaseObj?.mcpPhaseId;
+                if (phaseIdStr) {
+                    mcpServer.upsertWorkerOutput(sessionDirName, phaseIdStr, accumulatedOutput);
+                }
+            }
+
             handoffExtractor.extractHandoff(phaseId, accumulatedOutput, workspaceRoot)
                 .then(report => {
                     if (mcpBridge && report) {

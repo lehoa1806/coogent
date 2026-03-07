@@ -432,7 +432,7 @@ export class SessionManager {
  * Embeds the current Unix timestamp (ms) in the first 48 bits,
  * sets version nibble to 7, and fills the rest with random bytes.
  */
-function generateUUIDv7(): string {
+export function generateUUIDv7(): string {
     const now = Date.now();
     const msHex = now.toString(16).padStart(12, '0');
 

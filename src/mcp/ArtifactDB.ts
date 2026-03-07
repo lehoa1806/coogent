@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS handoffs (
   PRIMARY KEY (master_task_id, phase_id),
   FOREIGN KEY (master_task_id, phase_id) REFERENCES phases(master_task_id, phase_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS worker_outputs (
+  master_task_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  output TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (master_task_id, phase_id),
+  FOREIGN KEY (master_task_id) REFERENCES tasks(master_task_id) ON DELETE CASCADE
+);
 `;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -526,6 +534,50 @@ export class ArtifactDB {
             blockers,
             completedAt: row.completed_at,
         };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Worker Output CRUD
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Persist accumulated worker output for a phase.
+     * Each phase's output is stored as a single TEXT blob.
+     */
+    upsertWorkerOutput(masterTaskId: string, phaseId: string, output: string): void {
+        // Ensure parent task exists
+        this.db.run(
+            'INSERT OR IGNORE INTO tasks (master_task_id) VALUES (?)',
+            [masterTaskId]
+        );
+
+        this.db.run(
+            `INSERT INTO worker_outputs (master_task_id, phase_id, output)
+             VALUES (?, ?, ?)
+             ON CONFLICT(master_task_id, phase_id)
+             DO UPDATE SET output = excluded.output`,
+            [masterTaskId, phaseId, output]
+        );
+
+        this.scheduleFlush();
+    }
+
+    /**
+     * Retrieve all worker outputs for a task, keyed by phase_id.
+     */
+    getWorkerOutputs(masterTaskId: string): Record<string, string> {
+        const stmt = this.db.prepare(
+            'SELECT phase_id, output FROM worker_outputs WHERE master_task_id = ?'
+        );
+        stmt.bind([masterTaskId]);
+
+        const result: Record<string, string> = {};
+        while (stmt.step()) {
+            const row = stmt.getAsObject() as { phase_id: string; output: string };
+            result[row.phase_id] = row.output;
+        }
+        stmt.free();
+        return result;
     }
 
     // ─────────────────────────────────────────────────────────────────────

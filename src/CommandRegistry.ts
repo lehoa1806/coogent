@@ -5,12 +5,12 @@
 
 import * as vscode from 'vscode';
 import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
 
 import type { ServiceContainer } from './ServiceContainer.js';
 import { StateManager } from './state/StateManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
-import { SessionManager, formatSessionDirName } from './session/SessionManager.js';
+import { SessionManager, formatSessionDirName, generateUUIDv7 } from './session/SessionManager.js';
+import { asPhaseId, asTimestamp } from './types/index.js';
 import log from './logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -42,7 +42,7 @@ export async function preFlightGitCheck(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function generateSessionId(): string {
-    return randomUUID();
+    return generateUUIDv7();
 }
 
 /**
@@ -155,8 +155,46 @@ export function registerAllCommands(
                 svc.currentSessionDir = sessionDir;
                 svc.sessionManager.setCurrentSessionId(sessionId);
                 svc.sessionManager.saveCurrentSession().catch(log.onError);
-                svc.plannerAgent?.setMasterTaskId(path.basename(sessionDir));
+                const masterTaskId = path.basename(sessionDir);
+                svc.plannerAgent?.setMasterTaskId(masterTaskId);
                 showMissionControl(context.extensionUri, svc);
+
+                // ── Hydrate persisted artifacts into webview ────────────
+                // Read the original prompt and worker outputs from ArtifactDB
+                // and broadcast them using existing message types so the
+                // webview's messageHandler restores appState.lastPrompt
+                // and appState.phaseOutputs from history.
+                if (svc.mcpServer) {
+                    const taskState = svc.mcpServer.getTaskState(masterTaskId);
+                    if (taskState?.summary) {
+                        MissionControlPanel.broadcast({
+                            type: 'LOG_ENTRY',
+                            payload: {
+                                timestamp: asTimestamp(),
+                                level: 'info',
+                                message: `[LAST_PROMPT] ${taskState.summary}`,
+                            },
+                        });
+                    }
+
+                    const workerOutputs = svc.mcpServer.getWorkerOutputs(masterTaskId);
+                    for (const [phaseIdStr, output] of Object.entries(workerOutputs)) {
+                        // phaseIdStr is the mcpPhaseId (e.g. "phase-000-<uuid>")
+                        // Extract the numeric phase index from the MCP phase ID
+                        const indexMatch = phaseIdStr.match(/^phase-(\d+)-/);
+                        if (indexMatch && output) {
+                            const phaseId = asPhaseId(parseInt(indexMatch[1], 10));
+                            MissionControlPanel.broadcast({
+                                type: 'PHASE_OUTPUT',
+                                payload: {
+                                    phaseId,
+                                    stream: 'stdout',
+                                    chunk: output,
+                                },
+                            });
+                        }
+                    }
+                }
             } catch (err: any) {
                 vscode.window.showErrorMessage(`Coogent: Failed to load session — ${err?.message ?? err}`);
             }
