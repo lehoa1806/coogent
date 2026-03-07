@@ -6,7 +6,7 @@
 
 import type { WebviewToHostMessage } from '../types/index.js';
 
-const VALID_TYPES_NO_PAYLOAD = new Set(['CMD_START', 'CMD_ABORT', 'CMD_REQUEST_STATE', 'CMD_PLAN_APPROVE', 'CMD_PLAN_RETRY_PARSE', 'CMD_RESET', 'CMD_REQUEST_REPORT', 'CMD_REQUEST_PLAN', 'CMD_RESUME_PENDING', 'CMD_UPLOAD_FILE', 'CMD_UPLOAD_IMAGE', 'CMD_LIST_SESSIONS']);
+const VALID_TYPES_NO_PAYLOAD = new Set(['CMD_START', 'CMD_ABORT', 'CMD_REQUEST_STATE', 'CMD_PLAN_APPROVE', 'CMD_PLAN_RETRY_PARSE', 'CMD_RESET', 'CMD_REQUEST_REPORT', 'CMD_REQUEST_PLAN', 'CMD_RESUME_PENDING', 'CMD_UPLOAD_FILE', 'CMD_UPLOAD_IMAGE', 'CMD_LIST_SESSIONS', 'workers:request']);
 const VALID_TYPES_WITH_PHASEID = new Set(['CMD_RETRY', 'CMD_SKIP_PHASE', 'CMD_PAUSE_PHASE', 'CMD_STOP_PHASE', 'CMD_RESTART_PHASE', 'CMD_REVIEW_DIFF']);
 
 /**
@@ -132,6 +132,7 @@ type _ExhaustiveWebviewMessageTypes = {
     CMD_SEARCH_SESSIONS: true;
     CMD_LOAD_SESSION: true;
     CMD_DELETE_SESSION: true;
+    'workers:request': true;
 };
 
 // If this line errors, a new WebviewToHostMessageType is not yet handled above.

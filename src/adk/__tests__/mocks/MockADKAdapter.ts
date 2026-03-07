@@ -2,13 +2,15 @@
 // src/adk/__tests__/mocks/MockADKAdapter.ts — Mock ADK adapter for testing
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { IADKAdapter, ADKSessionOptions, ADKSessionHandle } from '../../ADKController.js';
+import type { AgentBackendProvider } from '../../AgentBackendProvider.js';
+import type { ADKSessionOptions, ADKSessionHandle } from '../../ADKController.js';
 
 /**
  * Mock ADK adapter that simulates agent behavior for testing.
  * Immediately exits with code 0 after a configurable delay.
  */
-export class MockADKAdapter implements IADKAdapter {
+export class MockADKAdapter implements AgentBackendProvider {
+    readonly name = 'mock';
     private sessionCounter = 0;
     private pidCounter = 90_000;
 

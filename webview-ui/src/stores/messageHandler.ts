@@ -230,6 +230,12 @@ function handleMessage(msg: HostToWebviewMessage): void {
             break;
         }
 
+        // ── Workers loaded (Worker Studio) ───────────────────────────────
+        case 'workers:loaded': {
+            appState.workers = msg.workers as import('../types.js').WorkerProfile[];
+            break;
+        }
+
         default: {
             // Unknown message types are silently ignored for forward compatibility.
             console.warn('[messageHandler] Unknown message type:', (msg as { type: string }).type);

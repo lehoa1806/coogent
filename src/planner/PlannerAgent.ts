@@ -6,8 +6,11 @@ import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Runbook } from '../types/index.js';
+import { PromptTemplateManager } from '../context/PromptTemplateManager.js';
+import type { TechStackInfo } from '../context/PromptTemplateManager.js';
 import { asPhaseId } from '../types/index.js';
-import type { IADKAdapter, ADKSessionHandle } from '../adk/ADKController.js';
+import type { AgentBackendProvider } from '../adk/AgentBackendProvider.js';
+import type { ADKSessionHandle } from '../adk/ADKController.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -21,6 +24,8 @@ export interface PlannerConfig {
     maxTreeDepth: number;
     /** Maximum characters for the file tree summary. */
     maxTreeChars: number;
+    /** Available skill tags from the WorkerRegistry (injected by wiring). */
+    availableTags?: string[];
 }
 
 const DEFAULT_CONFIG: Omit<PlannerConfig, 'workspaceRoot'> = {
@@ -82,7 +87,7 @@ export class PlannerAgent extends EventEmitter {
     private masterTaskId: string | undefined;
 
     constructor(
-        private readonly adapter: IADKAdapter,
+        private readonly adapter: AgentBackendProvider,
         config: Partial<PlannerConfig> & Pick<PlannerConfig, 'workspaceRoot'>
     ) {
         super();
@@ -92,6 +97,11 @@ export class PlannerAgent extends EventEmitter {
     /** Set the master task ID so planner IPC files nest under the session directory. */
     setMasterTaskId(id: string): void {
         this.masterTaskId = id;
+    }
+
+    /** Update the available worker skill tags (called by PlannerWiring before each plan). */
+    setAvailableTags(tags: string[]): void {
+        (this.config as { availableTags?: string[] }).availableTags = tags;
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -124,8 +134,24 @@ export class PlannerAgent extends EventEmitter {
             );
             log.info(`[PlannerAgent] File tree collected: ${this.fileTree.length} entries`);
 
+            // Step 1b: Discover tech stack (non-blocking — failures are swallowed)
+            let techStack: TechStackInfo | undefined;
+            try {
+                const promptManager = new PromptTemplateManager(this.config.workspaceRoot);
+                techStack = await promptManager.discoverTechStack();
+                log.info(`[PlannerAgent] Tech stack discovered: runtime=${techStack.runtime}, frameworks=[${techStack.frameworks.join(', ')}]`);
+            } catch (err) {
+                log.warn('[PlannerAgent] Tech stack discovery failed — continuing without:', err);
+            }
+
             // Step 2: Build the planner prompt
-            const systemPrompt = this.buildPlannerPrompt(prompt, this.fileTree, feedback);
+            const systemPrompt = this.buildPlannerPrompt(
+                prompt,
+                this.fileTree,
+                feedback,
+                techStack,
+                this.config.availableTags,
+            );
             log.info(`[PlannerAgent] Prompt built: ${systemPrompt.length} chars`);
 
             // Step 3: Spawn the planner worker
@@ -534,7 +560,9 @@ export class PlannerAgent extends EventEmitter {
     private buildPlannerPrompt(
         userPrompt: string,
         fileTree: string[],
-        feedback?: string
+        feedback?: string,
+        techStack?: TechStackInfo,
+        availableTags?: string[],
     ): string {
         const sections: string[] = [];
 
@@ -565,7 +593,8 @@ You are a Planning Agent. Your job is to analyze a codebase and break down a use
       "prompt": "<detailed instruction for the AI worker>",
       "context_files": ["<relative/path/to/file.ts>"],
       "success_criteria": "exit_code:0",
-      "context_summary": "<1-2 sentence summary of what this phase does and why>"
+      "context_summary": "<1-2 sentence summary of what this phase does and why>",
+      "required_skills": ["<optional-tag-1>", "<optional-tag-2>"]
     }
   ]
 }
@@ -579,6 +608,22 @@ You are a Planning Agent. Your job is to analyze a codebase and break down a use
 \`\`\`
 ${treeStr}
 \`\`\``);
+
+        // Tech stack context (if available)
+        if (techStack && techStack.runtime !== 'unknown') {
+            const promptManager = new PromptTemplateManager(this.config.workspaceRoot);
+            sections.push(`## Workspace Tech Stack
+${promptManager.formatTechStack(techStack)}`);
+        }
+
+        // Available worker skills (if tags provided)
+        if (availableTags && availableTags.length > 0) {
+            const sortedTags = [...availableTags].sort();
+            sections.push(`## Available Worker Skills
+When creating phases, you may optionally specify \`required_skills\` as an array of tags from this list:
+${sortedTags.join(', ')}
+Only assign skills when a phase genuinely needs specialized expertise. If a phase needs no special skills, omit \`required_skills\`.`);
+        }
 
         // User prompt
         sections.push(`## User Request

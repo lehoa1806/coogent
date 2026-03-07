@@ -27,13 +27,36 @@ export function wirePlanner(
 
     // ── Engine → PlannerAgent ──────────────────────────────────────────
     engine.on('plan:request', (prompt: string) => {
-        plannerAgent.plan(prompt).catch(log.onError);
-        // Persist the original prompt as the task summary in ArtifactDB
-        mcpServer?.upsertSummary(sessionDirName, prompt);
+        (async () => {
+            // Inject fresh available tags from WorkerRegistry before planning
+            if (svc.workerRegistry) {
+                try {
+                    const tags = await svc.workerRegistry.getAvailableTags();
+                    plannerAgent.setAvailableTags(tags);
+                    log.info(`[PlannerWiring] Injected ${tags.length} available tags into PlannerAgent`);
+                } catch (err) {
+                    log.warn('[PlannerWiring] Failed to fetch available tags — continuing without:', err);
+                }
+            }
+            await plannerAgent.plan(prompt);
+            // Persist the original prompt as the task summary in ArtifactDB
+            mcpServer?.upsertSummary(sessionDirName, prompt);
+        })().catch(log.onError);
     });
 
     engine.on('plan:rejected', (prompt: string, feedback: string) => {
-        plannerAgent.plan(prompt, feedback).catch(log.onError);
+        (async () => {
+            // Re-inject fresh tags on re-plan as well
+            if (svc.workerRegistry) {
+                try {
+                    const tags = await svc.workerRegistry.getAvailableTags();
+                    plannerAgent.setAvailableTags(tags);
+                } catch {
+                    // Best-effort — continue without tags
+                }
+            }
+            await plannerAgent.plan(prompt, feedback);
+        })().catch(log.onError);
     });
 
     engine.on('plan:retryParse', () => {

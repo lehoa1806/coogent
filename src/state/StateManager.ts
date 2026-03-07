@@ -1,13 +1,29 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // src/state/StateManager.ts — Runbook persistence, locking, and crash recovery
 // ─────────────────────────────────────────────────────────────────────────────
+// Sprint 4: Added AES-256-CBC encryption for WAL and runbook files.
+// Post-audit: Upgraded key management from PBKDF2-over-filepath to
+//             VS Code SecretStorage API (OS keychain-backed).
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import * as crypto from 'node:crypto';
 import Ajv from 'ajv';
 import { RUNBOOK_FILENAME, asTimestamp } from '../types/index.js';
 import type { Runbook, WALEntry, EngineState } from '../types/index.js';
 import log from '../logger/log.js';
+
+/**
+ * Minimal interface matching VS Code's `SecretStorage` API.
+ * Decoupled from the vscode module for unit-test portability.
+ */
+export interface SecretStorageLike {
+    get(key: string): Thenable<string | undefined>;
+    store(key: string, value: string): Thenable<void>;
+}
+
+/** Prefix for encrypted content — allows auto-detection on read. */
+const ENCRYPTED_PREFIX = 'ENC:';
 
 // Inline JSON Schema — no external file dependency (esbuild-safe)
 const runbookSchema = {
@@ -79,6 +95,15 @@ export class StateManager {
     /** Whether we currently hold the file lock. */
     private isLocked = false;
 
+    /** Whether to encrypt WAL and runbook files on disk. */
+    private readonly encryptionEnabled: boolean;
+
+    /** Encryption key — loaded from SecretStorage or generated on first use. */
+    private encryptionKey: Buffer | null = null;
+
+    /** VS Code SecretStorage instance (optional — encryption degrades gracefully without it). */
+    private readonly secretStorage: SecretStorageLike | undefined;
+
     /**
      * In-process async mutex — serializes all saveRunbook() calls.
      * Prevents interleaving when multiple async paths (worker exit + user pause)
@@ -90,12 +115,18 @@ export class StateManager {
     /**
      * @param sessionDir Absolute path to the session directory
      *   (e.g., `<workspace>/.coogent/ipc/<uuid>/`).
+     * @param enableEncryption Whether to encrypt files at rest (default: false).
+     * @param secretStorage Optional VS Code SecretStorage for secure key management.
+     *   When provided, the encryption key is stored in the OS keychain instead of
+     *   being derived from the filesystem path.
      */
-    constructor(sessionDir: string) {
+    constructor(sessionDir: string, enableEncryption = false, secretStorage?: SecretStorageLike) {
         this.sessionDir = sessionDir;
         this.runbookPath = path.join(sessionDir, RUNBOOK_FILENAME);
         this.walPath = path.join(sessionDir, '.wal.json');
         this.lockPath = path.join(sessionDir, '.lock');
+        this.encryptionEnabled = enableEncryption;
+        this.secretStorage = secretStorage;
     }
 
     /** Ensure session directory exists (called once before first write). */
@@ -115,9 +146,11 @@ export class StateManager {
      * @throws {RunbookValidationError} If the file fails schema validation.
      */
     public async loadRunbook(): Promise<Runbook | null> {
+        await this.initEncryption();
         try {
             const raw = await fs.readFile(this.runbookPath, 'utf-8');
-            const parsed: unknown = JSON.parse(raw);
+            const content = this.maybeDecrypt(raw);
+            const parsed: unknown = JSON.parse(content);
             const runbook = this.validateSchema(parsed);
             this.cachedRunbook = runbook;
             return runbook;
@@ -175,6 +208,7 @@ export class StateManager {
         // Enforce schema validation on the write path (P0-3)
         this.validateSchema(runbook);
 
+        await this.initEncryption();
         await this.ensureDir();
         await this.acquireLock();
         try {
@@ -185,11 +219,13 @@ export class StateManager {
                 currentPhase: runbook.current_phase,
                 snapshot: runbook,
             };
-            await fs.writeFile(this.walPath, JSON.stringify(walEntry, null, 2), 'utf-8');
+            const walContent = this.maybeEncrypt(JSON.stringify(walEntry, null, 2));
+            await fs.writeFile(this.walPath, walContent, 'utf-8');
 
             // Atomic write: temp → rename
             const tmpPath = this.runbookPath + '.tmp';
-            await fs.writeFile(tmpPath, JSON.stringify(runbook, null, 2), 'utf-8');
+            const runbookContent = this.maybeEncrypt(JSON.stringify(runbook, null, 2));
+            await fs.writeFile(tmpPath, runbookContent, 'utf-8');
             await fs.rename(tmpPath, this.runbookPath);
 
             // Clear WAL (best-effort)
@@ -212,6 +248,7 @@ export class StateManager {
      * @returns `true` if WAL recovery was performed.
      */
     public async recoverFromCrash(): Promise<boolean> {
+        await this.initEncryption();
         // FIRST: Always clean stale locks from crashed processes
         await this.cleanStaleLock();
 
@@ -223,7 +260,8 @@ export class StateManager {
         }
 
         try {
-            const walRaw = await fs.readFile(this.walPath, 'utf-8');
+            const walRawEncoded = await fs.readFile(this.walPath, 'utf-8');
+            const walRaw = this.maybeDecrypt(walRawEncoded);
             let walEntry: WALEntry;
             try {
                 walEntry = JSON.parse(walRaw) as WALEntry;
@@ -384,6 +422,106 @@ export class StateManager {
         } catch {
             // Session dir may not exist — nothing to clean
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Encryption (Sprint 4 → Post-Audit Hardening)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /** SecretStorage key under which the encryption key is stored. */
+    private static readonly SECRET_KEY_ID = 'coogent.encryptionKey';
+
+    /**
+     * Initialise the encryption key from VS Code SecretStorage.
+     *
+     * - If a key already exists in SecretStorage, it is loaded.
+     * - If no key exists, a random 32-byte key is generated and stored.
+     * - If no SecretStorage is available, falls back to in-memory random key
+     *   (ephemeral — lost on extension restart, suitable for test environments).
+     *
+     * Must be called once before any encrypt/decrypt operations when
+     * `enableEncryption` is true. Called automatically by `loadRunbook()`
+     * and `saveRunbook()` if not yet initialized.
+     */
+    public async initEncryption(): Promise<void> {
+        if (this.encryptionKey) return;
+        if (!this.encryptionEnabled) return;
+
+        if (this.secretStorage) {
+            const stored = await this.secretStorage.get(StateManager.SECRET_KEY_ID);
+            if (stored) {
+                this.encryptionKey = Buffer.from(stored, 'hex');
+                log.info('[StateManager] Encryption key loaded from SecretStorage.');
+            } else {
+                this.encryptionKey = crypto.randomBytes(32);
+                await this.secretStorage.store(
+                    StateManager.SECRET_KEY_ID,
+                    this.encryptionKey.toString('hex')
+                );
+                log.info('[StateManager] New encryption key generated and stored in SecretStorage.');
+            }
+        } else {
+            // No SecretStorage available — generate ephemeral key (test/CI environments)
+            this.encryptionKey = crypto.randomBytes(32);
+            log.warn(
+                '[StateManager] No SecretStorage available — using ephemeral encryption key. ' +
+                'Encrypted data will not survive extension restarts.'
+            );
+        }
+    }
+
+    /**
+     * Get the encryption key, initializing from SecretStorage if needed.
+     * @throws Error if encryption is enabled but key is not initialized.
+     */
+    private getEncryptionKey(): Buffer {
+        if (this.encryptionKey) return this.encryptionKey;
+        throw new Error(
+            '[StateManager] Encryption key not initialized. ' +
+            'Call initEncryption() before encrypt/decrypt operations.'
+        );
+    }
+
+    /**
+     * Encrypt plaintext using AES-256-CBC. Returns `ENC:<iv>:<ciphertext>` (base64).
+     * Only encrypts if encryption is enabled; otherwise returns plaintext.
+     */
+    private maybeEncrypt(plaintext: string): string {
+        if (!this.encryptionEnabled) return plaintext;
+
+        const key = this.getEncryptionKey();
+        const iv = crypto.randomBytes(16);
+        const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+        const encrypted = Buffer.concat([
+            cipher.update(plaintext, 'utf-8'),
+            cipher.final(),
+        ]);
+        return `${ENCRYPTED_PREFIX}${iv.toString('base64')}:${encrypted.toString('base64')}`;
+    }
+
+    /**
+     * Decrypt content if it starts with the ENC: prefix.
+     * Migration-safe: plaintext content passes through unchanged.
+     */
+    private maybeDecrypt(content: string): string {
+        if (!content.startsWith(ENCRYPTED_PREFIX)) return content;
+
+        const key = this.getEncryptionKey();
+        const payload = content.slice(ENCRYPTED_PREFIX.length);
+        const colonIdx = payload.indexOf(':');
+        if (colonIdx === -1) {
+            log.warn('[StateManager] Malformed encrypted content — missing IV separator.');
+            throw new Error('Malformed encrypted content');
+        }
+
+        const iv = Buffer.from(payload.slice(0, colonIdx), 'base64');
+        const ciphertext = Buffer.from(payload.slice(colonIdx + 1), 'base64');
+        const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+        const decrypted = Buffer.concat([
+            decipher.update(ciphertext),
+            decipher.final(),
+        ]);
+        return decrypted.toString('utf-8');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

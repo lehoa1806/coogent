@@ -80,7 +80,8 @@ function showMissionControl(
         () => preFlightGitCheck(svc.gitSandbox),
         makeOnReset(svc, sessionDirName),
         svc.mcpServer,
-        svc.mcpBridge
+        svc.mcpBridge,
+        svc.workerRegistry
     );
 }
 
@@ -153,9 +154,9 @@ export function registerAllCommands(
             try {
                 await svc.engine.switchSession(newStateManager);
                 svc.currentSessionDir = sessionDir;
-                svc.sessionManager.setCurrentSessionId(sessionId);
-                svc.sessionManager.saveCurrentSession().catch(log.onError);
                 const masterTaskId = path.basename(sessionDir);
+                svc.sessionManager.setCurrentSessionId(sessionId, masterTaskId);
+                svc.sessionManager.saveCurrentSession().catch(log.onError);
                 svc.plannerAgent?.setMasterTaskId(masterTaskId);
                 showMissionControl(context.extensionUri, svc);
 

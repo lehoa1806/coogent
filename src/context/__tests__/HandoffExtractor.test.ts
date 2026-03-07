@@ -78,7 +78,7 @@ describe('HandoffExtractor', () => {
             expect(report.modified_files).toEqual(['src/foo.ts']);
             expect(report.unresolved_issues).toEqual([]);
             expect(report.next_steps_context).toBe('Consider adding tests');
-            expect(report.file_contents?.['src/foo.ts']).toBe('export const x = 42;');
+            // file_contents removed (CF-1 Pull Model): workers now fetch via MCP
             expect(report.timestamp).toBeGreaterThan(0);
         });
 
@@ -170,8 +170,7 @@ describe('HandoffExtractor', () => {
 
             const report = await extractor.extractHandoff(7, workerOutput, tmpDir);
             expect(report.modified_files).toEqual(['does/not/exist.ts']);
-            // File content should not be present since file doesn't exist
-            expect(report.file_contents?.['does/not/exist.ts']).toBeUndefined();
+            // file_contents removed (CF-1 Pull Model): workers now fetch via MCP
         });
     });
 
@@ -280,7 +279,9 @@ describe('HandoffExtractor', () => {
             expect(ctx).toContain('Added validation');
             expect(ctx).toContain('Need tests');
             expect(ctx).toContain('Bar module ready');
-            expect(ctx).toContain('export const bar = true;');
+            // CF-1 Pull Model: should include tool directives, not raw file content
+            expect(ctx).toContain('get_modified_file_content');
+            expect(ctx).toContain('src/bar.ts');
         });
 
         it('should handle missing handoff reports gracefully', async () => {

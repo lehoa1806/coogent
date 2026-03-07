@@ -29,6 +29,7 @@ import { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
 import { MCPClientBridge } from './mcp/MCPClientBridge.js';
 import { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
+import { WorkerRegistry } from './adk/WorkerRegistry.js';
 
 import { ServiceContainer } from './ServiceContainer.js';
 import { registerAllCommands, preFlightGitCheck } from './CommandRegistry.js';
@@ -141,6 +142,9 @@ export function activate(context: vscode.ExtensionContext): void {
 
     svc.handoffExtractor = new HandoffExtractor();
     svc.consolidationAgent = new ConsolidationAgent();
+
+    svc.workerRegistry = new WorkerRegistry(workspaceRoot);
+    log.info('[Coogent] WorkerRegistry initialized');
 
     // ── Initialize MCP Server & Client Bridge ──────────────────────────
     svc.mcpServer = new CoogentMCPServer(workspaceRoot);

@@ -19,7 +19,6 @@ export interface HandoffReport {
     modified_files: string[];
     unresolved_issues: string[];
     next_steps_context: string;
-    file_contents?: Record<string, string>;
     timestamp: number;
 }
 
@@ -70,7 +69,7 @@ export class HandoffExtractor {
     async extractHandoff(
         phaseId: number,
         workerOutput: string,
-        workspaceRoot: string,
+        _workspaceRoot: string,
     ): Promise<HandoffReport> {
         const parsed = this.parseHandoffJson(workerOutput);
 
@@ -88,17 +87,9 @@ export class HandoffExtractor {
             };
         }
 
-        // Read fresh file contents for modified files
-        const fileContents: Record<string, string> = {};
-        const modFiles = Array.isArray(parsed.modified_files) ? parsed.modified_files as string[] : [];
-        for (const relPath of modFiles) {
-            const absPath = path.resolve(workspaceRoot, relPath);
-            try {
-                fileContents[relPath] = await fs.readFile(absPath, 'utf-8');
-            } catch {
-                log.warn(`[HandoffExtractor] Could not read modified file: ${relPath}`);
-            }
-        }
+        // CF-1 FIX: No longer read raw file contents — workers pull via
+        // `get_modified_file_content` MCP tool (Pull Model). Only file
+        // *paths* are persisted in the handoff report.
 
         // Redact any secrets that may have leaked into worker output before persisting
         const decisions = (Array.isArray(parsed.decisions) ? parsed.decisions : []).map(
@@ -117,7 +108,6 @@ export class HandoffExtractor {
             modified_files: Array.isArray(parsed.modified_files) ? parsed.modified_files : [],
             unresolved_issues: unresolvedIssues,
             next_steps_context: nextSteps,
-            file_contents: fileContents,
             timestamp: Date.now(),
         };
     }
@@ -176,14 +166,16 @@ export class HandoffExtractor {
     }
 
     /**
-     * For a given phase, load handoff reports from all its `depends_on` phases,
-     * read the fresh file contents of modified files, and return a concatenated
-     * context string suitable for injection into the next worker.
+     * For a given phase, load handoff reports from all its `depends_on` phases
+     * and return a concatenated context string with metadata + Pull Model
+     * file-fetch directives (no raw file content injection).
+     *
+     * @param workspaceRoot Unused after CF-1 Pull Model fix; kept for API compat.
      */
     async buildNextContext(
         phase: Phase,
         sessionDir: string,
-        workspaceRoot: string,
+        _workspaceRoot: string,
     ): Promise<string> {
         const dependsOn: readonly PhaseId[] = phase.depends_on ?? [];
         if (dependsOn.length === 0) {
@@ -215,19 +207,14 @@ export class HandoffExtractor {
                 '',
             ];
 
-            // Include fresh file contents for modified files
+            // CF-1 FIX: Pull Model — emit tool-call directives instead of
+            // raw file bytes. Workers fetch content on demand via the MCP
+            // `get_modified_file_content` tool, staying within token budget.
             if (report.modified_files.length > 0) {
                 lines.push('### Modified Files');
+                lines.push('Fetch these files via `get_modified_file_content`:');
                 for (const relPath of report.modified_files) {
-                    const absPath = path.resolve(workspaceRoot, relPath);
-                    try {
-                        const content = await fs.readFile(absPath, 'utf-8');
-                        lines.push(`\n<<<FILE: ${relPath}>>>`);
-                        lines.push(content);
-                        lines.push('<<<END FILE>>>');
-                    } catch {
-                        lines.push(`\n_Could not read: ${relPath}_`);
-                    }
+                    lines.push(`- \`get_modified_file_content\` → \`${relPath}\``);
                 }
                 lines.push('');
             }
