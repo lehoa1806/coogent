@@ -141,6 +141,30 @@ export class SelfHealingController {
     }
 
     /**
+     * Build an augmented prompt for a retry attempt using evaluator-provided context.
+     * Used by V2 evaluators that produce structured `retryPrompt` in EvaluationResult.
+     * Falls back to buildHealingPrompt() when no evaluator context is available.
+     */
+    buildHealingPromptWithContext(phase: Phase, evaluatorContext: string): string {
+        const attempts = this.attempts.get(phase.id) ?? [];
+        const retryNumber = attempts.length;
+        const totalAllowed = phase.max_retries ?? this.maxRetries;
+
+        return [
+            `## Task (Retry ${retryNumber}/${totalAllowed})`,
+            phase.prompt,
+            ``,
+            `## ⚠️ Previous Attempt Failed (Evaluator Feedback)`,
+            evaluatorContext,
+            ``,
+            `## Instructions`,
+            `Please analyze the evaluator feedback above and fix the issue.`,
+            `Do NOT repeat the same approach that caused the failure.`,
+            `Focus on the root cause indicated by the diagnostic output.`,
+        ].join('\n');
+    }
+
+    /**
      * Clear all attempts for a phase (e.g., after user manually retries).
      */
     clearAttempts(phaseId: number): void {
