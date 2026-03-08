@@ -14,6 +14,7 @@ import { ExplicitFileResolver } from '../context/FileResolver';
 import type { Phase } from '../types/index';
 import { asPhaseId } from '../types/index';
 import { CharRatioEncoder } from '../context/ContextScoper';
+import { EvaluationOrchestrator } from '../engine/EvaluationOrchestrator';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Scheduler Tests
@@ -248,5 +249,110 @@ describe('ExplicitFileResolver — context_files passthrough', () => {
         };
         const result = await resolver.resolve(phase, '/workspace');
         expect(result).toEqual(['src/a.ts', 'src/b.ts']);
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  F-1 Audit Fix: Parallel-mode evaluation persistence
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('EvaluationOrchestrator — applyVerdictInPlace persistence (F-1)', () => {
+    function createMockEngine(runbook: any) {
+        const { EventEmitter } = require('events');
+        const engine = new EventEmitter();
+        engine.getRunbook = jest.fn().mockReturnValue(runbook);
+        engine.getState = jest.fn().mockReturnValue('EXECUTING_WORKER');
+        engine.transition = jest.fn();
+        engine.persist = jest.fn().mockResolvedValue(undefined);
+        engine.emitUIMessage = jest.fn();
+        engine.emit = jest.fn();
+        engine.getScheduler = jest.fn().mockReturnValue({ isAllDone: jest.fn().mockReturnValue(false) });
+        engine.advanceSchedule = jest.fn();
+        engine.getStateManager = jest.fn().mockReturnValue({ getSessionDir: jest.fn().mockReturnValue('/tmp') });
+        engine.dispatchReadyPhases = jest.fn();
+        engine.stopStallWatchdog = jest.fn();
+        engine.addHealingTimer = jest.fn();
+        engine.removeHealingTimer = jest.fn();
+        return engine;
+    }
+
+    function createMockHealer() {
+        return {
+            clearAttempts: jest.fn(),
+            recordFailure: jest.fn(),
+            canRetry: jest.fn().mockReturnValue(false),
+            canRetryWithPhase: jest.fn().mockReturnValue(false),
+            getAttemptCount: jest.fn().mockReturnValue(0),
+            getRetryDelay: jest.fn().mockReturnValue(1000),
+            buildHealingPrompt: jest.fn().mockReturnValue('heal'),
+            buildHealingPromptWithContext: jest.fn().mockReturnValue('heal context'),
+        };
+    }
+
+    it('persists evaluation result to DB when applyVerdictInPlace handles PASS', async () => {
+        const phase: Phase = {
+            id: asPhaseId(1), status: 'running', prompt: 'build feature',
+            context_files: [], success_criteria: 'exit_code:0',
+            mcpPhaseId: 'phase-001-test',
+        };
+        const runbook = { phases: [phase], status: 'running' };
+        const mockEngine = createMockEngine(runbook);
+        const mockHealer = createMockHealer();
+        const mockDb = {
+            upsertEvaluationResult: jest.fn(),
+        };
+
+        const orchestrator = new EvaluationOrchestrator(
+            mockEngine as any,
+            mockHealer as any,
+            null,
+        );
+        orchestrator.setArtifactDB(mockDb as any, 'task-001');
+
+        // isLastWorker = false → drives applyVerdictInPlace
+        await orchestrator.handleWorkerExited(1, 0, 'stdout', '', false);
+
+        expect(mockDb.upsertEvaluationResult).toHaveBeenCalledWith(
+            'task-001',
+            'phase-001-test',
+            expect.objectContaining({
+                passed: true,
+                reason: expect.any(String),
+            }),
+        );
+    });
+
+    it('persists evaluation result to DB when applyVerdictInPlace handles FAIL', async () => {
+        const phase: Phase = {
+            id: asPhaseId(1), status: 'running', prompt: 'build feature',
+            context_files: [], success_criteria: 'exit_code:0',
+            mcpPhaseId: 'phase-001-test',
+        };
+        const runbook = { phases: [phase], status: 'running' };
+        const mockEngine = createMockEngine(runbook);
+        const mockHealer = createMockHealer();
+        const mockDb = {
+            upsertEvaluationResult: jest.fn(),
+        };
+
+        const orchestrator = new EvaluationOrchestrator(
+            mockEngine as any,
+            mockHealer as any,
+            null,
+        );
+        orchestrator.setArtifactDB(mockDb as any, 'task-001');
+
+        // exitCode = 1 → FAIL with exit_code:0 criteria
+        // isLastWorker = false → drives applyVerdictInPlace
+        await orchestrator.handleWorkerExited(1, 1, '', 'some error', false);
+
+        expect(mockDb.upsertEvaluationResult).toHaveBeenCalledWith(
+            'task-001',
+            'phase-001-test',
+            expect.objectContaining({
+                passed: false,
+                reason: expect.any(String),
+            }),
+        );
     });
 });

@@ -199,6 +199,9 @@ export class EvaluationOrchestrator {
         if (!runbook) return;
 
         if (result.passed) {
+            // F-1 audit fix: Persist evaluation result in parallel mode (was missing)
+            this.persistEvaluationResult(phase, result);
+
             phase.status = 'completed';
             this.healer.clearAttempts(phase.id);
             this.engine.emitUIMessage({
@@ -211,6 +214,9 @@ export class EvaluationOrchestrator {
             // Dispatch any newly-unblocked phases from this completion
             this.engine.dispatchReadyPhases();
         } else {
+            // F-1 audit fix: Persist evaluation result in parallel mode (was missing)
+            this.persistEvaluationResult(phase, result);
+
             this.healer.recordFailure(phase.id, exitCode, stderr, phase.mcpPhaseId);
 
             if (this.healer.canRetryWithPhase(phase)) {

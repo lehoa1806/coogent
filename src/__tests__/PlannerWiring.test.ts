@@ -18,13 +18,14 @@ import { EventEmitter } from 'events';
 //  Mock factories
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function createMockEngine(): EventEmitter & { abort: jest.Mock } {
+function createMockEngine(): EventEmitter & { abort: jest.Mock; planGenerated: jest.Mock } {
     const engine = new EventEmitter() as any;
     engine.abort = jest.fn().mockResolvedValue(undefined);
+    engine.planGenerated = jest.fn();
     return engine;
 }
 
-function createMockPlannerAgent(): EventEmitter & { plan: jest.Mock; retryParse: jest.Mock; hasTimeoutOutput: jest.Mock; getDraft: jest.Mock; setAvailableTags: jest.Mock; getLastSystemPrompt: jest.Mock } {
+function createMockPlannerAgent(): EventEmitter & { plan: jest.Mock; retryParse: jest.Mock; hasTimeoutOutput: jest.Mock; getDraft: jest.Mock; setAvailableTags: jest.Mock; getLastSystemPrompt: jest.Mock; getLastRawOutput: jest.Mock; getLastManifest: jest.Mock } {
     const agent = new EventEmitter() as any;
     agent.plan = jest.fn().mockResolvedValue(undefined);
     agent.retryParse = jest.fn().mockResolvedValue(undefined);
@@ -32,6 +33,8 @@ function createMockPlannerAgent(): EventEmitter & { plan: jest.Mock; retryParse:
     agent.getDraft = jest.fn().mockReturnValue(null);
     agent.setAvailableTags = jest.fn();
     agent.getLastSystemPrompt = jest.fn().mockReturnValue(null);
+    agent.getLastRawOutput = jest.fn().mockReturnValue(undefined);
+    agent.getLastManifest = jest.fn().mockReturnValue(null);
     return agent;
 }
 
@@ -127,5 +130,72 @@ describe('wirePlanner', () => {
         wirePlanner(svc, 'session-001');
         planner.emit('plan:timeout', true);
         expect(engine.abort).not.toHaveBeenCalled();
+    });
+
+    // ── BL-5 audit fix: Raw LLM output persistence ────────────────────
+    // ── F-6 audit fix: Compilation manifest persistence ───────────────
+
+    describe('BL-5 / F-6: plan:generated persists rawLlmOutput and compilationManifest', () => {
+        it('passes rawLlmOutput to upsertPlanRevision on plan:generated', () => {
+            const mockUpsertPlanRevision = jest.fn();
+            const mockDB = { upsertPlanRevision: mockUpsertPlanRevision };
+            const mockMcpServer = {
+                upsertPhaseLog: jest.fn(),
+                getArtifactDB: jest.fn().mockReturnValue(mockDB),
+            };
+            const mockMcpBridge = {
+                submitImplementationPlan: jest.fn().mockResolvedValue(undefined),
+            };
+            svc.mcpServer = mockMcpServer as any;
+            svc.mcpBridge = mockMcpBridge as any;
+
+            // Configure planner to return raw output
+            planner.getLastRawOutput.mockReturnValue('raw LLM response text');
+            planner.getLastSystemPrompt.mockReturnValue('system prompt');
+            planner.getLastManifest.mockReturnValue(null);
+
+            wirePlanner(svc, 'session-001');
+
+            const mockDraft = { project_id: 'test', phases: [], summary: 'Test' };
+            planner.emit('plan:generated', mockDraft, []);
+
+            expect(mockUpsertPlanRevision).toHaveBeenCalledWith(
+                'session-001',
+                expect.objectContaining({
+                    rawLlmOutput: 'raw LLM response text',
+                })
+            );
+        });
+
+        it('passes compilationManifest to upsertPlanRevision when manifest is available', () => {
+            const mockUpsertPlanRevision = jest.fn();
+            const mockDB = { upsertPlanRevision: mockUpsertPlanRevision };
+            const mockMcpServer = {
+                upsertPhaseLog: jest.fn(),
+                getArtifactDB: jest.fn().mockReturnValue(mockDB),
+            };
+            const mockMcpBridge = {
+                submitImplementationPlan: jest.fn().mockResolvedValue(undefined),
+            };
+            svc.mcpServer = mockMcpServer as any;
+            svc.mcpBridge = mockMcpBridge as any;
+
+            const testManifest = { taskFamily: 'feature', policies: ['testing'] };
+            planner.getLastManifest.mockReturnValue(testManifest);
+            planner.getLastSystemPrompt.mockReturnValue('system prompt');
+            planner.getLastRawOutput.mockReturnValue(undefined);
+
+            wirePlanner(svc, 'session-001');
+
+            const mockDraft = { project_id: 'test', phases: [], summary: 'Test' };
+            planner.emit('plan:generated', mockDraft, []);
+
+            expect(mockUpsertPlanRevision).toHaveBeenCalledWith(
+                'session-001',
+                expect.objectContaining({
+                    compilationManifest: JSON.stringify(testManifest),
+                })
+            );
+        });
     });
 });

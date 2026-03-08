@@ -159,7 +159,9 @@ export function activate(context: vscode.ExtensionContext): void {
       .then(async () => {
         log.info('[Coogent] ArtifactDB initialised.');
         // Persist session metadata to SQLite (replaces old current-session file)
-        svc.mcpServer!.upsertSession(sessionDirName, sessionId, '', Date.now());
+        // F-2 audit fix: Use '[pending]' sentinel instead of '' so a crash before
+        // PlannerWiring backfills the real prompt leaves a distinguishable marker.
+        svc.mcpServer!.upsertSession(sessionDirName, sessionId, '[pending]', Date.now());
         // Wire StateManager → DB for runbook persistence (S1 audit fix)
         const db = svc.mcpServer!.getArtifactDB();
         if (db) {

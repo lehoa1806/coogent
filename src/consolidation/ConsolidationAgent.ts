@@ -273,9 +273,11 @@ export class ConsolidationAgent {
             log.warn('[ConsolidationAgent] No MCP bridge available — report NOT persisted.');
         }
 
-        // D1 audit fix: IPC debug clone — consolidation report (best-effort, non-fatal)
-        if (sessionDir) {
-            const debugDir = path.join(sessionDir, 'debug');
+        // F-4 audit fix: Write debug clone outside IPC tree to .coogent/debug/<masterTaskId>/
+        // (previously written to <sessionDir>/debug/ which is under IPC)
+        if (sessionDir && masterTaskId) {
+            const storageRoot = path.dirname(path.dirname(sessionDir)); // up from ipc/<sessionDirName>
+            const debugDir = path.join(storageRoot, 'debug', masterTaskId);
             fs.mkdir(debugDir, { recursive: true })
                 .then(() => fs.writeFile(path.join(debugDir, 'consolidation-report.md'), markdown, 'utf-8'))
                 .catch(err => log.warn('[ConsolidationAgent] Debug clone (report) failed (non-fatal):', err));

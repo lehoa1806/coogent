@@ -39,6 +39,20 @@ export function wireEngine(
 
     if (!engine || !adkController) return;
 
+    // F-5 audit fix: Track per-phase flush intervals for incremental worker output persistence.
+    // Every 30s, accumulated output is flushed to DB so a crash mid-phase doesn't lose diagnostics.
+    const INCREMENTAL_FLUSH_MS = 30_000;
+    const flushIntervals = new Map<number, ReturnType<typeof setInterval>>();
+
+    /** Clear and remove the incremental flush interval for a phase. */
+    function clearFlushInterval(phaseId: number): void {
+        const interval = flushIntervals.get(phaseId);
+        if (interval !== undefined) {
+            clearInterval(interval);
+            flushIntervals.delete(phaseId);
+        }
+    }
+
     // ── Engine → Webview (ui:message) ──────────────────────────────────
     engine.on('ui:message', (message: HostToWebviewMessage) => {
         MissionControlPanel.broadcast(message);
@@ -152,6 +166,9 @@ export function wireEngine(
 
     // ── ADK → Engine (worker lifecycle) ────────────────────────────────
     adkController.on('worker:exited', (phaseId, exitCode) => {
+        // F-5 audit fix: Clear incremental flush interval before final flush
+        clearFlushInterval(phaseId);
+
         outputRegistry?.flushAndRemove(phaseId);
 
         // RACE-FIX: Await handoff extraction + MCP submission BEFORE triggering
@@ -235,6 +252,9 @@ export function wireEngine(
     });
 
     adkController.on('worker:timeout', (phaseId) => {
+        // F-5 audit fix: Clear incremental flush interval
+        clearFlushInterval(phaseId);
+
         outputRegistry?.flushAndRemove(phaseId);
 
         // M3 audit fix: Flush accumulated stdout/stderr to DB before marking failure
@@ -257,6 +277,9 @@ export function wireEngine(
     });
 
     adkController.on('worker:crash', (phaseId) => {
+        // F-5 audit fix: Clear incremental flush interval
+        clearFlushInterval(phaseId);
+
         outputRegistry?.flushAndRemove(phaseId);
 
         // M3 audit fix: Flush accumulated stdout/stderr to DB before marking failure
@@ -305,6 +328,23 @@ export function wireEngine(
                 const remaining = MAX_ACCUMULATOR_SIZE - existing.length;
                 workerStderrAccumulator.set(phaseId, existing + chunk.slice(0, remaining));
             }
+        }
+
+        // F-5 audit fix: Start incremental flush interval if not already running
+        if (!flushIntervals.has(phaseId) && mcpServer) {
+            const interval = setInterval(() => {
+                const accOut = workerOutputAccumulator.get(phaseId) ?? '';
+                const accErr = workerStderrAccumulator.get(phaseId) ?? '';
+                if (accOut || accErr) {
+                    const rb = engine.getRunbook() ?? null;
+                    const pObj = rb?.phases.find(p => p.id === phaseId);
+                    if (pObj?.mcpPhaseId) {
+                        mcpServer.upsertWorkerOutput(sessionDirName, pObj.mcpPhaseId, accOut, accErr);
+                        log.debug(`[EngineWiring] F-5: Incremental flush for phase ${phaseId} (${accOut.length + accErr.length} bytes)`);
+                    }
+                }
+            }, INCREMENTAL_FLUSH_MS);
+            flushIntervals.set(phaseId, interval);
         }
     });
 

@@ -60,9 +60,12 @@ export function wirePlanner(
                 }
             }
 
-            // D1 audit fix: IPC debug clone — raw user prompt
+            // F-4 audit fix: Write debug clones outside IPC tree to .coogent/debug/<sessionDirName>/
+            // (previously written to <sessionDir>/debug/ which is under IPC)
             if (svc.stateManager) {
-                const debugDir = path.join(svc.stateManager.getSessionDir(), 'debug');
+                const sessionDir = svc.stateManager.getSessionDir();
+                const storageRoot = path.dirname(path.dirname(sessionDir)); // up from ipc/<sessionDirName>
+                const debugDir = path.join(storageRoot, 'debug', sessionDirName);
                 fs.mkdir(debugDir, { recursive: true })
                     .then(() => fs.writeFile(path.join(debugDir, 'prompt.md'), prompt, 'utf-8'))
                     .catch(err => log.warn('[PlannerWiring] Debug clone (prompt) failed (non-fatal):', err));
@@ -132,6 +135,12 @@ export function wirePlanner(
     plannerAgent.on('plan:generated', (draft, fileTree) => {
         engine.planGenerated(draft, fileTree);
 
+        // Log compilation manifest for observability (prompt compiler pipeline)
+        const manifest = plannerAgent.getLastManifest();
+        if (manifest) {
+            log.info('[PlannerWiring] Prompt compilation manifest', manifest);
+        }
+
         // Broadcast planning summary to webview
         MissionControlPanel.broadcast({
             type: 'PLAN_SUMMARY',
@@ -157,6 +166,10 @@ export function wirePlanner(
                     db.upsertPlanRevision(sessionDirName, {
                         draftJson: JSON.stringify(draft),
                         implementationPlanMd: buildImplementationPlanMarkdown(draft),
+                        // BL-5 audit fix: Persist raw LLM output for audit trail
+                        rawLlmOutput: plannerAgent.getLastRawOutput(),
+                        // F-6 audit fix: Persist compilation manifest for auditability
+                        ...(manifest ? { compilationManifest: JSON.stringify(manifest) } : {}),
                     });
                 } catch (err) {
                     log.warn('[PlannerWiring] Failed to persist initial plan revision:', err);
@@ -171,9 +184,11 @@ export function wirePlanner(
                 .then(() => log.info('[Coogent] Implementation plan stored in MCP state.'))
                 .catch(err => log.error('[Coogent] Failed to store implementation plan in MCP:', err));
 
-            // D1 audit fix: IPC debug clone — implementation plan
+            // F-4 audit fix: Write debug clones outside IPC tree
             if (svc.stateManager) {
-                const debugDir = path.join(svc.stateManager.getSessionDir(), 'debug');
+                const sessionDir = svc.stateManager.getSessionDir();
+                const storageRoot = path.dirname(path.dirname(sessionDir));
+                const debugDir = path.join(storageRoot, 'debug', sessionDirName);
                 fs.mkdir(debugDir, { recursive: true })
                     .then(() => fs.writeFile(path.join(debugDir, 'implementation-plan.md'), implPlanContent, 'utf-8'))
                     .catch(err => log.warn('[PlannerWiring] Debug clone (impl plan) failed (non-fatal):', err));

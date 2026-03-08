@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS phase_logs (
   phase_id TEXT NOT NULL,
   prompt TEXT NOT NULL DEFAULT '',
   request_context TEXT NOT NULL DEFAULT '',
-  response TEXT NOT NULL DEFAULT '',  -- DEPRECATED (BL-3): dead schema, never populated. Worker output stored in worker_outputs table.
+  response TEXT NOT NULL DEFAULT '',  -- Reserved for future use. Worker output is stored in worker_outputs table.
   exit_code INTEGER,
   started_at INTEGER NOT NULL DEFAULT 0,
   completed_at INTEGER,
@@ -244,6 +244,21 @@ export class ArtifactDB {
         // Run schema DDL (idempotent) — exec() handles multi-statement strings;
         // run() would silently execute only the first CREATE TABLE.
         db.exec(SCHEMA_SQL);
+
+        // ── Schema Migrations (idempotent) ────────────────────────────────
+        // BL-5 audit fix: Add raw_llm_output column to plan_revisions
+        try {
+            db.run('ALTER TABLE plan_revisions ADD COLUMN raw_llm_output TEXT');
+        } catch {
+            // Column already exists — ignore
+        }
+
+        // F-6 audit fix: Add compilation_manifest column to plan_revisions
+        try {
+            db.run('ALTER TABLE plan_revisions ADD COLUMN compilation_manifest TEXT');
+        } catch {
+            // Column already exists — ignore
+        }
 
         const instance = new ArtifactDB(db, dbPath);
 
@@ -1142,6 +1157,8 @@ export class ArtifactDB {
             draftJson: string;
             implementationPlanMd?: string;
             status?: string;
+            rawLlmOutput?: string | undefined;
+            compilationManifest?: string | undefined;
         }
     ): void {
         // Ensure parent task exists
@@ -1160,8 +1177,8 @@ export class ArtifactDB {
         versionStmt.free();
 
         this.db.run(
-            `INSERT INTO plan_revisions (master_task_id, version, feedback, draft_json, implementation_plan_md, status, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            `INSERT INTO plan_revisions (master_task_id, version, feedback, draft_json, implementation_plan_md, status, created_at, raw_llm_output, compilation_manifest)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 masterTaskId,
                 nextVersion,
@@ -1170,6 +1187,8 @@ export class ArtifactDB {
                 fields.implementationPlanMd ?? null,
                 fields.status ?? 'draft',
                 Date.now(),
+                fields.rawLlmOutput ?? null,
+                fields.compilationManifest ?? null,
             ]
         );
 
