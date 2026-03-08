@@ -3,9 +3,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Phase, FileResolver } from '../types/index.js';
-import { resolve as pathResolve, dirname, relative, extname, join } from 'node:path';
+import { resolve as pathResolve, dirname, relative, extname, join, isAbsolute } from 'node:path';
 import { access, readFile } from 'node:fs/promises';
 import * as ts from 'typescript';
+import {
+    resolveFileAcrossRoots,
+    parseWorkspaceQualifiedPath,
+} from '../utils/WorkspaceHelper.js';
+import type { ResolvedFile } from '../utils/WorkspaceHelper.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Explicit File Resolver (V1 — default)
@@ -18,6 +23,51 @@ import * as ts from 'typescript';
 export class ExplicitFileResolver implements FileResolver {
     async resolve(phase: Phase, _workspaceRoot: string): Promise<string[]> {
         return [...phase.context_files];
+    }
+
+    /**
+     * Resolve explicit files across multiple workspace roots.
+     * Absolute paths pass through unchanged. Relative paths are resolved by
+     * checking each root for existence; ambiguous matches log a warning and
+     * use the first match.
+     */
+    async resolveMultiRoot(phase: Phase, workspaceRoots: string[]): Promise<string[]> {
+        const resolved: string[] = [];
+
+        for (const file of phase.context_files) {
+            // Absolute paths pass through unchanged
+            if (isAbsolute(file)) {
+                resolved.push(file);
+                continue;
+            }
+
+            // Check for workspace-qualified path (e.g., "frontend:src/index.ts")
+            const qualified = parseWorkspaceQualifiedPath(file);
+            if (qualified) {
+                // For now, pass through — full qualified-path resolution
+                // requires access to vscode.WorkspaceFolder names which are
+                // not available at this layer. Callers should pre-resolve.
+                resolved.push(file);
+                continue;
+            }
+
+            // Try all roots
+            const result = resolveFileAcrossRoots(file, workspaceRoots);
+            if ('resolved' in result) {
+                // Return workspace-relative path (relative to the matched root)
+                resolved.push(relative(result.root, result.resolved));
+            } else if ('ambiguous' in result) {
+                console.warn(
+                    `[FileResolver] Ambiguous path '${file}' found in roots: ${result.ambiguous.join(', ')}. Using first match.`,
+                );
+                resolved.push(file);
+            } else {
+                // Not found — pass through (worker will fail gracefully)
+                resolved.push(file);
+            }
+        }
+
+        return resolved;
     }
 }
 
@@ -129,6 +179,87 @@ export class ASTFileResolver implements FileResolver {
         this.pathAliases = null;
 
         return result;
+    }
+
+    /**
+     * Resolve files across multiple workspace roots.
+     *
+     * Strategy:
+     * 1. Merge tsconfig path aliases from ALL roots.
+     * 2. For each explicit file, determine which root owns it.
+     * 3. Crawl imports using the matched root for each file.
+     * 4. Deduplicate the final set.
+     */
+    async resolveMultiRoot(phase: Phase, workspaceRoots: string[]): Promise<string[]> {
+        // Merge aliases from all roots
+        const mergedPatterns = new Map<string, string[]>();
+        for (const root of workspaceRoots) {
+            const aliases = await this.loadPathAliases(root);
+            if (aliases) {
+                for (const [alias, targets] of aliases.patterns.entries()) {
+                    const existing = mergedPatterns.get(alias) ?? [];
+                    mergedPatterns.set(alias, [...existing, ...targets]);
+                }
+            }
+        }
+        this.pathAliases = mergedPatterns.size > 0 ? { patterns: mergedPatterns } : null;
+
+        const allResults = new Set<string>();
+        const visited = new Set<string>();
+
+        for (const file of phase.context_files) {
+            let targetRoot: string;
+            let targetRelative: string;
+
+            if (isAbsolute(file)) {
+                // Determine which root owns this absolute path
+                const owningRoot = workspaceRoots.find(r => file.startsWith(r + '/'));
+                targetRoot = owningRoot ?? workspaceRoots[0];
+                targetRelative = relative(targetRoot, file);
+            } else {
+                // Try all roots to find matching file
+                const result = resolveFileAcrossRoots(file, workspaceRoots);
+                if ('resolved' in result) {
+                    targetRoot = (result as ResolvedFile).root;
+                    targetRelative = file;
+                } else if ('ambiguous' in result) {
+                    console.warn(
+                        `[ASTFileResolver] Ambiguous path '${file}' — using first root.`,
+                    );
+                    targetRoot = workspaceRoots[0];
+                    targetRelative = file;
+                } else {
+                    // Not found — fall back to first root (worker will fail gracefully)
+                    targetRoot = workspaceRoots[0];
+                    targetRelative = file;
+                }
+            }
+
+            // Skip if already crawled from this root
+            const key = `${targetRoot}::${targetRelative}`;
+            if (visited.has(key)) continue;
+            visited.add(key);
+
+            // Delegate to single-root resolve for this file's root
+            const singlePhase: Phase = {
+                ...phase,
+                context_files: [targetRelative],
+            };
+
+            // Save and restore merged aliases (single-root resolve clears them)
+            const savedAliases = this.pathAliases;
+            const files = await this.resolve(singlePhase, targetRoot);
+            this.pathAliases = savedAliases;
+
+            for (const f of files) {
+                allResults.add(f);
+            }
+        }
+
+        // Clear cached aliases
+        this.pathAliases = null;
+
+        return Array.from(allResults);
     }
 
     // ───────────────────────────────────────────────────────────────────────────

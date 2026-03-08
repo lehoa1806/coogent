@@ -19,16 +19,18 @@ import type { ServiceContainer } from './ServiceContainer.js';
  * Wire all engine events, ADK worker lifecycle events, and consolidation flow.
  * Must be called after all services are initialised on the container.
  *
- * @param svc           The shared service container.
+ * @param svc             The shared service container.
  * @param sessionDirName  The current session directory basename (used as masterTaskId).
- * @param workspaceRoot   Absolute path to the workspace folder.
+ * @param workspaceRoot   Absolute path to the primary workspace folder.
  * @param workerTimeoutMs Worker timeout from the extension configuration.
+ * @param workspaceRoots  All active workspace folder paths (defaults to [workspaceRoot]).
  */
 export function wireEngine(
     svc: ServiceContainer,
     sessionDirName: string,
     workspaceRoot: string,
-    workerTimeoutMs: number
+    workerTimeoutMs: number,
+    workspaceRoots: string[] = [workspaceRoot]
 ): void {
     const { engine, adkController, logger, gitSandbox, gitManager, mcpBridge, mcpServer,
         handoffExtractor, consolidationAgent, outputRegistry,
@@ -45,17 +47,10 @@ export function wireEngine(
     engine.on('state:changed', (from, to, event) => {
         logger?.logStateTransition(from, to, event).catch(log.onError);
 
-        // LF-5 FIX: Purge stale task from ArtifactDB on session reset.
-        // Un-purged sessions retain valid masterTaskIds that pass the
-        // authorization gate in get_modified_file_content. Purging on
-        // RESET → IDLE closes this defense-in-depth gap.
-        if (to === EngineState.IDLE && from !== EngineState.IDLE && mcpServer) {
-            try {
-                mcpServer.purgeTask(sessionDirName);
-            } catch (err) {
-                log.warn('[EngineWiring] LF-5: Failed to purge stale task:', err);
-            }
-        }
+        // NOTE: Previously purged task from ArtifactDB on IDLE transition (LF-5).
+        // Removed because sql.js does not honour ON DELETE CASCADE, leaving
+        // orphan phases/handoffs/worker_outputs that cause "Task not found" errors.
+        // The realpath workspace boundary check is the true security gate.
 
         // Auto-create sandbox branch on first EXECUTING_WORKER per session
         if (to === 'EXECUTING_WORKER' && !sandboxBranchCreatedForSession.has(sessionDirName) && gitSandbox) {
@@ -115,7 +110,16 @@ export function wireEngine(
         if (!phase.mcpPhaseId) {
             phase.mcpPhaseId = `phase-${String(phase.id).padStart(3, '0')}-${randomUUID()}`;
         }
-        executePhase(svc, phase, workspaceRoot, workerTimeoutMs, sessionDirName).catch((err) => {
+
+        // Persist phase log entry at start
+        if (mcpServer && phase.mcpPhaseId) {
+            mcpServer.upsertPhaseLog(sessionDirName, phase.mcpPhaseId, {
+                prompt: phase.prompt,
+                startedAt: Date.now(),
+            });
+        }
+
+        executePhase(svc, phase, workspaceRoot, workerTimeoutMs, sessionDirName, workspaceRoots).catch((err) => {
             log.error('[Coogent] Phase execution error:', err);
         });
     });
@@ -123,7 +127,7 @@ export function wireEngine(
     // ── Engine → phase:heal (SelfHealing) ──────────────────────────────
     engine.on('phase:heal', (phase: Phase, augmentedPrompt: string) => {
         const healPhase = { ...phase, prompt: augmentedPrompt };
-        executePhase(svc, healPhase, workspaceRoot, workerTimeoutMs, sessionDirName).catch((err) => {
+        executePhase(svc, healPhase, workspaceRoot, workerTimeoutMs, sessionDirName, workspaceRoots).catch((err) => {
             log.error('[Coogent] Self-healing phase execution error:', err);
         });
     });
@@ -204,7 +208,20 @@ export function wireEngine(
         // Engine FSM transition fires AFTER handoff is persisted (or fails gracefully).
         // Errors in handoff extraction/submission are caught above and don't block the FSM.
         handoffPromise
-            .then(() => engine.onWorkerExited(phaseId, exitCode))
+            .then(() => {
+                // Persist phase completion to phase_logs
+                if (mcpServer) {
+                    const rb = engine.getRunbook() ?? null;
+                    const pObj = rb?.phases.find(p => p.id === phaseId);
+                    if (pObj?.mcpPhaseId) {
+                        mcpServer.upsertPhaseLog(sessionDirName, pObj.mcpPhaseId, {
+                            exitCode: exitCode,
+                            completedAt: Date.now(),
+                        });
+                    }
+                }
+                return engine.onWorkerExited(phaseId, exitCode);
+            })
             .catch(log.onError);
     });
 
@@ -289,13 +306,16 @@ export function wireEngine(
 /**
  * Full phase execution pipeline: assemble context → spawn worker.
  * Extracted from the module-level `executePhase()` in extension.ts.
+ *
+ * @param workspaceRoots  All active workspace roots (defaults to [workspaceRoot]).
  */
 async function executePhase(
     svc: ServiceContainer,
     phase: Phase,
     workspaceRoot: string,
     timeoutMs: number,
-    masterTaskId: string
+    masterTaskId: string,
+    workspaceRoots: string[] = [workspaceRoot]
 ): Promise<void> {
     const { engine, contextScoper, adkController, logger, handoffExtractor, currentSessionDir } = svc;
 
@@ -314,7 +334,11 @@ async function executePhase(
     await logger.logPhaseStart(phase.id);
 
     // Step 1: Assemble context
-    const result = await contextScoper.assemble(phase, workspaceRoot);
+    // Multi-root: prefer assembleMultiRoot if the scoper supports it,
+    // otherwise fall back to single-root assemble.
+    const result = (contextScoper as any).assembleMultiRoot
+        ? await (contextScoper as any).assembleMultiRoot(phase, workspaceRoots)
+        : await contextScoper.assemble(phase, workspaceRoot);
 
     if (!result.ok) {
         MissionControlPanel.broadcast({

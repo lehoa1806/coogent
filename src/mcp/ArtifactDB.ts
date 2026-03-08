@@ -70,6 +70,25 @@ CREATE TABLE IF NOT EXISTS worker_outputs (
   PRIMARY KEY (master_task_id, phase_id),
   FOREIGN KEY (master_task_id) REFERENCES tasks(master_task_id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS sessions (
+  session_dir_name TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  prompt TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS phase_logs (
+  master_task_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  prompt TEXT NOT NULL DEFAULT '',
+  request_context TEXT NOT NULL DEFAULT '',
+  response TEXT NOT NULL DEFAULT '',
+  exit_code INTEGER,
+  started_at INTEGER NOT NULL DEFAULT 0,
+  completed_at INTEGER,
+  PRIMARY KEY (master_task_id, phase_id)
+);
 `;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -355,13 +374,22 @@ export class ArtifactDB {
     }
 
     /**
-     * Delete a task and all its phases + handoffs (cascading via FK).
+     * Delete a task and all its child rows.
+     * Manually cascades because sql.js does not honour ON DELETE CASCADE.
      */
     deleteTask(masterTaskId: string): void {
-        this.db.run(
-            'DELETE FROM tasks WHERE master_task_id = ?',
-            [masterTaskId]
-        );
+        this.db.run('BEGIN');
+        try {
+            this.db.run('DELETE FROM handoffs WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM worker_outputs WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM phase_logs WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM phases WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM tasks WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('COMMIT');
+        } catch (e) {
+            this.db.run('ROLLBACK');
+            throw e;
+        }
         this.scheduleFlush();
     }
 
@@ -581,6 +609,180 @@ export class ArtifactDB {
         }
         stmt.free();
         return result;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Session CRUD
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Insert or update a session record.
+     * Replaces the old `current-session` file approach.
+     */
+    upsertSession(
+        dirName: string,
+        sessionId: string,
+        prompt: string,
+        createdAt: number
+    ): void {
+        this.db.run(
+            `INSERT INTO sessions (session_dir_name, session_id, prompt, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(session_dir_name)
+             DO UPDATE SET session_id = excluded.session_id,
+                           prompt = excluded.prompt,
+                           created_at = excluded.created_at`,
+            [dirName, sessionId, prompt, createdAt]
+        );
+        this.scheduleFlush();
+    }
+
+    /**
+     * Retrieve the most recently created session.
+     * Returns `undefined` if no sessions have been recorded.
+     */
+    getLatestSession(): { dirName: string; sessionId: string; prompt: string; createdAt: number } | undefined {
+        const stmt = this.db.prepare(
+            'SELECT session_dir_name, session_id, prompt, created_at FROM sessions ORDER BY created_at DESC LIMIT 1'
+        );
+
+        if (!stmt.step()) {
+            stmt.free();
+            return undefined;
+        }
+
+        const row = stmt.getAsObject() as {
+            session_dir_name: string;
+            session_id: string;
+            prompt: string;
+            created_at: number;
+        };
+        stmt.free();
+
+        return {
+            dirName: row.session_dir_name,
+            sessionId: row.session_id,
+            prompt: row.prompt,
+            createdAt: row.created_at,
+        };
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Phase Log CRUD
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Insert or update a phase execution log.
+     * Only provided fields are overwritten (partial upsert).
+     */
+    upsertPhaseLog(
+        masterTaskId: string,
+        phaseId: string,
+        fields: {
+            prompt?: string;
+            requestContext?: string;
+            response?: string;
+            exitCode?: number;
+            startedAt?: number;
+            completedAt?: number;
+        }
+    ): void {
+        this.db.run('BEGIN');
+        try {
+            // Ensure the row exists with defaults
+            this.db.run(
+                `INSERT OR IGNORE INTO phase_logs (master_task_id, phase_id) VALUES (?, ?)`,
+                [masterTaskId, phaseId]
+            );
+
+            if (fields.prompt !== undefined) {
+                this.db.run(
+                    'UPDATE phase_logs SET prompt = ? WHERE master_task_id = ? AND phase_id = ?',
+                    [fields.prompt, masterTaskId, phaseId]
+                );
+            }
+            if (fields.requestContext !== undefined) {
+                this.db.run(
+                    'UPDATE phase_logs SET request_context = ? WHERE master_task_id = ? AND phase_id = ?',
+                    [fields.requestContext, masterTaskId, phaseId]
+                );
+            }
+            if (fields.response !== undefined) {
+                this.db.run(
+                    'UPDATE phase_logs SET response = ? WHERE master_task_id = ? AND phase_id = ?',
+                    [fields.response, masterTaskId, phaseId]
+                );
+            }
+            if (fields.exitCode !== undefined) {
+                this.db.run(
+                    'UPDATE phase_logs SET exit_code = ? WHERE master_task_id = ? AND phase_id = ?',
+                    [fields.exitCode, masterTaskId, phaseId]
+                );
+            }
+            if (fields.startedAt !== undefined) {
+                this.db.run(
+                    'UPDATE phase_logs SET started_at = ? WHERE master_task_id = ? AND phase_id = ?',
+                    [fields.startedAt, masterTaskId, phaseId]
+                );
+            }
+            if (fields.completedAt !== undefined) {
+                this.db.run(
+                    'UPDATE phase_logs SET completed_at = ? WHERE master_task_id = ? AND phase_id = ?',
+                    [fields.completedAt, masterTaskId, phaseId]
+                );
+            }
+
+            this.db.run('COMMIT');
+        } catch (e) {
+            this.db.run('ROLLBACK');
+            throw e;
+        }
+        this.scheduleFlush();
+    }
+
+    /**
+     * Retrieve a phase execution log.
+     * Returns `undefined` if no log exists for the given phase.
+     */
+    getPhaseLog(
+        masterTaskId: string,
+        phaseId: string
+    ): {
+        prompt: string;
+        requestContext: string;
+        response: string;
+        exitCode: number | null;
+        startedAt: number;
+        completedAt: number | null;
+    } | undefined {
+        const stmt = this.db.prepare(
+            'SELECT prompt, request_context, response, exit_code, started_at, completed_at FROM phase_logs WHERE master_task_id = ? AND phase_id = ?'
+        );
+        stmt.bind([masterTaskId, phaseId]);
+
+        if (!stmt.step()) {
+            stmt.free();
+            return undefined;
+        }
+
+        const row = stmt.getAsObject() as {
+            prompt: string;
+            request_context: string;
+            response: string;
+            exit_code: number | null;
+            started_at: number;
+            completed_at: number | null;
+        };
+        stmt.free();
+
+        return {
+            prompt: row.prompt,
+            requestContext: row.request_context,
+            response: row.response,
+            exitCode: row.exit_code,
+            startedAt: row.started_at,
+            completedAt: row.completed_at,
+        };
     }
 
     // ─────────────────────────────────────────────────────────────────────

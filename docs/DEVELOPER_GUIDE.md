@@ -286,3 +286,65 @@ function makeMockBridge() {
 | **`camelCase` for TypeScript** | Runtime-only identifiers |
 | **EventEmitter pattern** | Typed events via `EngineEvents` interface |
 | **Async safety** | In-process mutex for `StateManager` |
+
+---
+
+## Multi-Root Development
+
+### Accessing Workspace Roots
+
+**Always** use `WorkspaceHelper` (`src/utils/WorkspaceHelper.ts`) instead of raw `vscode.workspace.workspaceFolders`:
+
+```typescript
+// ❌ Wrong — assumes single root
+const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+
+// ✅ Correct — uses centralized helper
+import { getWorkspaceRoots, getPrimaryRoot } from '../utils/WorkspaceHelper';
+const allRoots = getWorkspaceRoots();    // string[] — all roots
+const primary = getPrimaryRoot();         // string — first root (fallback)
+```
+
+**Key functions:**
+
+| Function | Returns | Use When |
+|---|---|---|
+| `getWorkspaceRoots()` | `string[]` | Iterating over all open roots |
+| `getPrimaryRoot()` | `string` | Need a single canonical root (backward compat) |
+| `getStorageBase(storageUri)` | `string` | Resolving extension-managed storage path |
+| `resolveFileAcrossRoots(path)` | `string \| undefined` | Finding a file that could be in any root |
+| `parseQualifiedPath(path)` | `{ workspace, relativePath }` | Parsing `workspace:path` format |
+
+### Where Session State Lives
+
+Session data is stored under `ExtensionContext.storageUri` (extension-managed storage), **not** inside the workspace. The path is typically:
+
+```
+~/.vscode/extensions/storage/coogent/
+├── artifacts.db          ← SQLite database
+├── ipc/<session-id>/     ← Runbook, WAL, lock files
+└── sessions/             ← Session history
+```
+
+This is critical for multi-root support — storing state inside a workspace folder would be ambiguous when multiple roots are open.
+
+### Testing Multi-Root Scenarios
+
+Tests for multi-root functionality are in:
+
+- `src/utils/__tests__/WorkspaceHelper.test.ts` — path resolution, qualified paths
+- `src/git/__tests__/GitSandboxMultiRepo.test.ts` — multi-repo branch operations
+- `src/context/__tests__/ASTFileResolver.test.ts` — cross-root import resolution
+
+To simulate multi-root in tests, mock `vscode.workspace.workspaceFolders` with multiple entries:
+
+```typescript
+jest.mock('vscode', () => ({
+    workspace: {
+        workspaceFolders: [
+            { uri: { fsPath: '/workspace/frontend' }, name: 'frontend' },
+            { uri: { fsPath: '/workspace/backend' }, name: 'backend' },
+        ],
+    },
+}), { virtual: true });
+```
