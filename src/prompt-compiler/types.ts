@@ -119,6 +119,8 @@ export interface RepoFingerprint {
     readonly architectureHints: readonly string[];
     /** Surfaces with elevated risk of breakage (e.g., ['public API', 'database schema']). */
     readonly highRiskSurfaces: readonly string[];
+    /** If the project was detected in a subdirectory, its relative path (e.g., 'coogent'). */
+    readonly detectedSubdirectory?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

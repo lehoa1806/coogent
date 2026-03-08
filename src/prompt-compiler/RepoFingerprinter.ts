@@ -29,9 +29,27 @@ import { PromptTemplateManager, type TechStackInfo } from '../context/PromptTemp
  * const fingerprint = await fp.fingerprint();
  * ```
  */
+/**
+ * Manifest filenames that indicate a project root.
+ * Used to detect whether the workspace root *is* a project root,
+ * or whether the real project lives in a subdirectory.
+ */
+const PROJECT_MANIFEST_FILES: readonly string[] = [
+    'package.json',
+    'Cargo.toml',
+    'go.mod',
+    'pyproject.toml',
+    'requirements.txt',
+];
+
 export class RepoFingerprinter {
     private readonly rootUri: vscode.Uri;
-    private readonly templateManager: PromptTemplateManager;
+    private templateManager: PromptTemplateManager;
+
+    /** Lazily resolved effective project root (may differ from rootUri). */
+    private effectiveRoot: vscode.Uri | null = null;
+    /** Relative subdirectory name if the project was found in a child dir. */
+    private detectedSubdirectory: string | undefined;
 
     constructor(workspaceRoot: string) {
         this.rootUri = vscode.Uri.file(workspaceRoot);
@@ -50,6 +68,9 @@ export class RepoFingerprinter {
      */
     async fingerprint(): Promise<RepoFingerprint> {
         try {
+            // Resolve the effective project root (may be a subdirectory).
+            await this.resolveEffectiveRoot();
+
             const techStack = await this.templateManager.discoverTechStack();
 
             const [
@@ -83,10 +104,91 @@ export class RepoFingerprinter {
                 buildStack,
                 architectureHints,
                 highRiskSurfaces,
+                ...(this.detectedSubdirectory
+                    ? { detectedSubdirectory: this.detectedSubdirectory }
+                    : {}),
             };
         } catch {
             // Absolute fallback — should never reach here, but guarantees no throws.
             return this.emptyFingerprint();
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  Effective Root Resolution
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Determine the effective project root.
+     *
+     * If no manifest file is found at the workspace root, scan immediate
+     * child directories for a project manifest. If exactly one (or the first)
+     * child directory contains a manifest, treat it as the real project root.
+     *
+     * This handles the common case where a wrapper directory (e.g., `anti-ex/`)
+     * contains the actual project in a subdirectory (e.g., `coogent/`).
+     */
+    private async resolveEffectiveRoot(): Promise<void> {
+        if (this.effectiveRoot) return;
+
+        // Check if the workspace root already has a manifest.
+        for (const manifest of PROJECT_MANIFEST_FILES) {
+            if (await this.rootHasFile(manifest)) {
+                this.effectiveRoot = this.rootUri;
+                return;
+            }
+        }
+
+        // No manifest at root — scan immediate child directories.
+        try {
+            const entries = await vscode.workspace.fs.readDirectory(this.rootUri);
+            const subdirs = entries.filter(
+                ([, type]) => type === vscode.FileType.Directory,
+            );
+
+            for (const [name] of subdirs) {
+                // Skip hidden directories and common non-project dirs.
+                if (name.startsWith('.') || name === 'node_modules') continue;
+
+                const childUri = vscode.Uri.joinPath(this.rootUri, name);
+                for (const manifest of PROJECT_MANIFEST_FILES) {
+                    try {
+                        await vscode.workspace.fs.stat(
+                            vscode.Uri.joinPath(childUri, manifest),
+                        );
+                        // Found a project manifest in a subdirectory.
+                        this.effectiveRoot = childUri;
+                        this.detectedSubdirectory = name;
+                        // Re-create the template manager pointing at the real root.
+                        this.templateManager = new PromptTemplateManager(
+                            childUri.fsPath,
+                        );
+                        return;
+                    } catch {
+                        // Manifest not found in this subdir — continue.
+                    }
+                }
+            }
+        } catch {
+            // readDirectory failed — fall through to default.
+        }
+
+        // Fallback: use the workspace root as-is.
+        this.effectiveRoot = this.rootUri;
+    }
+
+    /**
+     * Check if a file exists directly under the *original* workspace root
+     * (before effective root resolution). Used only during resolution itself.
+     */
+    private async rootHasFile(relativePath: string): Promise<boolean> {
+        try {
+            await vscode.workspace.fs.stat(
+                vscode.Uri.joinPath(this.rootUri, relativePath),
+            );
+            return true;
+        } catch {
+            return false;
         }
     }
 
@@ -453,7 +555,8 @@ export class RepoFingerprinter {
      */
     private async readFileQuietly(relativePath: string): Promise<string | null> {
         try {
-            const uri = vscode.Uri.joinPath(this.rootUri, relativePath);
+            const root = this.effectiveRoot ?? this.rootUri;
+            const uri = vscode.Uri.joinPath(root, relativePath);
             const data = await vscode.workspace.fs.readFile(uri);
             return Buffer.from(data).toString('utf-8');
         } catch {
@@ -466,7 +569,8 @@ export class RepoFingerprinter {
      */
     private async fileExists(relativePath: string): Promise<boolean> {
         try {
-            const uri = vscode.Uri.joinPath(this.rootUri, relativePath);
+            const root = this.effectiveRoot ?? this.rootUri;
+            const uri = vscode.Uri.joinPath(root, relativePath);
             await vscode.workspace.fs.stat(uri);
             return true;
         } catch {
@@ -486,7 +590,8 @@ export class RepoFingerprinter {
         // For *.ext patterns, list root directory entries and check extension
         const ext = pattern.slice(1); // e.g., '.code-workspace'
         try {
-            const entries = await vscode.workspace.fs.readDirectory(this.rootUri);
+            const root = this.effectiveRoot ?? this.rootUri;
+            const entries = await vscode.workspace.fs.readDirectory(root);
             return entries.some(([name]) => name.endsWith(ext));
         } catch {
             return false;
