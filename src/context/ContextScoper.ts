@@ -4,6 +4,7 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import * as vscode from 'vscode';
 import type { ContextResult, Phase } from '../types/index.js';
 import { ExplicitFileResolver, ASTFileResolver } from './FileResolver.js';
 import type { FileResolver } from '../types/index.js';
@@ -155,8 +156,15 @@ export class ContextScoper {
 
             const content = await fs.readFile(realPath, 'utf-8');
 
-            // Guard: secrets detection (non-blocking — warn only)
-            const scanResult = SecretsGuard.scan(content, relativePath);
+            // S1-3 (SEC-1): Check blocking mode setting
+            const blockOnSecrets = vscode.workspace
+                .getConfiguration('coogent')
+                .get<boolean>('blockOnSecretsDetection', false);
+
+            // Guard: secrets detection — optionally blocking
+            const scanResult = SecretsGuard.scanWithBlocking(
+                content, relativePath, blockOnSecrets,
+            );
             if (!scanResult.safe) {
                 for (const finding of scanResult.findings) {
                     log.warn(`[ContextScoper] ⚠ ${finding}`);

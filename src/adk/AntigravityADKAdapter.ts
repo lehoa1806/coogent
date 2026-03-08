@@ -5,11 +5,14 @@
 import * as vscode from 'vscode';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { watch, type FSWatcher } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import type { AgentBackendProvider } from './AgentBackendProvider.js';
 import type { ADKSessionOptions, ADKSessionHandle } from './ADKController.js';
 import type { ConversationMode } from '../types/index.js';
+import type { TokenEncoder } from '../context/ContextScoper.js';
+import { CharRatioEncoder } from '../context/ContextScoper.js';
+import { FileStabilityWatcher } from './FileStabilityWatcher.js';
+import { COOGENT_DIR, IPC_DIR, IPC_REQUEST_FILE, IPC_RESPONSE_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -19,8 +22,6 @@ import log from '../logger/log.js';
 interface ActiveSession {
     sessionId: string;
     cts: vscode.CancellationTokenSource;
-    watcher?: FSWatcher;
-    pollTimer?: ReturnType<typeof setInterval>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -36,11 +37,8 @@ const STABILITY_POLL_MS = 1_000;
 /** How long the file must remain unchanged to be considered "done" (ms). */
 const STABILITY_THRESHOLD_MS = 1_500;
 
-/** IPC subdirectory under the workspace. */
-const IPC_DIR_NAME = '.coogent/ipc';
-
-/** Approximate chars-per-token ratio for token estimation. */
-const CHARS_PER_TOKEN = 4;
+/** IPC subdirectory under the workspace — composed from COOGENT_DIR + IPC_DIR constants. */
+const IPC_DIR_NAME = COOGENT_DIR + '/' + IPC_DIR;
 
 /** Small delay after injection to let VS Code process the command before the next session. */
 
@@ -96,6 +94,9 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
     private activeSessions = new Map<string, ActiveSession>();
     private readonly ipcDir: string;
 
+    /** S3-3: Shared token encoder for consistent estimation across pipeline. */
+    private readonly tokenEncoder: TokenEncoder;
+
     // ── Dispatch serialization ───────────────────────────────────────────────
     /**
      * Serialization lock: ensures `startNewConversation()` + `injectIntoChatPanel()`
@@ -108,8 +109,9 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
     /** Running estimate of tokens pumped into the current conversation. */
     private conversationTokens = 0;
 
-    constructor(workspaceRoot: string) {
+    constructor(workspaceRoot: string, tokenEncoder?: TokenEncoder) {
         this.ipcDir = path.join(workspaceRoot, IPC_DIR_NAME);
+        this.tokenEncoder = tokenEncoder ?? new CharRatioEncoder();
     }
 
     async createSession(options: ADKSessionOptions): Promise<ADKSessionHandle> {
@@ -144,7 +146,7 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
         }
 
         // Track token usage
-        const estimatedTokens = Math.ceil(options.initialPrompt.length / CHARS_PER_TOKEN);
+        const estimatedTokens = this.tokenEncoder.countTokens(options.initialPrompt);
         this.conversationTokens += estimatedTokens;
         log.info(`[AntigravityADK] Conversation tokens: ${this.conversationTokens} (+${estimatedTokens})`);
 
@@ -286,8 +288,8 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
         const subDir = options.masterTaskId
             ? path.join(this.ipcDir, options.masterTaskId, subTaskName)
             : path.join(this.ipcDir, subTaskName);
-        const requestFile = path.join(subDir, 'request.md');
-        const responseFile = path.join(subDir, 'response.md');
+        const requestFile = path.join(subDir, IPC_REQUEST_FILE);
+        const responseFile = path.join(subDir, IPC_RESPONSE_FILE);
 
         // ── Critical section: file-write + chat injection ────────────────────
         // These steps MUST complete before the next session starts, otherwise
@@ -335,10 +337,15 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
             try {
                 // Step 5: Watch for the response file
                 log.info(`[AntigravityADK] Waiting for response file: ${responseFile}`);
-                const content = await this.waitForResponseFile(
+                const watcher = new FileStabilityWatcher();
+                const content = await watcher.waitForStableFile(
                     responseFile,
-                    session,
-                    RESPONSE_TIMEOUT_MS
+                    {
+                        timeoutMs: RESPONSE_TIMEOUT_MS,
+                        pollMs: STABILITY_POLL_MS,
+                        stabilityThresholdMs: STABILITY_THRESHOLD_MS,
+                        cancellationToken: session.cts.token,
+                    },
                 );
 
                 if (session.cts.token.isCancellationRequested) {
@@ -383,122 +390,7 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
         };
     }
 
-    /**
-     * Watch for a response file to appear and stabilize (no writes for STABILITY_THRESHOLD_MS).
-     * Returns the file content, or null on timeout/cancellation.
-     */
-    private async waitForResponseFile(
-        responseFile: string,
-        session: ActiveSession,
-        timeoutMs: number
-    ): Promise<string | null> {
-        return new Promise<string | null>((resolve) => {
-            const dir = path.dirname(responseFile);
-            const basename = path.basename(responseFile);
-            let lastSize = -1;
-            let lastSizeTime = 0;
-            let resolved = false;
 
-            let stabilityRecheck: ReturnType<typeof setTimeout> | null = null;
-            const cleanup = () => {
-                if (session.watcher) {
-                    session.watcher.close();
-                    delete session.watcher;
-                }
-                if (session.pollTimer) {
-                    clearInterval(session.pollTimer);
-                    delete session.pollTimer;
-                }
-                if (stabilityRecheck) {
-                    clearTimeout(stabilityRecheck);
-                    stabilityRecheck = null;
-                }
-                clearTimeout(timeoutHandle);
-            };
-
-            const finish = (result: string | null) => {
-                if (resolved) return;
-                resolved = true;
-                cleanup();
-                resolve(result);
-            };
-
-            // Timeout handler
-            const timeoutHandle = setTimeout(() => {
-                log.info(`[AntigravityADK] Response file timeout after ${timeoutMs}ms`);
-                finish(null);
-            }, timeoutMs);
-
-            // Cancellation handler
-            session.cts.token.onCancellationRequested(() => {
-                finish(null);
-            });
-
-            // Check if the file is "stable" (written and no longer changing)
-            const checkStability = async () => {
-                if (resolved || session.cts.token.isCancellationRequested) return;
-
-                try {
-                    const stat = await fs.stat(responseFile);
-                    const size = stat.size;
-
-                    if (size === 0) {
-                        // File exists but is empty — agent hasn't written yet
-                        lastSize = 0;
-                        lastSizeTime = Date.now();
-                        return;
-                    }
-
-                    if (size !== lastSize) {
-                        // File is still being written
-                        lastSize = size;
-                        lastSizeTime = Date.now();
-                        return;
-                    }
-
-                    // Size hasn't changed — check if stable long enough
-                    if (Date.now() - lastSizeTime >= STABILITY_THRESHOLD_MS) {
-                        log.info(`[AntigravityADK] Response file stable at ${size} bytes`);
-                        const content = await fs.readFile(responseFile, 'utf-8');
-                        if (content.trim().length > 0) {
-                            finish(content);
-                        }
-                        // If empty after stability, keep waiting (agent might rewrite)
-                    }
-                } catch {
-                    // File doesn't exist yet — keep waiting
-                }
-            };
-
-            // Set up fs.watch for fast detection of file creation
-            let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
-            try {
-                session.watcher = watch(dir, (_eventType, filename) => {
-                    if (filename === basename) {
-                        checkStability().catch(() => { });
-                        // Schedule a deferred re-check to guarantee the stability
-                        // window is fully evaluated even if no poll aligns with it.
-                        if (stabilityTimer) clearTimeout(stabilityTimer);
-                        stabilityTimer = setTimeout(() => {
-                            stabilityTimer = null;
-                            checkStability().catch(() => { });
-                        }, STABILITY_THRESHOLD_MS + 200);
-                    }
-                });
-            } catch {
-                // watch might fail — fall through to polling
-                log.info(`[AntigravityADK] fs.watch failed, using polling only`);
-            }
-
-            // Poll periodically as a reliable fallback (fs.watch can be unreliable)
-            session.pollTimer = setInterval(() => {
-                checkStability().catch(() => { });
-            }, STABILITY_POLL_MS);
-
-            // Initial check in case the file already exists
-            checkStability().catch(() => { });
-        });
-    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  Chat Injection
@@ -588,7 +480,7 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
             case 'continuous':
                 return false;
             case 'smart': {
-                const estimated = Math.ceil(promptLength / CHARS_PER_TOKEN);
+                const estimated = this.tokenEncoder.countTokens('x'.repeat(promptLength));
                 const wouldExceed = (this.conversationTokens + estimated) > threshold;
                 log.info(
                     `[AntigravityADK] Smart switch: current=${this.conversationTokens}, ` +
@@ -616,20 +508,11 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Clean up session resources (watcher, timer, IPC files).
+     * Clean up session resources.
      */
     private cleanupSession(sessionId: string): void {
         const session = this.activeSessions.get(sessionId);
         if (!session) return;
-
-        if (session.watcher) {
-            session.watcher.close();
-            delete session.watcher;
-        }
-        if (session.pollTimer) {
-            clearInterval(session.pollTimer);
-            delete session.pollTimer;
-        }
 
         this.activeSessions.delete(sessionId);
 

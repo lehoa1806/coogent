@@ -20,6 +20,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { COOGENT_DIR, LOG_FILE } from '../constants/paths.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Log Levels
@@ -64,7 +65,6 @@ export interface LogStreamOptions {
 //  Constants
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const LOG_FILENAME = 'coogent.log';
 const DEFAULT_MAX_LOG_BYTES = 5 * 1024 * 1024;   // 5 MB
 const DEFAULT_MAX_BACKUPS = 2;
 
@@ -80,8 +80,8 @@ export class LogStream {
     private readonly maxBackups: number;
 
     constructor(workspaceRoot: string, options?: LogStreamOptions) {
-        const logDir = path.join(workspaceRoot, '.coogent');
-        this.logPath = path.join(logDir, LOG_FILENAME);
+        const logDir = path.join(workspaceRoot, COOGENT_DIR);
+        this.logPath = path.join(logDir, LOG_FILE);
         this.level = options?.level ?? LogLevel.INFO;
         this.maxLogBytes = options?.maxLogBytes ?? DEFAULT_MAX_LOG_BYTES;
         this.maxBackups = options?.maxBackups ?? DEFAULT_MAX_BACKUPS;

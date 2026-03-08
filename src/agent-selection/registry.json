@@ -1,0 +1,347 @@
+[
+  {
+    "id": "planner",
+    "name": "Planner",
+    "agent_type": "Planner",
+    "system_prompt": "You are a senior software architect specializing in task decomposition and execution planning. Break complex requirements into focused, dependency-aware micro-tasks. Design CI/CD pipelines with clear stage separation. Follow the principle of least privilege for all credentials and permissions. Never modify production code directly.",
+    "tags": [
+      "planning",
+      "architecture",
+      "devops",
+      "ci",
+      "cd",
+      "docker",
+      "kubernetes",
+      "terraform",
+      "github-actions",
+      "deployment"
+    ],
+    "handles": [
+      "task_decomposition",
+      "dependency_mapping",
+      "execution_planning"
+    ],
+    "reasoning_strengths": [
+      "structural_reasoning",
+      "workflow_planning"
+    ],
+    "skills": [
+      "task graph creation",
+      "subtask design",
+      "dependency inference"
+    ],
+    "preferred_context": [
+      "requirements",
+      "constraints",
+      "available_tools"
+    ],
+    "requires": [
+      "clear top-level objective"
+    ],
+    "tolerates_ambiguity": "medium",
+    "risk_tolerance": "medium",
+    "best_for": [
+      "turning requirements into DAGs",
+      "decomposing complex tasks",
+      "mapping dependencies"
+    ],
+    "avoid_when": [
+      "direct file editing",
+      "test generation",
+      "code review"
+    ],
+    "default_output": "task_graph",
+    "self_check_capabilities": [
+      "dependency validation",
+      "completeness check",
+      "cycle detection"
+    ]
+  },
+  {
+    "id": "code_editor",
+    "name": "Code Editor",
+    "agent_type": "CodeEditor",
+    "system_prompt": "You are a senior full-stack software engineer. Write clean, well-tested code following existing project conventions. Commit small, focused changes. Write accessible, performant components. Use semantic HTML. Design clean APIs with proper error handling, validation, and security. Design normalized schemas with proper indexes. Write safe, reversible migrations.",
+    "tags": [
+      "general",
+      "fullstack",
+      "frontend",
+      "react",
+      "svelte",
+      "vue",
+      "css",
+      "html",
+      "ui",
+      "a11y",
+      "backend",
+      "api",
+      "rest",
+      "graphql",
+      "server",
+      "node",
+      "express",
+      "fastapi",
+      "database",
+      "sql",
+      "postgres",
+      "mysql",
+      "mongodb",
+      "prisma",
+      "migration",
+      "schema"
+    ],
+    "handles": [
+      "code_modification",
+      "localized_bugfix",
+      "small_integration"
+    ],
+    "reasoning_strengths": [
+      "symbol_level_editing",
+      "constraint_preserving_changes"
+    ],
+    "skills": [
+      "repo editing",
+      "patch generation",
+      "type-aware modification"
+    ],
+    "preferred_context": [
+      "target_file",
+      "file_slices",
+      "diffs",
+      "constraints"
+    ],
+    "requires": [
+      "clear target file or symbol",
+      "explicit output contract"
+    ],
+    "tolerates_ambiguity": "low",
+    "risk_tolerance": "medium",
+    "best_for": [
+      "known-file edits",
+      "continuing prior patches",
+      "preserving API shape"
+    ],
+    "avoid_when": [
+      "repo-wide redesign",
+      "missing file context",
+      "open-ended architecture design"
+    ],
+    "default_output": "patch_with_notes",
+    "self_check_capabilities": [
+      "constraint check",
+      "surface-level consistency check"
+    ]
+  },
+  {
+    "id": "reviewer",
+    "name": "Reviewer",
+    "agent_type": "Reviewer",
+    "system_prompt": "You are a senior code reviewer and security engineer. Review code for correctness, performance, and OWASP Top 10 vulnerabilities. Check for injection attacks, broken authentication, sensitive data exposure, and insecure configurations. Provide specific remediation steps for every finding.",
+    "tags": [
+      "review",
+      "security",
+      "audit",
+      "owasp",
+      "authentication",
+      "authorization",
+      "encryption"
+    ],
+    "handles": [
+      "verification",
+      "regression_check",
+      "constraint_audit"
+    ],
+    "reasoning_strengths": [
+      "consistency_checking",
+      "risk_detection"
+    ],
+    "skills": [
+      "patch review",
+      "constraint validation",
+      "behavioral review"
+    ],
+    "preferred_context": [
+      "patches",
+      "changed_files",
+      "constraints",
+      "test_results"
+    ],
+    "requires": [
+      "prior worker output"
+    ],
+    "tolerates_ambiguity": "medium",
+    "risk_tolerance": "low",
+    "best_for": [
+      "API verification",
+      "risk-sensitive review",
+      "regression detection"
+    ],
+    "avoid_when": [
+      "initial implementation from scratch",
+      "greenfield feature work"
+    ],
+    "default_output": "review_report",
+    "self_check_capabilities": [
+      "coverage check",
+      "constraint verification",
+      "risk assessment"
+    ]
+  },
+  {
+    "id": "test_writer",
+    "name": "Test Writer",
+    "agent_type": "TestWriter",
+    "system_prompt": "You are a QA engineer. Write comprehensive test suites covering happy paths, edge cases, and error scenarios. Use the project's existing test framework. Aim for high branch coverage. Never modify production code unless fixing a bug you discovered.",
+    "tags": [
+      "testing",
+      "qa",
+      "jest",
+      "vitest",
+      "playwright",
+      "e2e",
+      "unit-test",
+      "integration-test"
+    ],
+    "handles": [
+      "test_creation",
+      "test_update",
+      "coverage_extension"
+    ],
+    "reasoning_strengths": [
+      "behavioral_case_generation",
+      "test_oracle_design"
+    ],
+    "skills": [
+      "unit tests",
+      "integration tests",
+      "fixture reasoning"
+    ],
+    "preferred_context": [
+      "implementation_summary",
+      "target_files",
+      "existing_tests"
+    ],
+    "requires": [
+      "behavioral expectation",
+      "target module or API"
+    ],
+    "tolerates_ambiguity": "low",
+    "risk_tolerance": "medium",
+    "best_for": [
+      "adding tests for implemented behavior",
+      "extending test coverage"
+    ],
+    "avoid_when": [
+      "unclear product behavior",
+      "no implementation to test"
+    ],
+    "default_output": "test_patch",
+    "self_check_capabilities": [
+      "test validity check",
+      "coverage gap detection"
+    ]
+  },
+  {
+    "id": "researcher",
+    "name": "Researcher",
+    "agent_type": "Researcher",
+    "system_prompt": "You are a technical researcher and documentation writer. Write clear, concise documentation with practical examples. Follow the project's existing documentation style. Include code samples that actually compile and run. Navigate codebases to discover patterns and references.",
+    "tags": [
+      "research",
+      "docs",
+      "documentation",
+      "readme",
+      "api-docs",
+      "markdown",
+      "jsdoc"
+    ],
+    "handles": [
+      "repo_pattern_discovery",
+      "implementation_lookup",
+      "reference_gathering"
+    ],
+    "reasoning_strengths": [
+      "pattern_search",
+      "comparative_analysis"
+    ],
+    "skills": [
+      "repo navigation",
+      "symbol search",
+      "reference extraction"
+    ],
+    "preferred_context": [
+      "repo_index",
+      "symbol_names",
+      "feature_descriptions"
+    ],
+    "requires": [
+      "searchable repo context"
+    ],
+    "tolerates_ambiguity": "high",
+    "risk_tolerance": "low",
+    "best_for": [
+      "finding similar implementations",
+      "pattern discovery",
+      "reference gathering"
+    ],
+    "avoid_when": [
+      "direct code patch generation",
+      "time-critical edits"
+    ],
+    "default_output": "research_summary",
+    "self_check_capabilities": [
+      "reference validation",
+      "completeness assessment"
+    ]
+  },
+  {
+    "id": "debugger",
+    "name": "Debugger",
+    "agent_type": "Debugger",
+    "system_prompt": "You are a debugging specialist. Read stack traces, form hypotheses, and systematically narrow down root causes. Focus on failure isolation and precise diagnosis. Document your reasoning chain clearly.",
+    "tags": [
+      "debugging",
+      "troubleshooting",
+      "errors",
+      "logs",
+      "stack-trace"
+    ],
+    "handles": [
+      "bug_investigation",
+      "root_cause_analysis",
+      "failure_isolation"
+    ],
+    "reasoning_strengths": [
+      "causal_analysis",
+      "failure_tracing"
+    ],
+    "skills": [
+      "stack trace reading",
+      "hypothesis testing",
+      "failure narrowing"
+    ],
+    "preferred_context": [
+      "error_logs",
+      "failing_tests",
+      "relevant_files"
+    ],
+    "requires": [
+      "symptom or failing behavior"
+    ],
+    "tolerates_ambiguity": "medium",
+    "risk_tolerance": "medium",
+    "best_for": [
+      "understanding and isolating bugs",
+      "root cause analysis"
+    ],
+    "avoid_when": [
+      "greenfield feature planning",
+      "test generation"
+    ],
+    "default_output": "debug_report",
+    "self_check_capabilities": [
+      "hypothesis verification",
+      "root cause validation"
+    ]
+  }
+]

@@ -29,6 +29,8 @@ import { PhaseController } from './PhaseController.js';
 import { EvaluationOrchestrator } from './EvaluationOrchestrator.js';
 import { SessionController } from './SessionController.js';
 import { DispatchController } from './DispatchController.js';
+import type { DispatchControllerOptions } from './DispatchController.js';
+import type { EngineInternals } from './EngineInternals.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Engine Events — typed EventEmitter
@@ -94,7 +96,7 @@ export declare interface Engine {
  *
  * See ARCHITECTURE.md § State Machine for the transition diagram.
  */
-export class Engine extends EventEmitter {
+export class Engine extends EventEmitter implements EngineInternals {
     private state: EngineState = EngineState.IDLE;
     private runbook: Runbook | null = null;
     private pauseRequested = false;
@@ -126,7 +128,7 @@ export class Engine extends EventEmitter {
     private readonly phases: PhaseController;
     private readonly evaluation: EvaluationOrchestrator;
     private readonly session: SessionController;
-    private readonly dispatch: DispatchController;
+    private dispatch: DispatchController;
 
     constructor(
         private stateManager: StateManager,
@@ -197,6 +199,14 @@ export class Engine extends EventEmitter {
     public setActiveWorkerCount(count: number): void { this.activeWorkerCount = count; }
     public getActiveWorkerCount(): number { return this.activeWorkerCount; }
     public incrementActiveWorkerCount(): void { this.activeWorkerCount++; }
+
+    /**
+     * Re-configure the DispatchController with agent selection options.
+     * Called from EngineWiring after services are initialised.
+     */
+    public configureDispatch(options: DispatchControllerOptions): void {
+        this.dispatch = new DispatchController(this, options);
+    }
 
     // ═══════════════════════════════════════════════════════════════════════════
     //  State Access

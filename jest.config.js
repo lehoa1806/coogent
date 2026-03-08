@@ -9,5 +9,21 @@ module.exports = {
     },
     transform: {
         '^.+\\.ts$': 'ts-jest',
+        '^.+\\.md$': '<rootDir>/jest.mdTransform.js',
+    },
+    moduleFileExtensions: ['ts', 'js', 'json', 'md'],
+    // S2-2: Coverage thresholds
+    collectCoverageFrom: [
+        'src/**/*.ts',
+        '!src/**/__tests__/**',
+        '!src/**/*.d.ts',
+    ],
+    coverageThreshold: {
+        global: {
+            lines: 70,
+            branches: 60,
+            functions: 65,
+            statements: 70,
+        },
     },
 };

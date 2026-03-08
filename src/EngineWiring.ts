@@ -39,6 +39,20 @@ export function wireEngine(
 
     if (!engine || !adkController) return;
 
+    // ── Wire DispatchController with agent-selection options ──────────
+    // Pass ArtifactDB reference and TelemetryLogger so the pipeline can
+    // persist audit records and log agent selection events.
+    // `useAgentSelection` defaults to false — enable via configuration.
+    if (svc.mcpServer && engine.configureDispatch) {
+        const dispatchOpts: import('./engine/DispatchController.js').DispatchControllerOptions = {
+            useAgentSelection: false,
+            artifactDb: svc.mcpServer.getArtifactDB(),
+            sessionDirName,
+            ...(logger ? { logger } : {}),
+        };
+        engine.configureDispatch(dispatchOpts);
+    }
+
     // F-5 audit fix: Track per-phase flush intervals for incremental worker output persistence.
     // Every 30s, accumulated output is flushed to DB so a crash mid-phase doesn't lose diagnostics.
     const INCREMENTAL_FLUSH_MS = 30_000;
@@ -193,7 +207,7 @@ export function wireEngine(
                 }
 
                 try {
-                    const report = await handoffExtractor.extractHandoff(phaseId, accumulatedOutput, workspaceRoot);
+                    const report = await handoffExtractor.extractHandoff(phaseId, accumulatedOutput);
                     if (mcpBridge && report) {
                         const runbook = engine.getRunbook() ?? null;
                         const phaseObj = runbook?.phases.find(p => p.id === phaseId);
@@ -357,7 +371,7 @@ export function wireEngine(
         agent.generateReport(evtSessionDir, runbook, mcpBridge, sessionDirName)
             .then(async report => {
                 try {
-                    await agent.saveReport(evtSessionDir, report, mcpBridge, sessionDirName);
+                    await agent.saveReport(evtSessionDir, report, mcpBridge, sessionDirName, svc.storageBase);
                 } catch (err) {
                     log.error('[Coogent] saveReport failed:', err);
                 }
@@ -493,7 +507,7 @@ async function executePhase(
     let handoffContext = '';
     if (handoffExtractor && currentSessionDir) {
         try {
-            handoffContext = await handoffExtractor.buildNextContext(phase, currentSessionDir, workspaceRoot);
+            handoffContext = await handoffExtractor.buildNextContext(phase);
         } catch (err) {
             log.error('[Coogent] Failed to build handoff context:', err);
         }
@@ -523,18 +537,18 @@ async function executePhase(
         handoffContext = handoffContext.slice(0, HANDOFF_TOKEN_CAP * CHARS_PER_TOKEN);
     }
 
-    // Step 5.6: Resolve worker profile from WorkerRegistry
+    // Step 5.6: Resolve agent profile from AgentRegistry
     let workerSystemContext = '';
-    if (svc.workerRegistry) {
+    if (svc.agentRegistry) {
         try {
-            const workerProfile = await svc.workerRegistry.getBestWorker(phase.required_skills ?? []);
-            log.info(`[EngineWiring] Phase ${phase.id}: routed to worker '${workerProfile.id}' (${workerProfile.name})`);
-            workerSystemContext = `## Worker Role: ${workerProfile.name}\n${workerProfile.system_prompt}\n\n`;
+            const agentProfile = await svc.agentRegistry.getBestAgent(phase.required_skills ?? []);
+            log.info(`[EngineWiring] Phase ${phase.id}: routed to agent '${agentProfile.id}' (${agentProfile.name})`);
+            workerSystemContext = `## Worker Role: ${agentProfile.name}\n${agentProfile.system_prompt}\n\n`;
         } catch (err) {
-            log.warn(`[EngineWiring] Phase ${phase.id}: WorkerRegistry lookup failed, using default prompt`, err);
+            log.warn(`[EngineWiring] Phase ${phase.id}: AgentRegistry lookup failed, using default prompt`, err);
         }
     } else {
-        log.debug(`[EngineWiring] Phase ${phase.id}: workerRegistry not available — skipping skill routing`);
+        log.debug(`[EngineWiring] Phase ${phase.id}: agentRegistry not available — skipping skill routing`);
     }
 
     // Step 6: Build effective prompt

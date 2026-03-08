@@ -1,54 +1,32 @@
-jest.mock('fs', () => ({
-    readFileSync: jest.fn(),
-    existsSync: jest.fn(),
-}));
-
-import { TemplateLoader } from '../TemplateLoader.js';
-import * as fs from 'fs';
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Mock Content
-// ═══════════════════════════════════════════════════════════════════════════════
-
-const MOCK_SKELETON = `# Orchestration Skeleton
+jest.mock('../templates.js', () => ({
+    ORCHESTRATION_SKELETON: `# Orchestration Skeleton
 ## System Role
 You are a planning agent.
 ## DAG Rules
 Each phase must form a valid DAG.
 ## Worker Contract
-Workers receive isolated phase contracts.`;
+Workers receive isolated phase contracts.`,
 
-const MOCK_FEATURE_TEMPLATE = `# Feature Implementation
+    FEATURE_IMPLEMENTATION: `# Feature Implementation
 ## Planning Approach
 Break the feature into incremental phases.
 ## Verification
-Ensure tests pass after each phase.`;
+Ensure tests pass after each phase.`,
 
-const MOCK_BUG_FIX_TEMPLATE = `# Bug Fix
+    BUG_FIX: `# Bug Fix
 ## Diagnosis
 Identify the root cause before proposing a fix.
 ## Verification
-Write a regression test.`;
+Write a regression test.`,
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  Test Helpers
-// ═══════════════════════════════════════════════════════════════════════════════
+    REFACTOR: '# Refactor\nRefactor template content.',
+    MIGRATION: '# Migration\nMigration template content.',
+    DOCUMENTATION_SYNTHESIS: '# Documentation Synthesis\nDocumentation template content.',
+    REPO_ANALYSIS: '# Repo Analysis\nRepo analysis template content.',
+    REVIEW_ONLY: '# Review Only\nReview template content.',
+}));
 
-function setupFsMocks(options?: { missingBugFix?: boolean }): void {
-    (fs.existsSync as jest.Mock).mockImplementation((filePath: string) => {
-        if (options?.missingBugFix && filePath.includes('bug-fix.md')) {
-            return false;
-        }
-        return true;
-    });
-
-    (fs.readFileSync as jest.Mock).mockImplementation((filePath: string) => {
-        if (filePath.includes('orchestration-skeleton.md')) return MOCK_SKELETON;
-        if (filePath.includes('bug-fix.md')) return MOCK_BUG_FIX_TEMPLATE;
-        // All other templates return the feature template
-        return MOCK_FEATURE_TEMPLATE;
-    });
-}
+import { TemplateLoader } from '../TemplateLoader.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  TemplateLoader Tests
@@ -58,9 +36,7 @@ describe('TemplateLoader', () => {
     let loader: TemplateLoader;
 
     beforeEach(() => {
-        jest.clearAllMocks();
-        setupFsMocks();
-        loader = new TemplateLoader('/tmp/test-templates');
+        loader = new TemplateLoader();
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -70,11 +46,8 @@ describe('TemplateLoader', () => {
     it('should load orchestration skeleton successfully', () => {
         const skeleton = loader.loadSkeleton();
 
-        expect(skeleton).toBe(MOCK_SKELETON);
-        expect(fs.readFileSync).toHaveBeenCalledWith(
-            expect.stringContaining('orchestration-skeleton.md'),
-            'utf-8',
-        );
+        expect(skeleton).toContain('# Orchestration Skeleton');
+        expect(skeleton).toContain('You are a planning agent.');
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -84,26 +57,31 @@ describe('TemplateLoader', () => {
     it('should load feature-implementation template', () => {
         const template = loader.loadTemplate('feature_implementation');
 
-        expect(template).toBe(MOCK_FEATURE_TEMPLATE);
+        expect(template).toContain('# Feature Implementation');
     });
 
     it('should load bug-fix template', () => {
         const template = loader.loadTemplate('bug_fix');
 
-        expect(template).toBe(MOCK_BUG_FIX_TEMPLATE);
+        expect(template).toContain('# Bug Fix');
     });
 
-    // ─────────────────────────────────────────────────────────────────────────
-    //  Fallback behavior
-    // ─────────────────────────────────────────────────────────────────────────
+    it('should load all defined task families', () => {
+        const families = [
+            'feature_implementation',
+            'bug_fix',
+            'refactor',
+            'migration',
+            'documentation_synthesis',
+            'repo_analysis',
+            'review_only',
+        ] as const;
 
-    it('should fall back to feature-implementation when template file is missing', () => {
-        setupFsMocks({ missingBugFix: true });
-
-        const template = loader.loadTemplate('bug_fix');
-
-        // Should fall back to feature-implementation content
-        expect(template).toBe(MOCK_FEATURE_TEMPLATE);
+        for (const family of families) {
+            const template = loader.loadTemplate(family);
+            expect(template).toBeTruthy();
+            expect(template.length).toBeGreaterThan(0);
+        }
     });
 
     // ─────────────────────────────────────────────────────────────────────────

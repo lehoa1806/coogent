@@ -7,18 +7,28 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Phase, ConversationSettings } from '../types/index.js';
 import { DEFAULT_CONVERSATION_SETTINGS } from '../types/index.js';
+import { getPidDir } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 import type { AgentBackendProvider } from './AgentBackendProvider.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  ADK Adapter Interface (post-audit: delegated to AgentBackendProvider)
+//  S1-2 (EDGE-2): Worker output size cap
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * @deprecated Use `AgentBackendProvider` directly. Kept for backward compatibility.
- */
-export type IADKAdapter = AgentBackendProvider;
+/** Maximum worker output size in bytes (default 10 MB). Configurable via setting. */
+const MAX_WORKER_OUTPUT_BYTES = 10 * 1024 * 1024;
+
+/** S1-4 (SEC-3): Prompt injection phrases to detect in buildInjectionPrompt. */
+const INJECTION_PATTERNS: RegExp[] = [
+    /ignore\s+(all\s+)?previous\s+instructions/i,
+    /ignore\s+(all\s+)?prior\s+instructions/i,
+    /disregard\s+(all\s+)?previous/i,
+    /^system:\s/im,
+    /you\s+are\s+now\s+(?:a|an|in)\s+/i,
+    /\[SYSTEM\]/i,
+    /\<\|im_start\|\>/i,
+];
 
 export interface ADKSessionOptions {
     /** Start with zero context (no history, no files). */
@@ -117,10 +127,9 @@ export class ADKController extends EventEmitter {
     constructor(
         private readonly adapter: AgentBackendProvider,
         private readonly workspaceRoot: string,
-        pidDirName = '.coogent/pid'
     ) {
         super();
-        this.pidDir = path.join(workspaceRoot, pidDirName);
+        this.pidDir = getPidDir(workspaceRoot);
     }
 
     /** Get current conversation settings. */
@@ -169,9 +178,10 @@ export class ADKController extends EventEmitter {
                 `which has parent dependencies. Warm-start context will be missing.`
             );
         }
-        // Limit check
-        if (this.activeWorkers.size >= 4) {
-            log.warn(`[ADKController] Max concurrent workers reached (4). Skipping phase ${phase.id}`);
+        // S4-2 (CQ-4): Named constant for max concurrent workers
+        const maxConcurrent = 4;
+        if (this.activeWorkers.size >= maxConcurrent) {
+            log.warn(`[ADKController] Max concurrent workers reached (${maxConcurrent}). Skipping phase ${phase.id}`);
             return null;
         }
 
@@ -238,8 +248,23 @@ export class ADKController extends EventEmitter {
 
         this.activeWorkers.set(phase.id, worker);
 
-        // Wire output streams
+        // Wire output streams — S1-2 (EDGE-2): cap output size
+        const outputSize = { stdout: 0, stderr: 0 };
         handle.onOutput((stream, chunk) => {
+            const key = stream as 'stdout' | 'stderr';
+            outputSize[key] += Buffer.byteLength(chunk, 'utf-8');
+
+            if (outputSize[key] > MAX_WORKER_OUTPUT_BYTES) {
+                if (outputSize[key] - Buffer.byteLength(chunk, 'utf-8') <= MAX_WORKER_OUTPUT_BYTES) {
+                    // First time exceeding — emit truncation marker
+                    this.emit('worker:output', phase.id, stream,
+                        `\n[TRUNCATED: ${stream} exceeded ${MAX_WORKER_OUTPUT_BYTES} bytes]\n`);
+                    log.warn(`[ADKController] Phase ${phase.id} ${stream} truncated at ${MAX_WORKER_OUTPUT_BYTES} bytes`);
+                }
+                // Drop further chunks for this stream
+                return;
+            }
+
             this.emit('worker:output', phase.id, stream, chunk);
             // Reset the watchdog timer on each output — process is still alive
             this.resetWatchdog(phase.id);
@@ -528,6 +553,16 @@ export class ADKController extends EventEmitter {
             parentHandoffs?: string[];  // PLURAL — one URI per depends_on parent
         }
     ): string {
+        // S1-4 (SEC-3, AI-5): Prompt injection detection
+        for (const pattern of INJECTION_PATTERNS) {
+            if (pattern.test(phase.prompt)) {
+                log.warn(
+                    `[ADKController] ⚠ Potential prompt injection detected in phase ${phase.id}: ` +
+                    `matched pattern ${pattern.source}`
+                );
+            }
+        }
+
         const sections: string[] = [
             `## Task`,
             phase.prompt,

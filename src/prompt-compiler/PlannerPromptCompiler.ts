@@ -51,7 +51,7 @@ const FAMILY_TO_TEMPLATE_FILE: Record<TaskFamily, string> = {
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  PromptCompiler — Orchestrates the full compilation pipeline
+//  PlannerPromptCompiler — Orchestrates the full compilation pipeline
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -70,13 +70,13 @@ const FAMILY_TO_TEMPLATE_FILE: Record<TaskFamily, string> = {
  *
  * @example
  * ```ts
- * const compiler = new PromptCompiler('/path/to/workspace');
+ * const compiler = new PlannerPromptCompiler('/path/to/workspace');
  * const result = await compiler.compile('Add user authentication using JWT');
  * console.log(result.text);
  * console.log(result.manifest);
  * ```
  */
-export class PromptCompiler {
+export class PlannerPromptCompiler {
     private readonly workspaceRoot: string;
     private cachedFingerprint: RepoFingerprint | null = null;
 

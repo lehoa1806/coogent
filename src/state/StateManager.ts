@@ -12,6 +12,7 @@ import Ajv from 'ajv';
 import { RUNBOOK_FILENAME, asTimestamp } from '../types/index.js';
 import type { Runbook, WALEntry, EngineState } from '../types/index.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
+import { WAL_FILE, LOCK_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 /**
@@ -132,8 +133,8 @@ export class StateManager {
     constructor(sessionDir: string, enableEncryption = false, secretStorage?: SecretStorageLike) {
         this.sessionDir = sessionDir;
         this.runbookPath = path.join(sessionDir, RUNBOOK_FILENAME);
-        this.walPath = path.join(sessionDir, '.wal.json');
-        this.lockPath = path.join(sessionDir, '.lock');
+        this.walPath = path.join(sessionDir, WAL_FILE);
+        this.lockPath = path.join(sessionDir, LOCK_FILE);
         this.encryptionEnabled = enableEncryption;
         this.secretStorage = secretStorage;
     }
@@ -172,7 +173,7 @@ export class StateManager {
         // ── DB-first read (C1 audit fix: DB is authoritative) ──────────
         if (this.artifactDb && this.masterTaskId) {
             try {
-                const task = this.artifactDb.getTask(this.masterTaskId);
+                const task = this.artifactDb.tasks.get(this.masterTaskId);
                 if (task?.runbookJson) {
                     const parsed: unknown = JSON.parse(task.runbookJson);
                     const runbook = this.validateSchema(parsed);
@@ -197,7 +198,7 @@ export class StateManager {
             // Promote IPC data → DB so subsequent reads hit the authoritative path
             if (this.artifactDb && this.masterTaskId) {
                 try {
-                    this.artifactDb.upsertTask(this.masterTaskId, {
+                    this.artifactDb.tasks.upsert(this.masterTaskId, {
                         runbookJson: JSON.stringify(runbook),
                     });
                     log.info('[StateManager] Promoted IPC runbook to DB.');
@@ -267,7 +268,7 @@ export class StateManager {
         try {
             // ── C1 audit fix: DB is authoritative — write first, throw on failure ──
             if (this.artifactDb && this.masterTaskId) {
-                this.artifactDb.upsertTask(this.masterTaskId, {
+                this.artifactDb.tasks.upsert(this.masterTaskId, {
                     runbookJson: JSON.stringify(runbook),
                 });
             }
@@ -361,7 +362,7 @@ export class StateManager {
                 // Persist recovered snapshot to DB (authoritative store)
                 if (this.artifactDb && this.masterTaskId) {
                     try {
-                        this.artifactDb.upsertTask(this.masterTaskId, {
+                        this.artifactDb.tasks.upsert(this.masterTaskId, {
                             runbookJson: JSON.stringify(walEntry.snapshot),
                         });
                         log.info('[StateManager] WAL recovery persisted to DB.');

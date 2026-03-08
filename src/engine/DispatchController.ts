@@ -6,7 +6,27 @@
 
 import log from '../logger/log.js';
 import { EngineState, EngineEvent, asTimestamp } from '../types/index.js';
+import type { Phase } from '../types/index.js';
 import type { Engine } from './Engine.js';
+import { SelectionPipeline } from '../agent-selection/index.js';
+import { SubtaskSpecBuilder } from '../agent-selection/index.js';
+import type { SubtaskDraft } from '../agent-selection/index.js';
+import type { ArtifactDB } from '../mcp/ArtifactDB.js';
+import type { TelemetryLogger } from '../logger/TelemetryLogger.js';
+
+/** Options for DispatchController construction. */
+export interface DispatchControllerOptions {
+    /** Enable capability-based agent selection pipeline. Default: false. */
+    readonly useAgentSelection?: boolean;
+    /** S3-4: Enable shadow mode — run selection pipeline, log results, but don't affect dispatch. */
+    readonly enableShadowMode?: boolean;
+    /** ArtifactDB instance for persisting selection audit records. */
+    readonly artifactDb?: ArtifactDB;
+    /** TelemetryLogger instance for telemetry events. */
+    readonly logger?: TelemetryLogger;
+    /** Session directory name for audit record persistence. */
+    readonly sessionDirName?: string;
+}
 
 /**
  * Extracted dispatch and stall-recovery logic from Engine.
@@ -19,7 +39,29 @@ export class DispatchController {
     private stallWatchdog: ReturnType<typeof setInterval> | null = null;
     private readonly STALL_CHECK_INTERVAL_MS = 30_000;
 
-    constructor(private readonly engine: Engine) { }
+    /** Feature flag: when true, run agent selection pipeline before dispatch. */
+    private readonly useAgentSelection: boolean;
+    /** Lazily-initialised pipeline instance (created on first use). */
+    private selectionPipeline: SelectionPipeline | null = null;
+    /** ArtifactDB for persisting audit records. */
+    private readonly artifactDb: ArtifactDB | undefined;
+    /** TelemetryLogger for structured event logging. */
+    private readonly telemetryLogger: TelemetryLogger | undefined;
+    /** Session directory name used as session_id in audit records. */
+    private readonly sessionDirName: string;
+    /** S3-4: Shadow mode — run pipeline for observability without affecting dispatch. */
+    private readonly enableShadowMode: boolean;
+
+    constructor(
+        private readonly engine: Engine,
+        options?: DispatchControllerOptions,
+    ) {
+        this.useAgentSelection = options?.useAgentSelection ?? false;
+        this.enableShadowMode = options?.enableShadowMode ?? false;
+        this.artifactDb = options?.artifactDb;
+        this.telemetryLogger = options?.logger;
+        this.sessionDirName = options?.sessionDirName ?? '';
+    }
 
     /**
      * Dispatch all ready phases (DAG-aware).
@@ -37,6 +79,31 @@ export class DispatchController {
         }
 
         for (const phase of readyPhases) {
+            // Agent selection pipeline (when enabled)
+            if (this.useAgentSelection) {
+                const selectionOk = await this.runAgentSelection(phase);
+                if (!selectionOk) {
+                    // Validation failed — transition to ERROR_PAUSED
+                    this.engine.transition(EngineEvent.PHASE_FAIL);
+                    this.engine.emitUIMessage({
+                        type: 'LOG_ENTRY',
+                        payload: {
+                            timestamp: asTimestamp(),
+                            level: 'error',
+                            message: `Phase ${phase.id}: agent selection pipeline validation failed. Pausing execution.`,
+                        },
+                    });
+                    continue;
+                }
+            } else if (this.enableShadowMode) {
+                // S3-4: Shadow mode — run pipeline for observability only
+                try {
+                    await this.runAgentSelection(phase, true /* shadowMode */);
+                } catch (err) {
+                    log.warn(`[DispatchController] Shadow mode selection failed for phase ${phase.id}:`, err);
+                }
+            }
+
             phase.status = 'running';
             this.engine.incrementActiveWorkerCount();
             this.engine.emitUIMessage({
@@ -227,5 +294,99 @@ export class DispatchController {
         await this.engine.persist();
         this.startStallWatchdog();
         this.dispatchReadyPhases();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Agent Selection Pipeline helpers
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Convert a Phase into a SubtaskDraft suitable for the selection pipeline.
+     */
+    private buildSubtaskDraft(phase: Phase): SubtaskDraft {
+        return {
+            id: phase.mcpPhaseId ?? `phase-${phase.id}`,
+            title: `Phase ${phase.id}`,
+            goal: phase.prompt.slice(0, 500),
+            contextFiles: phase.context_files ?? [],
+            dependsOn: phase.depends_on?.map(String) ?? [],
+            requiredSkills: phase.required_skills ?? [],
+            successCriteria: phase.success_criteria ?? undefined,
+        };
+    }
+
+    /**
+     * Run the agent selection pipeline for a phase.
+     *
+     * On success: replaces `phase.prompt` with the compiled prompt,
+     *             persists the audit record, and logs telemetry.
+     * On failure: logs the validation errors and returns `false`.
+     *
+     * @returns `true` if the pipeline succeeded, `false` if validation failed.
+     */
+    private async runAgentSelection(phase: Phase, shadowMode = false): Promise<boolean> {
+        try {
+            if (!this.selectionPipeline) {
+                this.selectionPipeline = new SelectionPipeline();
+            }
+
+            // 1. Build SubtaskSpec from Phase
+            const draft = this.buildSubtaskDraft(phase);
+            const spec = SubtaskSpecBuilder.build(draft);
+
+            // 2. Run the pipeline (select → compile → validate)
+            const result = this.selectionPipeline.run(spec);
+
+            // 3. Replace phase prompt with compiled prompt body (skip in shadow mode)
+            if (!shadowMode) {
+                phase.prompt = result.prompt.text;
+            }
+
+            // 4. Log telemetry
+            if (this.telemetryLogger) {
+                await this.telemetryLogger.logAgentSelected(
+                    spec.subtask_id,
+                    result.selection.selected_agent,
+                    result.selection.candidate_agents[0]?.score ?? 0,
+                    [...result.selection.selection_rationale],
+                );
+                await this.telemetryLogger.logPromptCompiled(
+                    spec.subtask_id,
+                    result.prompt.prompt_id,
+                    result.selection.selected_agent,
+                );
+            }
+
+            // 5. Persist audit record
+            if (this.artifactDb) {
+                const auditWithSession = {
+                    ...result.audit,
+                    session_id: this.sessionDirName,
+                };
+                this.artifactDb.audits.insertSelectionAudit(auditWithSession);
+            }
+
+            log.info(
+                `[DispatchController] Phase ${phase.id}: agent selection${shadowMode ? ' (shadow)' : ''} → ` +
+                `${result.selection.selected_agent} (prompt ${result.prompt.prompt_id})`,
+            );
+
+            return true;
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            log.error(`[DispatchController] Agent selection failed for phase ${phase.id}: ${message}`);
+
+            // Log validation failure telemetry
+            if (this.telemetryLogger) {
+                const subtaskId = phase.mcpPhaseId ?? `phase-${phase.id}`;
+                await this.telemetryLogger.logPromptValidationFailed(
+                    subtaskId,
+                    'n/a',
+                    [message],
+                );
+            }
+
+            return false;
+        }
     }
 }

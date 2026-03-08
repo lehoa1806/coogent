@@ -41,6 +41,7 @@ const buildOptions = {
     sourcemap: !production,
     minify: production,
     logLevel: 'info',
+    loader: { '.md': 'text' },
     plugins: [copyWasmPlugin],
 };
 

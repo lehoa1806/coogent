@@ -3,10 +3,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Sprint 5: Scans `.coogent/plugins/` for plugin directories, validates
 // manifests, and manages the activate/deactivate lifecycle.
+// S1-1 (SEC-5): User approval flow before plugin activation.
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
+import * as vscode from 'vscode';
 import type { MCPPlugin, PluginManifest, PluginContext } from './MCPPlugin.js';
+import { getPluginsDir, PLUGIN_MANIFEST_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 /**
@@ -40,7 +43,7 @@ export class PluginLoader {
      * @param workspaceRoot Absolute path to the workspace root.
      */
     constructor(workspaceRoot: string) {
-        this.pluginsDir = path.join(workspaceRoot, '.coogent', 'plugins');
+        this.pluginsDir = getPluginsDir(workspaceRoot);
     }
 
     /**
@@ -75,6 +78,14 @@ export class PluginLoader {
             try {
                 const plugin = await this.loadPlugin(pluginDir, ctx);
                 if (plugin) {
+                    // S1-1 (SEC-5): Require user approval before activation
+                    const approved = await this.requestApproval(plugin.manifest);
+                    if (!approved) {
+                        log.info(`[PluginLoader] User declined plugin: ${plugin.manifest.id}`);
+                        continue;
+                    }
+                    await plugin.instance.activate(ctx);
+                    log.info(`[PluginLoader] Activated plugin: ${plugin.manifest.id} (${plugin.manifest.name})`);
                     this.loadedPlugins.push(plugin);
                 }
             } catch (err) {
@@ -120,14 +131,46 @@ export class PluginLoader {
     // ── Internal ─────────────────────────────────────────────────────────
 
     /**
+     * S1-1 (SEC-5): Request user approval before activating a plugin.
+     * Gated behind `coogent.requirePluginApproval` (default: true).
+     * Returns true if approval is not required or user confirms.
+     */
+    private async requestApproval(manifest: PluginManifest): Promise<boolean> {
+        const config = vscode.workspace.getConfiguration('coogent');
+        const requireApproval = config.get<boolean>('requirePluginApproval', true);
+
+        if (!requireApproval) {
+            return true;
+        }
+
+        const detail = [
+            `Plugin: ${manifest.name} (${manifest.id})`,
+            manifest.version ? `Version: ${manifest.version}` : '',
+            manifest.description ?? '',
+            '',
+            '⚠ Plugins execute arbitrary code with access to your workspace.',
+        ].filter(Boolean).join('\n');
+
+        const choice = await vscode.window.showWarningMessage(
+            `Coogent: Activate plugin "${manifest.name}"?`,
+            { modal: true, detail },
+            'Allow',
+            'Deny',
+        );
+
+        return choice === 'Allow';
+    }
+
+    /**
      * Load a single plugin from a directory.
+     * S1-1 (SEC-5): Activation is deferred — caller handles approval + activate.
      */
     private async loadPlugin(
         pluginDir: string,
-        ctx: PluginContext
+        _ctx: PluginContext
     ): Promise<LoadedPlugin | null> {
         // 1. Read and validate manifest
-        const manifestPath = path.join(pluginDir, 'plugin.json');
+        const manifestPath = path.join(pluginDir, PLUGIN_MANIFEST_FILE);
         let manifestRaw: string;
         try {
             manifestRaw = await fs.readFile(manifestPath, 'utf-8');
@@ -177,10 +220,7 @@ export class PluginLoader {
             return null;
         }
 
-        // 4. Activate the plugin
-        await instance.activate(ctx);
-        log.info(`[PluginLoader] Activated plugin: ${manifest.id} (${manifest.name})`);
-
+        // S1-1: Return without activating — caller handles approval + activate
         return { manifest, instance, pluginDir };
     }
 }

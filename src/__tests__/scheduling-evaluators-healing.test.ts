@@ -298,8 +298,9 @@ describe('EvaluationOrchestrator — applyVerdictInPlace persistence (F-1)', () 
         const runbook = { phases: [phase], status: 'running' };
         const mockEngine = createMockEngine(runbook);
         const mockHealer = createMockHealer();
+        const mockUpsertEvaluation = jest.fn();
         const mockDb = {
-            upsertEvaluationResult: jest.fn(),
+            verdicts: { upsertEvaluation: mockUpsertEvaluation },
         };
 
         const orchestrator = new EvaluationOrchestrator(
@@ -312,7 +313,7 @@ describe('EvaluationOrchestrator — applyVerdictInPlace persistence (F-1)', () 
         // isLastWorker = false → drives applyVerdictInPlace
         await orchestrator.handleWorkerExited(1, 0, 'stdout', '', false);
 
-        expect(mockDb.upsertEvaluationResult).toHaveBeenCalledWith(
+        expect(mockUpsertEvaluation).toHaveBeenCalledWith(
             'task-001',
             'phase-001-test',
             expect.objectContaining({
@@ -331,8 +332,9 @@ describe('EvaluationOrchestrator — applyVerdictInPlace persistence (F-1)', () 
         const runbook = { phases: [phase], status: 'running' };
         const mockEngine = createMockEngine(runbook);
         const mockHealer = createMockHealer();
+        const mockUpsertEvaluation = jest.fn();
         const mockDb = {
-            upsertEvaluationResult: jest.fn(),
+            verdicts: { upsertEvaluation: mockUpsertEvaluation },
         };
 
         const orchestrator = new EvaluationOrchestrator(
@@ -346,7 +348,7 @@ describe('EvaluationOrchestrator — applyVerdictInPlace persistence (F-1)', () 
         // isLastWorker = false → drives applyVerdictInPlace
         await orchestrator.handleWorkerExited(1, 1, '', 'some error', false);
 
-        expect(mockDb.upsertEvaluationResult).toHaveBeenCalledWith(
+        expect(mockUpsertEvaluation).toHaveBeenCalledWith(
             'task-001',
             'phase-001-test',
             expect.objectContaining({

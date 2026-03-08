@@ -6,6 +6,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { COOGENT_DIR, IPC_DIR } from '../constants/paths.js';
 import type { HostToWebviewMessage, WebviewToHostMessage } from '../types/index.js';
 import { asTimestamp } from '../types/index.js';
 import type { Engine } from '../engine/Engine.js';
@@ -19,7 +20,7 @@ import type { MCPClientBridge } from '../mcp/MCPClientBridge.js';
 import { RESOURCE_URIS } from '../mcp/types.js';
 import { getWebviewHtml } from './webviewHtml.js';
 import log from '../logger/log.js';
-import type { WorkerRegistry } from '../adk/WorkerRegistry.js';
+import type { AgentRegistry } from '../agent-selection/AgentRegistry.js';
 
 /** Timeout (ms) for MCP resource fetch calls from the webview. Prevents infinite loading spinners. */
 const MCP_FETCH_TIMEOUT_MS = 15_000;
@@ -74,7 +75,7 @@ export class MissionControlPanel {
     onReset?: OnResetFn,
     mcpServer?: CoogentMCPServer,
     mcpClientBridge?: MCPClientBridge,
-    workerRegistry?: WorkerRegistry
+    agentRegistry?: AgentRegistry
   ): void {
     const column = vscode.window.activeTextEditor?.viewColumn;
 
@@ -104,7 +105,7 @@ export class MissionControlPanel {
       onReset,
       mcpServer,
       mcpClientBridge,
-      workerRegistry
+      agentRegistry
     );
   }
 
@@ -122,7 +123,7 @@ export class MissionControlPanel {
     private readonly onReset?: OnResetFn,
     private readonly mcpServer?: CoogentMCPServer,
     private readonly mcpClientBridge?: MCPClientBridge,
-    private readonly workerRegistry?: WorkerRegistry
+    private readonly agentRegistry?: AgentRegistry
   ) {
     this.panel = panel;
     this.panel.webview.html = this.getHtmlForWebview();
@@ -341,8 +342,10 @@ export class MissionControlPanel {
         const newSessionDirName = formatSessionDirName(newSessionId);
         const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (workspaceRoot) {
+          // TODO: Session IPC dirs should use storageBase (context.storageUri), not workspaceRoot.
+          // This matches CommandRegistry.ts — both need access to storageBase for correctness.
           const newSessionDir = path.join(
-            workspaceRoot, '.coogent', 'ipc', newSessionDirName
+            workspaceRoot, COOGENT_DIR, IPC_DIR, newSessionDirName
           );
           // ERR-04: Purge the old MCP task before switching so the in-memory store
           // doesn't grow unboundedly across session resets.
@@ -418,12 +421,12 @@ export class MissionControlPanel {
 
       // ── Worker Studio (webview-initiated) ─────────────────────────────
       case 'workers:request': {
-        if (!this.workerRegistry) {
+        if (!this.agentRegistry) {
           this.sendToWebview({ type: 'workers:loaded', workers: [] });
           break;
         }
         try {
-          const workers = await this.workerRegistry.getWorkers();
+          const workers = await this.agentRegistry.getAgents();
           this.sendToWebview({ type: 'workers:loaded', workers });
         } catch (err) {
           log.error('[MissionControl] workers:request failed:', err);

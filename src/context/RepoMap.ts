@@ -7,10 +7,11 @@
 
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { COOGENT_DIR } from '../constants/paths.js';
 
 /** Default patterns to exclude from the repo map (always applied). */
 const DEFAULT_EXCLUDES = new Set([
-    'node_modules', '.git', '.coogent', '__pycache__', '.venv', 'venv',
+    'node_modules', '.git', COOGENT_DIR, '__pycache__', '.venv', 'venv',
     'dist', 'build', 'out', '.next', '.svelte-kit', 'coverage',
     '.DS_Store', 'Thumbs.db', '.env', '.env.local',
 ]);

@@ -138,7 +138,7 @@ describe('wirePlanner', () => {
     describe('BL-5 / F-6: plan:generated persists rawLlmOutput and compilationManifest', () => {
         it('passes rawLlmOutput to upsertPlanRevision on plan:generated', () => {
             const mockUpsertPlanRevision = jest.fn();
-            const mockDB = { upsertPlanRevision: mockUpsertPlanRevision };
+            const mockDB = { audits: { upsertPlanRevision: mockUpsertPlanRevision } };
             const mockMcpServer = {
                 upsertPhaseLog: jest.fn(),
                 getArtifactDB: jest.fn().mockReturnValue(mockDB),
@@ -169,7 +169,7 @@ describe('wirePlanner', () => {
 
         it('passes compilationManifest to upsertPlanRevision when manifest is available', () => {
             const mockUpsertPlanRevision = jest.fn();
-            const mockDB = { upsertPlanRevision: mockUpsertPlanRevision };
+            const mockDB = { audits: { upsertPlanRevision: mockUpsertPlanRevision } };
             const mockMcpServer = {
                 upsertPhaseLog: jest.fn(),
                 getArtifactDB: jest.fn().mockReturnValue(mockDB),

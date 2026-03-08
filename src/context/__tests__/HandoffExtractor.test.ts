@@ -71,7 +71,7 @@ describe('HandoffExtractor', () => {
                 '```',
             ].join('\n');
 
-            const report = await extractor.extractHandoff(1, workerOutput, tmpDir);
+            const report = await extractor.extractHandoff(1, workerOutput);
 
             expect(report.phaseId).toBe(1);
             expect(report.decisions).toEqual(['Used singleton pattern']);
@@ -93,7 +93,7 @@ describe('HandoffExtractor', () => {
                 '```',
             ].join('\n');
 
-            const report = await extractor.extractHandoff(2, workerOutput, tmpDir);
+            const report = await extractor.extractHandoff(2, workerOutput);
             expect(report.decisions).toEqual(['second']);
             expect(report.next_steps_context).toBe('final');
         });
@@ -113,7 +113,7 @@ describe('HandoffExtractor', () => {
                 '```',
             ].join('\n');
 
-            const report = await extractor.extractHandoff(10, workerOutput, tmpDir);
+            const report = await extractor.extractHandoff(10, workerOutput);
 
             // AWS key should be redacted in decisions
             expect(report.decisions[0]).toContain('[REDACTED]');
@@ -136,7 +136,7 @@ describe('HandoffExtractor', () => {
     describe('extractHandoff — invalid output', () => {
         it('should return a minimal report when no JSON is found', async () => {
             const workerOutput = 'Just some text without any JSON.';
-            const report = await extractor.extractHandoff(5, workerOutput, tmpDir);
+            const report = await extractor.extractHandoff(5, workerOutput);
 
             expect(report.phaseId).toBe(5);
             expect(report.decisions).toEqual([]);
@@ -149,7 +149,7 @@ describe('HandoffExtractor', () => {
 
         it('should return a minimal report when JSON is malformed', async () => {
             const workerOutput = '```json\n{not valid json}\n```';
-            const report = await extractor.extractHandoff(6, workerOutput, tmpDir);
+            const report = await extractor.extractHandoff(6, workerOutput);
 
             // Falls through to raw regex attempt, which also fails
             expect(report.phaseId).toBe(6);
@@ -168,7 +168,7 @@ describe('HandoffExtractor', () => {
                 '```',
             ].join('\n');
 
-            const report = await extractor.extractHandoff(7, workerOutput, tmpDir);
+            const report = await extractor.extractHandoff(7, workerOutput);
             expect(report.modified_files).toEqual(['does/not/exist.ts']);
             // file_contents removed (CF-1 Pull Model): workers now fetch via MCP
         });
@@ -195,7 +195,6 @@ describe('HandoffExtractor', () => {
             await extractor.saveHandoff(
                 1,
                 sampleReport,
-                tmpDir,
                 mockBridge as any,
                 'task-001',
             );
@@ -211,7 +210,7 @@ describe('HandoffExtractor', () => {
         it('should not crash when no MCP bridge is provided', async () => {
             // Should log a warning but not throw
             await expect(
-                extractor.saveHandoff(1, sampleReport, tmpDir),
+                extractor.saveHandoff(1, sampleReport),
             ).resolves.toBeUndefined();
         });
     });
@@ -230,7 +229,7 @@ describe('HandoffExtractor', () => {
                 success_criteria: 'exit_code:0',
             };
 
-            const ctx = await extractor.buildNextContext(phase, tmpDir, tmpDir);
+            const ctx = await extractor.buildNextContext(phase);
             expect(ctx).toBe('');
         });
 
@@ -258,7 +257,7 @@ describe('HandoffExtractor', () => {
                 },
             };
             const mockDB = {
-                getHandoff: (_tid: string, pid: string) => mockHandoffs[pid] ?? undefined,
+                handoffs: { get: (_tid: string, pid: string) => mockHandoffs[pid] ?? undefined },
             };
             extractor.setArtifactDB(mockDB as any, masterTaskId);
             extractor.setPhaseIdMap([
@@ -275,7 +274,7 @@ describe('HandoffExtractor', () => {
                 depends_on: [asPhaseId(1), asPhaseId(2)],
             };
 
-            const ctx = await extractor.buildNextContext(phase, tmpDir, tmpDir);
+            const ctx = await extractor.buildNextContext(phase);
 
             // Should include both phases
             expect(ctx).toContain('Phase 1 Handoff');
@@ -299,7 +298,7 @@ describe('HandoffExtractor', () => {
                 depends_on: [asPhaseId(99)],
             };
 
-            const ctx = await extractor.buildNextContext(phase, tmpDir, tmpDir);
+            const ctx = await extractor.buildNextContext(phase);
             expect(ctx).toContain('Phase 99 Handoff');
             expect(ctx).toContain('No handoff report found');
         });

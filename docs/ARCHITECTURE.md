@@ -11,7 +11,7 @@
 3. [DAG-Aware Parallel Scheduling](#dag-aware-parallel-scheduling)
 4. [In-Process MCP Server](#in-process-mcp-server)
 5. [Context Diffusion Pipeline](#context-diffusion-pipeline)
-6. [Worker Registry & Skill-Based Routing](#worker-registry--skill-based-routing)
+6. [Agent Registry & Selection Pipeline](#agent-registry--selection-pipeline)
 7. [Persistence & Crash Recovery](#persistence--crash-recovery)
 8. [Git Sandboxing](#git-sandboxing)
 9. [Tech Stack](#tech-stack)
@@ -66,12 +66,13 @@
 
 ### Component Wiring (Decomposed Architecture)
 
-`extension.ts` (~270 lines) delegates to four extracted modules:
+`extension.ts` (~270 lines) delegates to five extracted modules:
 
 - **`ServiceContainer`** — Typed registry holding all service instances (replaces 18 module-level `let` variables)
-- **`CommandRegistry`** — Registers all 14 VS Code commands via `registerAll()`
+- **`CommandRegistry`** — Registers all 14+ VS Code commands via `registerAll()`
 - **`EngineWiring`** — Connects Engine ↔ ADK ↔ MCP ↔ Consolidation events
 - **`PlannerWiring`** — Connects PlannerAgent ↔ Engine events
+- **`agent-selection/`** — `AgentRegistry`, `AgentSelector`, `SelectionPipeline`, `WorkerPromptCompiler`, `PromptValidator`
 
 Key event flows:
 
@@ -188,9 +189,25 @@ The `CoogentMCPServer` is the single source of truth for all runtime artifacts.
 
 Artifacts are persisted in a **SQLite database** (via `sql.js` WASM) managed by `ArtifactDB`:
 
-- **Durability**: Database file (`artifacts.db`) stored at the workspace `.coogent/` root for cross-session access
-- **Schema**: Tasks table (masterTaskId, summary, implementationPlan, consolidationReport) + Phases table (phaseId, handoff data)
+- **Durability**: Database file (`artifacts.db`) stored under extension-managed storage for cross-session access
+- **Schema**: 11 tables with monotonic `schema_version` tracking
 - **In-Memory Cache**: Reads are served from an in-memory `sql.js` instance; writes flush to disk via `db.export()`
+
+#### Tables
+
+| Table | Purpose |
+|---|---|
+| `tasks` | Master task state (summary, implementation plan, consolidation report) |
+| `phases` | Per-phase metadata and context |
+| `handoffs` | Phase completion artifacts (decisions, modified files, blockers) |
+| `worker_outputs` | Raw worker stdout/stderr capture |
+| `evaluation_results` | Evaluator outcomes (passed, reason, retryPrompt) |
+| `healing_attempts` | Self-healing retry records |
+| `sessions` | Session history and metadata |
+| `phase_logs` | Structured per-phase event log |
+| `plan_revisions` | Plan revision history for audit trail |
+| `selection_audits` | Agent selection decision records |
+| `schema_version` | Migration version tracking |
 
 ```typescript
 // Dual-layer architecture:
@@ -271,53 +288,95 @@ Phases may define a `evaluators: EvaluatorType[]` array for multi-evaluator asse
 
 ---
 
-## Worker Registry & Skill-Based Routing
+## Agent Registry & Selection Pipeline
 
-The `WorkerRegistry` matches phase requirements to specialized worker profiles, ensuring each phase is executed by a domain-appropriate AI agent.
+The `agent-selection/` module replaces the legacy `WorkerRegistry` with a structured, auditable pipeline for matching subtasks to specialized agent profiles.
 
-### Three-Level Cascading Configuration
+### Architecture Overview
 
-Worker profiles are loaded and merged in priority order:
+```
+SubtaskSpec → SelectionPipeline.run(spec)
+                   │
+                   ├─ Step 1: AgentSelector.select(spec)
+                   │   ├─ Hard Filter  (reject incompatible agents)
+                   │   ├─ Weighted Scoring (7 weighted dimensions)
+                   │   ├─ Tie-Break (prefer simpler/default agents)
+                   │   └─ Fallback (code_editor generalist)
+                   │
+                   ├─ Step 2: WorkerPromptCompiler.compile(spec, profile)
+                   │   ├─ Load base-worker.md template
+                   │   ├─ Load agent-specific template (e.g. CodeEditor.md)
+                   │   └─ Interpolate {{placeholders}} with spec data
+                   │
+                   ├─ Step 3: PromptValidator.validate(prompt, spec)
+                   │   └─ Structural validation (length, required sections)
+                   │
+                   └─ Step 4: Build SelectionAuditRecord → ArtifactDB
+```
+
+### AgentRegistry — Three-Level Cascading Configuration
+
+Agent profiles are loaded and merged in priority order:
 
 | Priority | Source | Location |
 |---|---|---|
-| 1 (highest) | Workspace file | `.coogent/workers.json` |
-| 2 | VS Code settings | `coogent.workerProfiles` |
-| 3 (lowest) | Built-in defaults | `src/workers/defaults.json` |
+| 1 (lowest) | Built-in defaults | `agent-selection/registry.json` |
+| 2 | VS Code settings | `coogent.customWorkers` |
+| 3 (highest) | Workspace file | `.coogent/workers.json` |
 
 Higher-priority profiles with matching `id` values override lower-priority ones. Non-overlapping profiles are merged into a single collection.
 
-### Jaccard Similarity Matchmaker
+### AgentSelector — Four-Pass Algorithm
 
-When a phase defines `required_skills: ["frontend", "react"]`, the engine queries `WorkerRegistry.getBestWorker()`:
+1. **Hard Filter**: Reject agents whose `handles` array excludes the task type, or whose `avoid_when` keywords match the subtask
+2. **Weighted Scoring**: Seven weighted dimensions:
 
-```
-                    |intersection(required, profile.tags)|
-Jaccard Score =  ────────────────────────────────────────────
-                      |union(required, profile.tags)|
-```
+| Dimension | Weight | Description |
+|---|---|---|
+| `task_type_match` | 4 | Does the agent handle this task type? |
+| `reasoning_type_match` | 3 | Does the reasoning style match? |
+| `skill_match` | 2 | Proportion overlap of required vs. available skills |
+| `context_fit` | 3 | Context window and input format compatibility |
+| `output_fit` | 2 | Deliverable type compatibility |
+| `risk_fit` | 2 | Risk tolerance alignment (exact=1.0, ±1 tier=0.5) |
+| `avoid_when_penalty` | 6 | Negative weight for matching avoid keywords |
 
-The profile with the highest non-zero Jaccard score is selected. If no profile scores above 0, the generalist fallback worker is used (empty tags match everything by convention).
+3. **Tie-Break**: When top two candidates score identically, prefer the simpler/default agent
+4. **Fallback**: If no candidate passes the hard filter, use the `code_editor` generalist profile
+
+### Prompt Templates
+
+Templates live in `agent-selection/templates/`:
+
+| Template | Purpose |
+|---|---|
+| `base-worker.md` | Common preamble for all agents |
+| `CodeEditor.md` | Code editing and implementation |
+| `Debugger.md` | Bug investigation and fixing |
+| `Planner.md` | Task decomposition and planning |
+| `Researcher.md` | Information gathering and analysis |
+| `Reviewer.md` | Code review and quality assessment |
+| `TestWriter.md` | Test creation and validation |
 
 ### Data Flow
 
 ```
 User Prompt → PlannerAgent
                 │
-                ├── getAvailableTags() → Injects skill tags into planner prompt
+                ├── AgentRegistry.getAvailableTags() → Injects skill tags into planner prompt
                 │
                 └── Generates phases with required_skills: [...]
                                 │
                                 ▼
-                          Engine.dispatchPhase()
+                          DispatchController
                                 │
-                                ├── getBestWorker(phase.required_skills)
+                                ├── SelectionPipeline.run(subtaskSpec)
                                 │        │
-                                │        └── WorkerAssignment { profile, score }
+                                │        └── PipelineResult { selection, prompt, validation, audit }
                                 │
                                 └── ADKController.spawnWorker()
                                          │
-                                         └── Injects profile.system_prompt
+                                         └── Injects compiled prompt
                                              into the AI agent session
 ```
 
@@ -327,7 +386,7 @@ The Mission Control webview includes a **Workers** tab that displays all loaded 
 
 - Profile name and unique ID
 - Description of capabilities
-- Skill tags (used for Jaccard matching)
+- Skill tags (used for selection scoring)
 
 The tab sends `workers:request` → receives `workers:loaded` via the standard IPC contract.
 
@@ -449,14 +508,17 @@ For example, in a workspace with roots `frontend` and `backend`:
 | Runtime | Node.js 18+ (VS Code Extension Host) |
 | IDE | Antigravity IDE / VS Code ≥ 1.85 |
 | MCP | `@modelcontextprotocol/sdk` ^1.27 |
-| Persistence | `sql.js` (SQLite WASM) via `ArtifactDB` |
+| Persistence | `sql.js` (SQLite WASM) via `ArtifactDB` (11 tables) |
 | Tokenizer | `js-tiktoken` (`cl100k_base`) with `CharRatioEncoder` fallback |
-| Schema Validation | AJV ^8.18 (inlined) |
+| Schema Validation | AJV ^8.18 (inlined), Zod (handoff validation) |
 | Markdown | `marked` ^17.0 |
 | Diagrams | `mermaid` ^11.12 |
 | UI | Svelte 5 + Vite |
 | Bundler (Host) | esbuild ^0.20 |
-| Testing | Jest ^29.7 + ts-jest |
+| Testing (Host) | Jest ^29.7 + ts-jest |
+| Testing (Webview) | Vitest |
+| Linting | ESLint ^8.57 + `@typescript-eslint` ^8.0 |
+| Pre-commit | Husky ^9.1 + lint-staged ^16.3 |
 
 ### Key Architecture Decisions
 

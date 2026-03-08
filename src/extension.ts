@@ -5,8 +5,8 @@
 // wiring are delegated to CommandRegistry, EngineWiring, and PlannerWiring.
 
 import * as vscode from 'vscode';
-import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import * as fsSync from 'node:fs';
 
 import { RUNBOOK_FILENAME, asPhaseId } from './types/index.js';
 import { StateManager } from './state/StateManager.js';
@@ -29,13 +29,14 @@ import { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
 import { MCPClientBridge } from './mcp/MCPClientBridge.js';
 import { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
-import { WorkerRegistry } from './adk/WorkerRegistry.js';
+import { AgentRegistry } from './agent-selection/AgentRegistry.js';
 
 import { ServiceContainer } from './ServiceContainer.js';
 import { registerAllCommands, preFlightGitCheck } from './CommandRegistry.js';
 import { wireEngine } from './EngineWiring.js';
 import { wirePlanner } from './PlannerWiring.js';
 import { getStorageBasePath, getWorkspaceRoots, getPrimaryRoot } from './utils/WorkspaceHelper.js';
+import { getCoogentDir, getSessionDir } from './constants/paths.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Shared Services
@@ -81,7 +82,6 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // Ensure extension-managed storage directory exists (sync — activate() is not async)
     const storageUri = context.storageUri ?? context.globalStorageUri;
-    const fsSync = require('node:fs') as typeof import('node:fs');
     fsSync.mkdirSync(storageUri.fsPath, { recursive: true });
     const storageBase = getStorageBasePath(context);
     log.info('[Coogent] Storage base:', storageBase);
@@ -99,7 +99,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const sessionId = randomUUID();
     const sessionDirName = formatSessionDirName(sessionId);
     log.info(`[Coogent] Creating fresh session: ${sessionDirName}`);
-    const sessionDir = path.join(storageBase, 'ipc', sessionDirName);
+    const sessionDir = getSessionDir(storageBase, sessionDirName);
     svc.currentSessionDir = sessionDir;
     log.info('[Coogent] Session dir:', sessionDir);
 
@@ -125,7 +125,7 @@ export function activate(context: vscode.ExtensionContext): void {
       resolver: new ASTFileResolver(),
     });
 
-    svc.logger = new TelemetryLogger(primaryRoot, '.coogent/logs');
+    svc.logger = new TelemetryLogger(primaryRoot);
     log.info('[Coogent] TelemetryLogger initialized');
 
     svc.outputRegistry = new OutputBufferRegistry((phaseId, stream, chunk) => {
@@ -146,13 +146,13 @@ export function activate(context: vscode.ExtensionContext): void {
     svc.handoffExtractor = new HandoffExtractor();
     svc.consolidationAgent = new ConsolidationAgent();
 
-    svc.workerRegistry = new WorkerRegistry(primaryRoot);
-    log.info('[Coogent] WorkerRegistry initialized');
+    svc.agentRegistry = new AgentRegistry(primaryRoot);
+    log.info('[Coogent] AgentRegistry initialized');
 
     // ── Initialize MCP Server & Client Bridge ──────────────────────────
-    // DB lives in workspace .coogent/ alongside IPC files — not in VS Code
-    // extension storage — so users can manage/reset all state in one place.
-    const coogentDir = path.join(primaryRoot, '.coogent');
+    // DB lives in workspace .coogent/ (persistent, workspace-scoped).
+    // IPC sessions live under storageBase (context.storageUri, ephemeral).
+    const coogentDir = getCoogentDir(primaryRoot);
     svc.mcpServer = new CoogentMCPServer(primaryRoot);
     svc.mcpBridge = new MCPClientBridge(svc.mcpServer, primaryRoot);
     svc.mcpServer.init(coogentDir)

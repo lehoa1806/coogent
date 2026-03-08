@@ -384,7 +384,7 @@ export class EvaluationOrchestrator {
         try {
             const phaseIdStr = phase.mcpPhaseId ?? `phase-${String(phase.id).padStart(3, '0')}`;
             const attempt = this.healer.getAttemptCount(phase.id) || 1;
-            this.db.upsertEvaluationResult(this.masterTaskId, phaseIdStr, {
+            this.db.verdicts.upsertEvaluation(this.masterTaskId, phaseIdStr, {
                 attempt,
                 passed: result.passed,
                 reason: result.reason,
