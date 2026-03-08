@@ -287,20 +287,9 @@ export class MissionControlPanel {
         log.info('[MissionControl] CMD_PLAN_REQUEST: prompt received, starting pre-flight...');
 
         // Git pre-flight: offer bypass instead of hard-blocking
-        // FIX: Race against a timeout to prevent the handler from hanging
-        // if the git extension or showWarningMessage is unresponsive.
         if (this.preFlightGitCheck) {
           try {
-            const GIT_PREFLIGHT_TIMEOUT_MS = 5_000;
-            const check = await Promise.race([
-              this.preFlightGitCheck(),
-              new Promise<{ blocked: false }>((resolve) =>
-                setTimeout(() => {
-                  log.warn('[MissionControl] CMD_PLAN_REQUEST: pre-flight git check timed out — skipping.');
-                  resolve({ blocked: false });
-                }, GIT_PREFLIGHT_TIMEOUT_MS)
-              ),
-            ]);
+            const check = await this.preFlightGitCheck();
             log.info(`[MissionControl] CMD_PLAN_REQUEST: pre-flight result — blocked=${check.blocked}`);
             if (check.blocked) {
               const choice = await vscode.window.showWarningMessage(

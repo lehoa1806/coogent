@@ -57,6 +57,8 @@ export interface EngineEvents {
     'plan:request': (prompt: string, feedback?: string) => void;
     /** Fired when the user rejects a plan and wants re-generation. */
     'plan:rejected': (prompt: string, feedback: string) => void;
+    /** Fired when the user approves the AI-generated plan (M1 audit fix). */
+    'plan:approved': (approvedDraft: Runbook) => void;
     /** Fired when the user wants to retry parsing cached timeout output. */
     'plan:retryParse': () => void;
     /** Fired when the user requests a diff review for a specific phase. */
@@ -161,6 +163,7 @@ export class Engine extends EventEmitter {
 
     /** @internal Used by controllers to access the SelfHealingController. */
     public getHealer(): SelfHealingController { return this.healer; }
+    public getEvaluation(): EvaluationOrchestrator { return this.evaluation; }
 
     /** @internal Used by PlanningController.planApproved() and SessionController. */
     public setRunbook(runbook: Runbook | null): void { this.runbook = runbook; }

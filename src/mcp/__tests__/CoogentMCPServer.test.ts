@@ -626,8 +626,8 @@ describe('CoogentMCPServer — ListResources', () => {
         });
 
         const result = await client.listResources();
-        // Should have 3 task-level + 2 phase-level = 5
-        expect(result.resources.length).toBe(5);
+        // Should have 4 task-level + 2 phase-level = 6 (Sprint 4: added consolidation_report_json)
+        expect(result.resources.length).toBe(6);
         const uris = result.resources.map((r) => r.uri);
         expect(uris).toContain(RESOURCE_URIS.taskSummary(VALID_MASTER_TASK_ID));
         expect(uris).toContain(RESOURCE_URIS.taskPlan(VALID_MASTER_TASK_ID));

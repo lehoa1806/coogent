@@ -54,6 +54,9 @@ export class ServiceContainer {
     /** Accumulated worker stdout for handoff extraction (capped at 2 MB). */
     readonly workerOutputAccumulator = new Map<number, string>();
 
+    /** Accumulated worker stderr for persistence (capped at 2 MB). */
+    readonly workerStderrAccumulator = new Map<number, string>();
+
     /**
      * BUG-02 fix: Tracks which sessionDirNames have already created a sandbox branch.
      * Using a Set<string> (keyed by sessionDirName) instead of a plain boolean means
@@ -144,6 +147,7 @@ export class ServiceContainer {
         this.workspaceRoots = undefined;
         this.storageBase = undefined;
         this.workerOutputAccumulator.clear();
+        this.workerStderrAccumulator.clear();
         this.sandboxBranchCreatedForSession.clear();
         this.initOrder.length = 0;
     }

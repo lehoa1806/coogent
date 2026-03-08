@@ -1,3 +1,7 @@
+jest.mock('vscode', () => ({
+    workspace: { workspaceFolders: [] },
+}), { virtual: true });
+
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';

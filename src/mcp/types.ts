@@ -32,6 +32,8 @@ export interface PhaseHandoff {
     blockers: string[];
     /** Unix timestamp (ms) when this phase completed. */
     completedAt: number;
+    /** Contextual information for downstream phases. */
+    nextStepsContext?: string | undefined;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -58,6 +60,10 @@ export interface TaskState {
     implementationPlan?: string | undefined;
     /** Reducer agent's final Markdown consolidation report. */
     consolidationReport?: string | undefined;
+    /** Structured consolidation report as JSON (stringified ConsolidationReport). */
+    consolidationReportJson?: string | undefined;
+    /** Full runbook JSON (stringified). DB mirror of .task-runbook.json. */
+    runbookJson?: string | undefined;
     /** Nested phase artifacts, keyed by `phaseId`. */
     phases: Map<string, PhaseArtifacts>;
 }
@@ -97,7 +103,7 @@ export const PHASE_ID_PATTERN =
 export interface ParsedResourceURI {
     masterTaskId: string;
     phaseId?: string | undefined;
-    resource: 'summary' | 'implementation_plan' | 'consolidation_report' | 'handoff';
+    resource: 'summary' | 'implementation_plan' | 'consolidation_report' | 'consolidation_report_json' | 'handoff';
 }
 
 /**
@@ -125,6 +131,8 @@ export const RESOURCE_URIS = {
     taskPlan: (taskId: string) => `coogent://tasks/${taskId}/implementation_plan`,
     /** URI for the master task's consolidation report. */
     taskReport: (taskId: string) => `coogent://tasks/${taskId}/consolidation_report`,
+    /** URI for the master task's structured consolidation report (JSON). */
+    taskReportJson: (taskId: string) => `coogent://tasks/${taskId}/consolidation_report_json`,
     /** URI for a phase-level implementation plan. */
     phasePlan: (taskId: string, phaseId: string) =>
         `coogent://tasks/${taskId}/phases/${phaseId}/implementation_plan`,

@@ -11,6 +11,7 @@ import * as crypto from 'node:crypto';
 import Ajv from 'ajv';
 import { RUNBOOK_FILENAME, asTimestamp } from '../types/index.js';
 import type { Runbook, WALEntry, EngineState } from '../types/index.js';
+import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import log from '../logger/log.js';
 
 /**
@@ -105,6 +106,12 @@ export class StateManager {
     /** VS Code SecretStorage instance (optional — encryption degrades gracefully without it). */
     private readonly secretStorage: SecretStorageLike | undefined;
 
+    /** Optional ArtifactDB for runbook persistence — set via setArtifactDB(). */
+    private artifactDb: ArtifactDB | undefined;
+
+    /** Master task ID for DB operations — set via setMasterTaskId(). */
+    private masterTaskId: string | undefined;
+
     /**
      * In-process async mutex — serializes all saveRunbook() calls.
      * Prevents interleaving when multiple async paths (worker exit + user pause)
@@ -138,23 +145,67 @@ export class StateManager {
         this.dirEnsured = true;
     }
 
+    /**
+     * Attach an ArtifactDB instance for DB-primary runbook persistence.
+     * When set, `saveRunbook()` writes to DB first (throws on failure),
+     * then writes the IPC file as a best-effort crash-recovery backup.
+     * `loadRunbook()` reads from DB first, falling back to IPC file
+     * only for WAL/crash-recovery scenarios.
+     */
+    public setArtifactDB(db: ArtifactDB, masterTaskId: string): void {
+        this.artifactDb = db;
+        this.masterTaskId = masterTaskId;
+    }
+
     // ═══════════════════════════════════════════════════════════════════════════
     //  Read Operations
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Load the runbook from disk and validate against JSON Schema.
-     * Returns `null` if the file does not exist.
-     * @throws {RunbookValidationError} If the file fails schema validation.
+     * Load the runbook — DB is authoritative, IPC file is WAL/crash fallback.
+     * Returns `null` if no runbook exists in either store.
+     * @throws {RunbookValidationError} If the runbook fails schema validation.
      */
     public async loadRunbook(): Promise<Runbook | null> {
         await this.initEncryption();
+
+        // ── DB-first read (C1 audit fix: DB is authoritative) ──────────
+        if (this.artifactDb && this.masterTaskId) {
+            try {
+                const task = this.artifactDb.getTask(this.masterTaskId);
+                if (task?.runbookJson) {
+                    const parsed: unknown = JSON.parse(task.runbookJson);
+                    const runbook = this.validateSchema(parsed);
+                    this.cachedRunbook = runbook;
+                    log.info('[StateManager] Runbook loaded from DB (authoritative).');
+                    return runbook;
+                }
+            } catch (dbErr) {
+                log.warn('[StateManager] DB runbook read failed — falling back to IPC file:', dbErr);
+            }
+        }
+
+        // ── IPC file fallback (WAL/crash recovery only) ────────────────
         try {
             const raw = await fs.readFile(this.runbookPath, 'utf-8');
             const content = this.maybeDecrypt(raw);
             const parsed: unknown = JSON.parse(content);
             const runbook = this.validateSchema(parsed);
             this.cachedRunbook = runbook;
+            log.info('[StateManager] Runbook loaded from IPC file (fallback).');
+
+            // Promote IPC data → DB so subsequent reads hit the authoritative path
+            if (this.artifactDb && this.masterTaskId) {
+                try {
+                    this.artifactDb.upsertTask(this.masterTaskId, {
+                        runbookJson: JSON.stringify(runbook),
+                    });
+                    log.info('[StateManager] Promoted IPC runbook to DB.');
+                } catch (promoteErr) {
+                    log.warn('[StateManager] Failed to promote IPC runbook to DB:', promoteErr);
+                }
+            }
+
             return runbook;
         } catch (err: unknown) {
             if (isNodeError(err) && err.code === 'ENOENT') {
@@ -214,6 +265,14 @@ export class StateManager {
         await this.ensureDir();
         await this.acquireLock();
         try {
+            // ── C1 audit fix: DB is authoritative — write first, throw on failure ──
+            if (this.artifactDb && this.masterTaskId) {
+                this.artifactDb.upsertTask(this.masterTaskId, {
+                    runbookJson: JSON.stringify(runbook),
+                });
+            }
+
+            // IPC file write — best-effort crash-recovery backup
             // WAL entry — crash recovery point
             const walEntry: WALEntry = {
                 timestamp: asTimestamp(),
@@ -298,6 +357,18 @@ export class StateManager {
                     'utf-8'
                 );
                 await fs.rename(tmpPath, this.runbookPath);
+
+                // Persist recovered snapshot to DB (authoritative store)
+                if (this.artifactDb && this.masterTaskId) {
+                    try {
+                        this.artifactDb.upsertTask(this.masterTaskId, {
+                            runbookJson: JSON.stringify(walEntry.snapshot),
+                        });
+                        log.info('[StateManager] WAL recovery persisted to DB.');
+                    } catch (dbErr) {
+                        log.warn('[StateManager] Failed to persist WAL recovery to DB:', dbErr);
+                    }
+                }
 
                 await fs.unlink(this.walPath).catch(() => { });
 

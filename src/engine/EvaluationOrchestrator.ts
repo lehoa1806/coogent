@@ -10,6 +10,7 @@ import type { Phase, EvaluationResult } from '../types/index.js';
 import type { Engine } from './Engine.js';
 import type { SelfHealingController } from './SelfHealing.js';
 import type { EvaluatorRegistryV2 } from '../evaluators/EvaluatorRegistry.js';
+import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 
 /**
  * Extracted evaluation logic from Engine.
@@ -18,11 +19,22 @@ import type { EvaluatorRegistryV2 } from '../evaluators/EvaluatorRegistry.js';
  * (pass/fail/retry). Manages the self-healing retry pipeline.
  */
 export class EvaluationOrchestrator {
+    private db: ArtifactDB | undefined;
+    private masterTaskId: string = '';
+
     constructor(
         private readonly engine: Engine,
         private readonly healer: SelfHealingController,
         private readonly evaluatorRegistry: EvaluatorRegistryV2 | null,
     ) { }
+
+    /**
+     * S3 audit fix: Inject DB instance for persisting evaluation results.
+     */
+    setArtifactDB(db: ArtifactDB, masterTaskId: string): void {
+        this.db = db;
+        this.masterTaskId = masterTaskId;
+    }
 
     /**
      * Called when a worker exits. Drives evaluation → verdict → advance.
@@ -125,6 +137,9 @@ export class EvaluationOrchestrator {
         if (!runbook) return;
 
         if (result.passed) {
+            // S3 audit fix: Persist evaluation result (passed)
+            this.persistEvaluationResult(phase, result);
+
             phase.status = 'completed';
             this.healer.clearAttempts(phase.id);
             this.engine.emitUIMessage({
@@ -184,6 +199,9 @@ export class EvaluationOrchestrator {
         if (!runbook) return;
 
         if (result.passed) {
+            // F-1 audit fix: Persist evaluation result in parallel mode (was missing)
+            this.persistEvaluationResult(phase, result);
+
             phase.status = 'completed';
             this.healer.clearAttempts(phase.id);
             this.engine.emitUIMessage({
@@ -196,7 +214,10 @@ export class EvaluationOrchestrator {
             // Dispatch any newly-unblocked phases from this completion
             this.engine.dispatchReadyPhases();
         } else {
-            this.healer.recordFailure(phase.id, exitCode, stderr);
+            // F-1 audit fix: Persist evaluation result in parallel mode (was missing)
+            this.persistEvaluationResult(phase, result);
+
+            this.healer.recordFailure(phase.id, exitCode, stderr, phase.mcpPhaseId);
 
             if (this.healer.canRetryWithPhase(phase)) {
                 const augmentedPrompt = result.retryPrompt
@@ -242,7 +263,10 @@ export class EvaluationOrchestrator {
         const runbook = this.engine.getRunbook();
         if (!runbook) return;
 
-        this.healer.recordFailure(phase.id, exitCode, stderr);
+        this.healer.recordFailure(phase.id, exitCode, stderr, phase.mcpPhaseId);
+
+        // S3 audit fix: Persist evaluation result (failed)
+        this.persistEvaluationResult(phase, result);
 
         if (this.healer.canRetryWithPhase(phase)) {
             const augmentedPrompt = result.retryPrompt
@@ -350,5 +374,25 @@ export class EvaluationOrchestrator {
             log.warn(`[EvaluationOrchestrator] Unrecognized success_criteria "${criteria}" — falling back to exit_code:0`);
         }
         return exitCode === 0;
+    }
+
+    /**
+     * S3 audit fix: Persist evaluation result to DB (best-effort).
+     */
+    private persistEvaluationResult(phase: Phase, result: EvaluationResult): void {
+        if (!this.db || !this.masterTaskId) return;
+        try {
+            const phaseIdStr = phase.mcpPhaseId ?? `phase-${String(phase.id).padStart(3, '0')}`;
+            const attempt = this.healer.getAttemptCount(phase.id) || 1;
+            this.db.upsertEvaluationResult(this.masterTaskId, phaseIdStr, {
+                attempt,
+                passed: result.passed,
+                reason: result.reason,
+                ...(result.retryPrompt != null ? { retryPrompt: result.retryPrompt } : {}),
+                evaluatedAt: Date.now(),
+            });
+        } catch (err) {
+            log.warn('[EvaluationOrchestrator] Failed to persist evaluation result:', err);
+        }
     }
 }

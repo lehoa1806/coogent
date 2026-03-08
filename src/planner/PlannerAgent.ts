@@ -12,6 +12,8 @@ import { asPhaseId } from '../types/index.js';
 import type { AgentBackendProvider } from '../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle } from '../adk/ADKController.js';
 import log from '../logger/log.js';
+import { PromptCompiler } from '../prompt-compiler/index.js';
+import type { CompilationManifest } from '../prompt-compiler/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Configuration
@@ -85,6 +87,14 @@ export class PlannerAgent extends EventEmitter {
     private lastIpcSessionDir: string | null = null;
     /** Master task ID (session dir name) for nesting IPC files under YYYYMMDD-HHMMSS-<uuid>. */
     private masterTaskId: string | undefined;
+    /** Last system prompt sent to the planner worker (S2 audit: enables prompt lineage). */
+    private lastSystemPrompt = '';
+    /** Lazily-initialized PromptCompiler instance. */
+    private promptCompiler: PromptCompiler | null = null;
+    /** Last compilation manifest from the PromptCompiler (observability). */
+    private lastManifest: CompilationManifest | null = null;
+    /** BL-5 audit fix: Last raw LLM output before JSON parsing (for audit trail). */
+    private lastRawOutput: string | undefined;
 
     constructor(
         private readonly adapter: AgentBackendProvider,
@@ -107,6 +117,16 @@ export class PlannerAgent extends EventEmitter {
     // ═══════════════════════════════════════════════════════════════════════════
     //  Public API
     // ═══════════════════════════════════════════════════════════════════════════
+
+    /** Get the last compilation manifest from PromptCompiler (for observability). */
+    getLastManifest(): CompilationManifest | null {
+        return this.lastManifest;
+    }
+
+    /** BL-5 audit fix: Get the last raw LLM output before parsing. */
+    getLastRawOutput(): string | undefined {
+        return this.lastRawOutput;
+    }
 
     /**
      * Generate a runbook from a user prompt.
@@ -144,14 +164,38 @@ export class PlannerAgent extends EventEmitter {
                 log.warn('[PlannerAgent] Tech stack discovery failed — continuing without:', err);
             }
 
-            // Step 2: Build the planner prompt
-            const systemPrompt = this.buildPlannerPrompt(
-                prompt,
-                this.fileTree,
-                feedback,
-                techStack,
-                this.config.availableTags,
-            );
+            // Step 2: Build the planner prompt (PromptCompiler → fallback to legacy)
+            let systemPrompt: string;
+            try {
+                const compiler = this.getPromptCompiler();
+                const compiledPrompt = await compiler.compile(prompt, {
+                    fileTree: this.fileTree,
+                    ...(techStack !== undefined && { techStack }),
+                    ...(this.config.availableTags !== undefined && { availableTags: this.config.availableTags }),
+                    ...(feedback !== undefined && { feedback }),
+                });
+                systemPrompt = compiledPrompt.text;
+                this.lastManifest = compiledPrompt.manifest;
+                log.info('[PromptCompiler] Compilation complete', {
+                    taskFamily: compiledPrompt.manifest.taskFamily,
+                    templateId: compiledPrompt.manifest.templateId,
+                    appliedPolicies: compiledPrompt.manifest.appliedPolicies,
+                    promptLength: compiledPrompt.text.length,
+                    fingerprintHash: compiledPrompt.manifest.fingerprintHash,
+                });
+            } catch (compilerErr) {
+                const err = compilerErr instanceof Error ? compilerErr : new Error(String(compilerErr));
+                log.warn('[PromptCompiler] Compilation failed, falling back to legacy prompt', { error: err.message });
+                this.lastManifest = null;
+                systemPrompt = this.buildLegacyPlannerPrompt(
+                    prompt,
+                    this.fileTree,
+                    feedback,
+                    techStack,
+                    this.config.availableTags,
+                );
+            }
+            this.lastSystemPrompt = systemPrompt;
             log.info(`[PlannerAgent] Prompt built: ${systemPrompt.length} chars`);
 
             // Step 3: Spawn the planner worker
@@ -237,6 +281,11 @@ export class PlannerAgent extends EventEmitter {
     /** Get the user's original prompt. */
     getPrompt(): string {
         return this.userPrompt;
+    }
+
+    /** Get the last system prompt sent to the planner worker (S2 audit). */
+    getLastSystemPrompt(): string {
+        return this.lastSystemPrompt;
     }
 
     /** Terminate any active planning session. */
@@ -351,6 +400,16 @@ export class PlannerAgent extends EventEmitter {
     //  Private
     // ═══════════════════════════════════════════════════════════════════════════
 
+    /**
+     * Lazily create and return the PromptCompiler instance.
+     */
+    private getPromptCompiler(): PromptCompiler {
+        if (!this.promptCompiler) {
+            this.promptCompiler = new PromptCompiler(this.config.workspaceRoot);
+        }
+        return this.promptCompiler;
+    }
+
     private onWorkerExited(exitCode: number): void {
         log.info(`[PlannerAgent] onWorkerExited(${exitCode}), accumulatedOutput (${this.accumulatedOutput.length} chars):\n${this.accumulatedOutput || '(empty)'}\nstderr (${this.accumulatedStderr.length} chars):\n${this.accumulatedStderr || '(empty)'}`);
 
@@ -381,6 +440,10 @@ export class PlannerAgent extends EventEmitter {
         this.emit('plan:status', 'parsing', 'Parsing generated plan...');
         log.info(`[PlannerAgent] Parsing output (${this.accumulatedOutput.length} chars)...`);
         log.info(`[PlannerAgent] First 300 chars: ${this.accumulatedOutput.slice(0, 300)}`);
+
+        // BL-5 audit fix: Capture raw LLM output before parsing
+        this.lastRawOutput = this.accumulatedOutput;
+
         const parsed = this.extractRunbook(this.accumulatedOutput);
 
         if (!parsed) {
@@ -556,8 +619,9 @@ export class PlannerAgent extends EventEmitter {
 
     /**
      * Build the system prompt for the planner agent.
+     * @deprecated Kept as fallback — PromptCompiler is now the default path.
      */
-    private buildPlannerPrompt(
+    private buildLegacyPlannerPrompt(
         userPrompt: string,
         fileTree: string[],
         feedback?: string,

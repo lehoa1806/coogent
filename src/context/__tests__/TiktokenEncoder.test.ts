@@ -1,3 +1,7 @@
+jest.mock('vscode', () => ({
+    workspace: { workspaceFolders: [] },
+}), { virtual: true });
+
 import { TiktokenEncoder } from '../TiktokenEncoder.js';
 import type { TokenEncoder } from '../ContextScoper.js';
 

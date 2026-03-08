@@ -61,6 +61,14 @@ describe('PlannerAgent', () => {
     });
 
     // ═══════════════════════════════════════════════════════════════════════
+    //  getLastManifest() — compilation observability
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('should return null from getLastManifest() before any compilation', () => {
+        expect(agent.getLastManifest()).toBeNull();
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
     //  extractRunbook() — basic parsing sanity
     // ═══════════════════════════════════════════════════════════════════════
 

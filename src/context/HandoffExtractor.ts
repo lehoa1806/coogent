@@ -2,10 +2,9 @@
 // src/context/HandoffExtractor.ts — Semantic Distillation & State Extraction
 // ─────────────────────────────────────────────────────────────────────────────
 
-import * as fs from 'fs/promises';
-import * as path from 'path';
 import type { Phase, PhaseId } from '../types/index.js';
 import type { MCPClientBridge } from '../mcp/MCPClientBridge.js';
+import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import { SecretsGuard } from './SecretsGuard.js';
 import log from '../logger/log.js';
 
@@ -37,6 +36,34 @@ export interface HandoffReport {
  * 4. Build next-phase context from dependent phase handoffs.
  */
 export class HandoffExtractor {
+    /** Optional ArtifactDB for DB-first handoff reads. */
+    private db: ArtifactDB | undefined;
+    /** Master task ID for DB lookups. */
+    private masterTaskId: string | undefined;
+    /** Phase lookup map: numeric depId → mcpPhaseId string. */
+    private phaseIdMap: Map<number, string> = new Map();
+
+    /**
+     * Wire the ArtifactDB for DB-first handoff reads.
+     * Called from extension.ts after DB initialisation.
+     */
+    setArtifactDB(db: ArtifactDB, masterTaskId: string): void {
+        this.db = db;
+        this.masterTaskId = masterTaskId;
+    }
+
+    /**
+     * Update the phase ID lookup map from the current runbook.
+     * Maps numeric phase ID → mcpPhaseId string for DB queries.
+     */
+    setPhaseIdMap(phases: Array<{ id: number; mcpPhaseId?: string }>): void {
+        this.phaseIdMap.clear();
+        for (const p of phases) {
+            if (p.mcpPhaseId) {
+                this.phaseIdMap.set(p.id, p.mcpPhaseId);
+            }
+        }
+    }
 
     /**
      * Returns a prompt instructing the worker to produce a strict JSON
@@ -113,19 +140,17 @@ export class HandoffExtractor {
     }
 
     /**
-     * Persist a handoff report.
+     * Persist a handoff report to the MCP state store.
      *
-     * MCP-first: submits to MCP state store when bridge is available.
-     * File fallback: writes to `handoffs/phase-{id}.json` for `buildNextContext()`.
+     * Sprint 4: Removed file fallback — DB is the authoritative source.
      */
     async saveHandoff(
         phaseId: number,
         report: HandoffReport,
-        sessionDir: string,
+        _sessionDir: string,
         mcpBridge?: MCPClientBridge,
         masterTaskId?: string,
     ): Promise<void> {
-        // MCP-first: submit to in-memory state
         if (mcpBridge && masterTaskId) {
             try {
                 const phaseIdStr = `phase-${String(phaseId).padStart(3, '0')}-00000000-0000-0000-0000-000000000000`;
@@ -140,28 +165,8 @@ export class HandoffExtractor {
             } catch (err) {
                 log.warn(`[HandoffExtractor] Failed to submit phase ${phaseId} handoff to MCP:`, err);
             }
-        }
-
-        // File fallback: still needed for buildNextContext()
-        const handoffsDir = path.join(sessionDir, 'handoffs');
-        await fs.mkdir(handoffsDir, { recursive: true });
-        const filePath = path.join(handoffsDir, `phase-${phaseId}.json`);
-        await fs.writeFile(filePath, JSON.stringify(report, null, 2), 'utf-8');
-    }
-
-    /**
-     * Load a previously saved handoff report, or `null` if not found.
-     */
-    async loadHandoff(
-        phaseId: number,
-        sessionDir: string,
-    ): Promise<HandoffReport | null> {
-        const filePath = path.join(sessionDir, 'handoffs', `phase-${phaseId}.json`);
-        try {
-            const raw = await fs.readFile(filePath, 'utf-8');
-            return JSON.parse(raw) as HandoffReport;
-        } catch {
-            return null;
+        } else {
+            log.warn(`[HandoffExtractor] No MCP bridge — phase ${phaseId} handoff NOT persisted.`);
         }
     }
 
@@ -174,7 +179,7 @@ export class HandoffExtractor {
      */
     async buildNextContext(
         phase: Phase,
-        sessionDir: string,
+        _sessionDir: string,
         _workspaceRoot: string,
     ): Promise<string> {
         const dependsOn: readonly PhaseId[] = phase.depends_on ?? [];
@@ -185,7 +190,30 @@ export class HandoffExtractor {
         const sections: string[] = [];
 
         for (const depId of dependsOn) {
-            const report = await this.loadHandoff(depId, sessionDir);
+            // S4: DB-first handoff read (Sprint 4: file fallback removed — DB is authoritative)
+            let report: HandoffReport | null = null;
+
+            if (this.db && this.masterTaskId) {
+                const mcpPhaseId = this.phaseIdMap.get(depId);
+                if (mcpPhaseId) {
+                    try {
+                        const dbHandoff = this.db.getHandoff(this.masterTaskId, mcpPhaseId);
+                        if (dbHandoff) {
+                            report = {
+                                phaseId: depId,
+                                decisions: dbHandoff.decisions,
+                                modified_files: dbHandoff.modifiedFiles,
+                                unresolved_issues: dbHandoff.blockers,
+                                next_steps_context: dbHandoff.nextStepsContext ?? '',
+                                timestamp: dbHandoff.completedAt,
+                            };
+                        }
+                    } catch (err) {
+                        log.warn(`[HandoffExtractor] DB read failed for phase ${depId}:`, err);
+                    }
+                }
+            }
+
             if (!report) {
                 sections.push(`## Phase ${depId} Handoff\n_No handoff report found._\n`);
                 continue;

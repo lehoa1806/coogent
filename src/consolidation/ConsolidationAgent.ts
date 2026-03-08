@@ -39,8 +39,10 @@ export interface ConsolidationReport {
 /**
  * Implements Phase 5 of the 5-Step DAG Execution Flow.
  *
- * Reads all `handoffs/phase-{id}.json` files, aggregates decisions,
+ * Reads handoffs from the MCP state store, aggregates decisions,
  * modified files, and unresolved issues, and produces a structured report.
+ *
+ * Sprint 4: File-based fallback removed — MCP/DB is the authoritative source.
  */
 export class ConsolidationAgent {
 
@@ -49,7 +51,7 @@ export class ConsolidationAgent {
      * referenced in the runbook.
      */
     async generateReport(
-        sessionDir: string,
+        _sessionDir: string,
         runbook: Runbook,
         mcpBridge?: MCPClientBridge,
         masterTaskId?: string,
@@ -64,13 +66,10 @@ export class ConsolidationAgent {
         let skippedPhases = 0;
 
         for (const phase of runbook.phases) {
-            // Try MCP first (requires real mcpPhaseId), then fall back to file-based loading
+            // MCP-only handoff read (Sprint 4: file fallback removed)
             let handoff: HandoffReport | null = null;
             if (mcpBridge && masterTaskId && phase.mcpPhaseId) {
                 handoff = await this.loadHandoffFromMCP(mcpBridge, masterTaskId, phase.mcpPhaseId);
-            }
-            if (!handoff) {
-                handoff = await this.loadHandoffFile(sessionDir, phase.id as number);
             }
 
             if (handoff) {
@@ -251,7 +250,7 @@ export class ConsolidationAgent {
      * The in-memory MCP Server is the single source of truth for artifacts.
      */
     async saveReport(
-        _sessionDir: string,
+        sessionDir: string,
         report: ConsolidationReport,
         mcpBridge?: MCPClientBridge,
         masterTaskId?: string,
@@ -260,9 +259,28 @@ export class ConsolidationAgent {
 
         if (mcpBridge && masterTaskId) {
             await mcpBridge.submitConsolidationReport(masterTaskId, markdown);
+
+            // S6b audit fix: Persist structured ConsolidationReport as JSON
+            // so programmatic queries don't need to re-parse Markdown.
+            try {
+                await mcpBridge.submitConsolidationReportJson(masterTaskId, JSON.stringify(report));
+            } catch (err) {
+                log.warn('[ConsolidationAgent] Failed to persist structured report JSON (non-fatal):', err);
+            }
+
             log.info('[ConsolidationAgent] Report submitted to MCP state.');
         } else {
             log.warn('[ConsolidationAgent] No MCP bridge available — report NOT persisted.');
+        }
+
+        // F-4 audit fix: Write debug clone outside IPC tree to .coogent/debug/<masterTaskId>/
+        // (previously written to <sessionDir>/debug/ which is under IPC)
+        if (sessionDir && masterTaskId) {
+            const storageRoot = path.dirname(path.dirname(sessionDir)); // up from ipc/<sessionDirName>
+            const debugDir = path.join(storageRoot, 'debug', masterTaskId);
+            fs.mkdir(debugDir, { recursive: true })
+                .then(() => fs.writeFile(path.join(debugDir, 'consolidation-report.md'), markdown, 'utf-8'))
+                .catch(err => log.warn('[ConsolidationAgent] Debug clone (report) failed (non-fatal):', err));
         }
     }
 
@@ -270,26 +288,7 @@ export class ConsolidationAgent {
     //  Private helpers
     // ═══════════════════════════════════════════════════════════════════════════
 
-    /**
-     * Load a handoff report from `handoffs/phase-{id}.json`,
-     * or return `null` if the file does not exist.
-     */
-    private async loadHandoffFile(
-        sessionDir: string,
-        phaseId: number,
-    ): Promise<HandoffReport | null> {
-        const filePath = path.join(
-            sessionDir,
-            'handoffs',
-            `phase-${phaseId}.json`,
-        );
-        try {
-            const raw = await fs.readFile(filePath, 'utf-8');
-            return JSON.parse(raw) as HandoffReport;
-        } catch {
-            return null;
-        }
-    }
+
 
     /**
      * Attempt to read a phase handoff from the MCP server.

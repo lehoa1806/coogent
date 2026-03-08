@@ -126,4 +126,81 @@ describe('StateManager', () => {
         // WAL file should have been deleted
         await expect(fs.access(walPath)).rejects.toThrow();
     });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  DB-Primary Persistence Tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /** Minimal mock matching the ArtifactDB surface used by StateManager. */
+    function createMockDB() {
+        const store: Record<string, { runbookJson?: string }> = {};
+        return {
+            upsertTask(masterTaskId: string, fields: { runbookJson?: string }) {
+                if (!store[masterTaskId]) store[masterTaskId] = {};
+                if (fields.runbookJson !== undefined) {
+                    store[masterTaskId].runbookJson = fields.runbookJson;
+                }
+            },
+            getTask(masterTaskId: string) {
+                return store[masterTaskId] ?? undefined;
+            },
+            /** Test helper — peek at stored data. */
+            _store: store,
+        };
+    }
+
+    it('should load runbook from DB when wired (authoritative path)', async () => {
+        const sm = new StateManager(tmpDir);
+        const mockDB = createMockDB();
+
+        // Seed DB with runbook JSON
+        mockDB.upsertTask('task-1', { runbookJson: JSON.stringify(validRunbook) });
+        sm.setArtifactDB(mockDB as any, 'task-1');
+
+        // No IPC file exists — DB should be the only source
+        const runbook = await sm.loadRunbook();
+        expect(runbook).toEqual(validRunbook);
+    });
+
+    it('should promote IPC runbook to DB on fallback read', async () => {
+        // Write runbook to IPC file but NOT to DB
+        await fs.writeFile(runbookPath, JSON.stringify(validRunbook));
+
+        const sm = new StateManager(tmpDir);
+        const mockDB = createMockDB();
+        sm.setArtifactDB(mockDB as any, 'task-1');
+
+        // DB has no runbook — should fallback to IPC then promote
+        const runbook = await sm.loadRunbook();
+        expect(runbook).toEqual(validRunbook);
+
+        // Verify promotion: DB should now have the runbook
+        const stored = mockDB.getTask('task-1');
+        expect(stored?.runbookJson).toBeDefined();
+        expect(JSON.parse(stored!.runbookJson!)).toEqual(validRunbook);
+    });
+
+    it('should persist WAL recovery to DB', async () => {
+        // Create a valid WAL file
+        const walPath = path.join(tmpDir, '.wal.json');
+        const walEntry = {
+            timestamp: Date.now(),
+            engineState: 'IDLE',
+            currentPhase: 0,
+            snapshot: validRunbook,
+        };
+        await fs.writeFile(walPath, JSON.stringify(walEntry));
+
+        const sm = new StateManager(tmpDir);
+        const mockDB = createMockDB();
+        sm.setArtifactDB(mockDB as any, 'task-1');
+
+        const recovered = await sm.recoverFromCrash();
+        expect(recovered).toBe(true);
+
+        // Verify DB persistence
+        const stored = mockDB.getTask('task-1');
+        expect(stored?.runbookJson).toBeDefined();
+        expect(JSON.parse(stored!.runbookJson!)).toEqual(validRunbook);
+    });
 });
