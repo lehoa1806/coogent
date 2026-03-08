@@ -6,6 +6,7 @@ import type { Phase, FileResolver } from '../types/index.js';
 import { resolve as pathResolve, dirname, relative, extname, join, isAbsolute } from 'node:path';
 import { access, readFile } from 'node:fs/promises';
 import * as ts from 'typescript';
+import { COOGENT_DIR } from '../constants/paths.js';
 import {
     resolveFileAcrossRoots,
     parseWorkspaceQualifiedPath,
@@ -121,7 +122,7 @@ export class ASTFileResolver implements FileResolver {
             // Gitignore-aware filtering — skip common non-source directories (#15)
             const IGNORED_DIRS = new Set([
                 'node_modules', '.git', 'dist', 'build', 'out', 'coverage',
-                '.next', '__pycache__', '.coogent', '.cache', '.DS_Store',
+                '.next', '__pycache__', COOGENT_DIR, '.cache', '.DS_Store',
             ]);
             const parts = relativePath.split(/[/\\]/);
             if (parts.some(p => IGNORED_DIRS.has(p))) {

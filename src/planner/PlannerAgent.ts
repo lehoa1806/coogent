@@ -12,7 +12,8 @@ import { asPhaseId } from '../types/index.js';
 import type { AgentBackendProvider } from '../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle } from '../adk/ADKController.js';
 import log from '../logger/log.js';
-import { PromptCompiler } from '../prompt-compiler/index.js';
+import { COOGENT_DIR, IPC_DIR, IPC_RESPONSE_FILE } from '../constants/paths.js';
+import { PlannerPromptCompiler } from '../prompt-compiler/index.js';
 import type { CompilationManifest } from '../prompt-compiler/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -26,7 +27,7 @@ export interface PlannerConfig {
     maxTreeDepth: number;
     /** Maximum characters for the file tree summary. */
     maxTreeChars: number;
-    /** Available skill tags from the WorkerRegistry (injected by wiring). */
+    /** Available skill tags from the AgentRegistry (injected by wiring). */
     availableTags?: string[];
 }
 
@@ -50,6 +51,7 @@ export interface PlannerEvents {
     'plan:timeout': (hasOutput: boolean) => void;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export declare interface PlannerAgent {
     on<K extends keyof PlannerEvents>(event: K, listener: PlannerEvents[K]): this;
     emit<K extends keyof PlannerEvents>(event: K, ...args: Parameters<PlannerEvents[K]>): boolean;
@@ -70,6 +72,7 @@ export declare interface PlannerAgent {
  * 4. Parses worker output for valid JSON runbook.
  * 5. Emits `plan:generated` with the parsed draft.
  */
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class PlannerAgent extends EventEmitter {
     private readonly config: PlannerConfig;
     private draft: Runbook | null = null;
@@ -89,9 +92,9 @@ export class PlannerAgent extends EventEmitter {
     private masterTaskId: string | undefined;
     /** Last system prompt sent to the planner worker (S2 audit: enables prompt lineage). */
     private lastSystemPrompt = '';
-    /** Lazily-initialized PromptCompiler instance. */
-    private promptCompiler: PromptCompiler | null = null;
-    /** Last compilation manifest from the PromptCompiler (observability). */
+    /** Lazily-initialized PlannerPromptCompiler instance. */
+    private promptCompiler: PlannerPromptCompiler | null = null;
+    /** Last compilation manifest from the PlannerPromptCompiler (observability). */
     private lastManifest: CompilationManifest | null = null;
     /** BL-5 audit fix: Last raw LLM output before JSON parsing (for audit trail). */
     private lastRawOutput: string | undefined;
@@ -334,19 +337,19 @@ export class PlannerAgent extends EventEmitter {
 
         // Strategy 2: Read response.md from disk (file-based IPC path)
         if (this.lastIpcSessionDir) {
-            const ipcBase = path.join(this.config.workspaceRoot, '.coogent', 'ipc');
+            const ipcBase = path.join(this.config.workspaceRoot, COOGENT_DIR, IPC_DIR);
             const candidates: string[] = [];
 
             // Primary: use masterTaskId-nested path (YYYYMMDD-HHMMSS-<uuid>/phase-000-<sessionId>)
             if (this.masterTaskId) {
                 candidates.push(
-                    path.join(ipcBase, this.masterTaskId, `phase-000-${this.lastIpcSessionDir}`, 'response.md')
+                    path.join(ipcBase, this.masterTaskId, `phase-000-${this.lastIpcSessionDir}`, IPC_RESPONSE_FILE)
                 );
             }
 
             // Fallback: direct session dir (legacy or no masterTaskId)
             candidates.push(
-                path.join(ipcBase, this.lastIpcSessionDir, 'response.md'),
+                path.join(ipcBase, this.lastIpcSessionDir, IPC_RESPONSE_FILE),
             );
 
             for (const responseFile of candidates) {
@@ -401,11 +404,11 @@ export class PlannerAgent extends EventEmitter {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Lazily create and return the PromptCompiler instance.
+     * Lazily create and return the PlannerPromptCompiler instance.
      */
-    private getPromptCompiler(): PromptCompiler {
+    private getPromptCompiler(): PlannerPromptCompiler {
         if (!this.promptCompiler) {
-            this.promptCompiler = new PromptCompiler(this.config.workspaceRoot);
+            this.promptCompiler = new PlannerPromptCompiler(this.config.workspaceRoot);
         }
         return this.promptCompiler;
     }
@@ -571,7 +574,7 @@ export class PlannerAgent extends EventEmitter {
         const IGNORE = new Set([
             '.git', 'node_modules', '.next', 'dist', 'out', 'build',
             '.cache', '.vscode', '__pycache__', '.DS_Store', 'coverage',
-            '.coogent',
+            COOGENT_DIR,
         ]);
 
         const result: string[] = [];

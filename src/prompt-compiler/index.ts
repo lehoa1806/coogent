@@ -19,5 +19,5 @@ export { TaskClassifier } from './TaskClassifier.js';
 export { TemplateLoader } from './TemplateLoader.js';
 export { PolicyEngine } from './PolicyEngine.js';
 export type { PolicyResult } from './PolicyEngine.js';
-export { PromptCompiler } from './PromptCompiler.js';
-export type { CompileOptions } from './PromptCompiler.js';
+export { PlannerPromptCompiler } from './PlannerPromptCompiler.js';
+export type { CompileOptions } from './PlannerPromptCompiler.js';

@@ -5,14 +5,19 @@ jest.mock('vscode', () => ({
     Uri: { file: jest.fn((p: string) => ({ fsPath: p })), joinPath: jest.fn((_base: any, rel: string) => ({ fsPath: `/mock/${rel}` })) },
 }), { virtual: true });
 
-jest.mock('fs', () => ({
-    readFileSync: jest.fn(),
-    existsSync: jest.fn(),
+jest.mock('../templates.js', () => ({
+    ORCHESTRATION_SKELETON: '# Orchestration Skeleton\nYou are a planning agent.',
+    FEATURE_IMPLEMENTATION: '# Feature Implementation\nPlan features step by step.',
+    BUG_FIX: '# Bug Fix\nDiagnose and fix the bug.',
+    REFACTOR: '# Refactor\nRefactor template.',
+    MIGRATION: '# Migration\nMigration template.',
+    DOCUMENTATION_SYNTHESIS: '# Documentation\nDocs template.',
+    REPO_ANALYSIS: '# Repo Analysis\nAnalysis template.',
+    REVIEW_ONLY: '# Review Only\nReview template.',
 }));
 
-import { PromptCompiler } from '../PromptCompiler.js';
+import { PlannerPromptCompiler } from '../PlannerPromptCompiler.js';
 import type { RepoFingerprint } from '../types.js';
-import * as fs from 'fs';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Mock Setup
@@ -20,7 +25,6 @@ import * as fs from 'fs';
 
 const MOCK_SKELETON = '# Orchestration Skeleton\nYou are a planning agent.';
 const MOCK_FEATURE_TEMPLATE = '# Feature Implementation\nPlan features step by step.';
-const MOCK_BUG_TEMPLATE = '# Bug Fix\nDiagnose and fix the bug.';
 
 const MOCK_FINGERPRINT: RepoFingerprint = {
     workspaceType: 'single',
@@ -37,43 +41,22 @@ const MOCK_FINGERPRINT: RepoFingerprint = {
 };
 
 /**
- * Set up fs mocks so TemplateLoader returns our test content.
- * The TemplateLoader uses fs.readFileSync and fs.existsSync.
- */
-function setupFsMocks(options?: { missingTemplate?: boolean }): void {
-    (fs.existsSync as jest.Mock).mockImplementation((filePath: string) => {
-        if (options?.missingTemplate && filePath.includes('bug-fix.md')) {
-            return false;
-        }
-        return true;
-    });
-
-    (fs.readFileSync as jest.Mock).mockImplementation((filePath: string) => {
-        if (filePath.includes('orchestration-skeleton.md')) return MOCK_SKELETON;
-        if (filePath.includes('bug-fix.md')) return MOCK_BUG_TEMPLATE;
-        // Default to feature-implementation template for all others
-        return MOCK_FEATURE_TEMPLATE;
-    });
-}
-
-/**
  * Inject a cached fingerprint to bypass the vscode-dependent RepoFingerprinter.
  */
-function injectFingerprint(compiler: PromptCompiler, fp: RepoFingerprint): void {
+function injectFingerprint(compiler: PlannerPromptCompiler, fp: RepoFingerprint): void {
     (compiler as any).cachedFingerprint = fp;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  PromptCompiler Tests
+//  PlannerPromptCompiler Tests
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe('PromptCompiler', () => {
-    let compiler: PromptCompiler;
+describe('PlannerPromptCompiler', () => {
+    let compiler: PlannerPromptCompiler;
 
     beforeEach(() => {
         jest.clearAllMocks();
-        setupFsMocks();
-        compiler = new PromptCompiler('/tmp/test-workspace');
+        compiler = new PlannerPromptCompiler('/tmp/test-workspace');
         injectFingerprint(compiler, MOCK_FINGERPRINT);
     });
 
@@ -149,21 +132,6 @@ describe('PromptCompiler', () => {
         expect(result.manifest.timestamp).toBeGreaterThanOrEqual(before);
         expect(result.manifest.timestamp).toBeLessThanOrEqual(after);
         expect(result.manifest.promptVersion).toBe('1.0.0');
-    });
-
-    // ─────────────────────────────────────────────────────────────────────────
-    //  Missing template fallback
-    // ─────────────────────────────────────────────────────────────────────────
-
-    it('should handle missing template gracefully (falls back to feature-implementation)', async () => {
-        setupFsMocks({ missingTemplate: true });
-
-        // "bug" keyword triggers bug_fix classification, but the bug-fix.md template is missing
-        const result = await compiler.compile('Fix the broken bug');
-
-        // Should still compile successfully by falling back
-        expect(result.text).toContain(MOCK_FEATURE_TEMPLATE);
-        expect(result.manifest.taskFamily).toBe('bug_fix');
     });
 
     // ─────────────────────────────────────────────────────────────────────────

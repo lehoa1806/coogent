@@ -259,7 +259,7 @@ export class MCPClientBridge {
         // Direct DB access — no MCP tool protocol needed for internal persistence
         const db = this.mcpServer.getArtifactDB?.();
         if (db) {
-            db.upsertTask(masterTaskId, { consolidationReportJson: json });
+            db.tasks.upsert(masterTaskId, { consolidationReportJson: json });
         }
     }
 

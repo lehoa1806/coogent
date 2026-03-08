@@ -87,6 +87,11 @@
         "title": "Refresh Sessions",
         "category": "Coogent",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "coogent.dumpState",
+        "title": "Coogent: Dump State",
+        "category": "Coogent"
       }
     ],
     "menus": {
@@ -195,6 +200,49 @@
           "maximum": 10,
           "description": "Number of rotated backup log files to keep."
         },
+        "coogent.requirePluginApproval": {
+          "type": "boolean",
+          "default": true,
+          "description": "Require user approval before activating MCP plugins. Disable to auto-load all plugins."
+        },
+        "coogent.blockOnSecretsDetection": {
+          "type": "boolean",
+          "default": false,
+          "description": "Block phase execution when secrets are detected in context files (default: warn-only)."
+        },
+        "coogent.enableEncryption": {
+          "type": "boolean",
+          "default": false,
+          "description": "Encrypt .task-runbook.json files at rest using a key stored in VS Code SecretStorage."
+        },
+        "coogent.maxWorkerOutputBytes": {
+          "type": "number",
+          "default": 10485760,
+          "minimum": 1048576,
+          "description": "Maximum stdout/stderr output size per worker in bytes (default: 10 MB)."
+        },
+        "coogent.maxConcurrentWorkers": {
+          "type": "number",
+          "default": 4,
+          "minimum": 1,
+          "maximum": 16,
+          "description": "Maximum number of concurrent worker agents."
+        },
+        "coogent.conversationMode": {
+          "type": "string",
+          "enum": [
+            "isolated",
+            "continuous",
+            "smart-switch"
+          ],
+          "default": "isolated",
+          "description": "Worker conversation mode: isolated (new conversation per phase), continuous (reuse), or smart-switch (auto-detect)."
+        },
+        "coogent.smartSwitchTokenThreshold": {
+          "type": "number",
+          "default": 60000,
+          "description": "Token count threshold for smart-switch mode to start a new conversation."
+        },
         "coogent.customWorkers": {
           "type": "array",
           "default": [],
@@ -235,6 +283,11 @@
               }
             }
           }
+        },
+        "coogent.enableShadowMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable shadow mode: run the agent selection pipeline for observability without affecting dispatch."
         }
       }
     },
@@ -249,26 +302,39 @@
     "type": "git",
     "url": "https://github.com/lehoa1806/coogent"
   },
+  "lint-staged": {
+    "src/**/*.ts": [
+      "eslint --max-warnings=100"
+    ]
+  },
   "scripts": {
     "clean": "rm -rf out",
+    "prepare": "husky",
     "compile": "node esbuild.js",
     "watch": "npm run compile -- --watch",
     "build:webview": "cd webview-ui && npm run build",
     "dev:webview": "cd webview-ui && npm run dev",
     "build": "npm run compile && npm run build:webview",
-    "lint": "tsc --noEmit",
+    "lint": "tsc --noEmit && eslint src/ --max-warnings=100",
     "pretest": "npm run lint",
     "prepackage": "npm run compile -- --minify && npm run build:webview",
     "package": "npx -y @vscode/vsce package",
     "test": "jest --runInBand --detectOpenHandles --forceExit",
-    "ci": "npm run lint && npm test && npm audit --audit-level=high"
+    "test:webview": "cd webview-ui && npx vitest run",
+    "ci": "npm run lint && npm test && npm run test:webview && npm audit --audit-level=high",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",
     "@types/node": "^18.19.0",
     "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
     "esbuild": "^0.20.0",
+    "eslint": "^8.57.0",
+    "husky": "^9.1.7",
     "jest": "^29.7.0",
+    "lint-staged": "^16.3.2",
     "ts-jest": "^29.4.6",
     "typescript": "^5.4.0"
   },
@@ -278,6 +344,7 @@
     "js-tiktoken": "^1.0.21",
     "marked": "^17.0.4",
     "mermaid": "^11.12.3",
-    "sql.js": "^1.14.1"
+    "sql.js": "^1.14.1",
+    "zod": "^4.3.6"
   }
 }

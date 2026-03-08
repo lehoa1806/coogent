@@ -8,6 +8,7 @@ import type { Runbook } from '../types/index.js';
 import type { HandoffReport } from '../context/HandoffExtractor.js';
 import type { MCPClientBridge } from '../mcp/MCPClientBridge.js';
 import { RESOURCE_URIS } from '../mcp/types.js';
+import { getDebugDir } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -254,6 +255,7 @@ export class ConsolidationAgent {
         report: ConsolidationReport,
         mcpBridge?: MCPClientBridge,
         masterTaskId?: string,
+        storageBase?: string,
     ): Promise<void> {
         const markdown = this.formatAsMarkdown(report);
 
@@ -273,11 +275,9 @@ export class ConsolidationAgent {
             log.warn('[ConsolidationAgent] No MCP bridge available — report NOT persisted.');
         }
 
-        // F-4 audit fix: Write debug clone outside IPC tree to .coogent/debug/<masterTaskId>/
-        // (previously written to <sessionDir>/debug/ which is under IPC)
-        if (sessionDir && masterTaskId) {
-            const storageRoot = path.dirname(path.dirname(sessionDir)); // up from ipc/<sessionDirName>
-            const debugDir = path.join(storageRoot, 'debug', masterTaskId);
+        // F-4 audit fix: Write debug clone outside IPC tree to <storageBase>/debug/<masterTaskId>/
+        if (sessionDir && masterTaskId && storageBase) {
+            const debugDir = getDebugDir(storageBase, masterTaskId);
             fs.mkdir(debugDir, { recursive: true })
                 .then(() => fs.writeFile(path.join(debugDir, 'consolidation-report.md'), markdown, 'utf-8'))
                 .catch(err => log.warn('[ConsolidationAgent] Debug clone (report) failed (non-fatal):', err));

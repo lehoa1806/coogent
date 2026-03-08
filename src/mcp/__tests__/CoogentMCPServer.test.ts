@@ -170,7 +170,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
         // Set the summary via the DB layer (the TaskState from getTaskState
         // is now a fresh snapshot from SQLite, not a mutable reference).
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (server as any).db.upsertTask(VALID_MASTER_TASK_ID, { summary: 'This is the task summary' });
+        (server as any).db.tasks.upsert(VALID_MASTER_TASK_ID, { summary: 'This is the task summary' });
 
         const result = await client.readResource({
             uri: RESOURCE_URIS.taskSummary(VALID_MASTER_TASK_ID),

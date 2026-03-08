@@ -73,7 +73,7 @@ export class SelfHealingController {
         if (this.db && this.masterTaskId) {
             try {
                 const phaseIdStr = mcpPhaseId ?? `phase-${String(phaseId).padStart(3, '0')}`;
-                this.db.upsertHealingAttempt(this.masterTaskId, phaseIdStr, {
+                this.db.verdicts.upsertHealing(this.masterTaskId, phaseIdStr, {
                     attemptNumber: existing.length,
                     exitCode,
                     stderrTail: stderr.slice(-4096),

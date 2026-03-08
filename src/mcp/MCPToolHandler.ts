@@ -243,13 +243,13 @@ export class MCPToolHandler {
 
         if (phaseId) {
             // Phase-level plan → persist via DB
-            this.db.upsertPhasePlan(masterTaskId, phaseId, markdownContent);
+            this.db.phases.upsertPlan(masterTaskId, phaseId, markdownContent);
             log.info(
                 `[MCPToolHandler] Phase implementation plan saved: ${masterTaskId} / ${phaseId}`
             );
         } else {
             // Master-level plan → persist via DB
-            this.db.upsertTask(masterTaskId, { implementationPlan: markdownContent });
+            this.db.tasks.upsert(masterTaskId, { implementationPlan: markdownContent });
             log.info(
                 `[MCPToolHandler] Master implementation plan saved: ${masterTaskId}`
             );
@@ -301,7 +301,7 @@ export class MCPToolHandler {
         };
 
         // Persist handoff to DB — upsertHandoff ensures parent task/phase rows exist
-        this.db.upsertHandoff(handoff);
+        this.db.handoffs.upsert(handoff);
 
         log.info(
             `[MCPToolHandler] Phase handoff saved: ${masterTaskId} / ${phaseId} — ` +
@@ -328,7 +328,7 @@ export class MCPToolHandler {
         const markdownContent = MCPValidator.validateString(args['markdown_content'], 'markdown_content');
 
         // Persist consolidation report to DB
-        this.db.upsertTask(masterTaskId, { consolidationReport: markdownContent });
+        this.db.tasks.upsert(masterTaskId, { consolidationReport: markdownContent });
 
         log.info(
             `[MCPToolHandler] Consolidation report saved: ${masterTaskId}`
@@ -368,7 +368,7 @@ export class MCPToolHandler {
          * performing any file I/O. Prevents IDOR by callers with fabricated but
          * syntactically valid masterTaskId values.
          */
-        const task = this.db.getTask(masterTaskId);
+        const task = this.db.tasks.get(masterTaskId);
         if (!task) {
             log.warn(`[MCPToolHandler] R-3: Unauthorized file read attempt for task ${masterTaskId}.`);
             throw new Error('Unauthorized');

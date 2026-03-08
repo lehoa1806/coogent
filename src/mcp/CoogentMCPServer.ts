@@ -21,6 +21,7 @@ import { ArtifactDB } from './ArtifactDB.js';
 import { MCPResourceHandler } from './MCPResourceHandler.js';
 import { MCPToolHandler } from './MCPToolHandler.js';
 import { PluginLoader } from './PluginLoader.js';
+import { DATABASE_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -186,7 +187,7 @@ export class CoogentMCPServer {
      *        Data is keyed by masterTaskId so all sessions share one DB safely.
      */
     async init(coogentDir: string): Promise<void> {
-        const dbPath = path.join(coogentDir, 'artifacts.db');
+        const dbPath = path.join(coogentDir, DATABASE_FILE);
         this.db = await ArtifactDB.create(dbPath);
 
         // Register protocol handlers now that DB is ready
@@ -242,7 +243,7 @@ export class CoogentMCPServer {
 
     /** Get the full task state for internal use (e.g., from the engine). */
     getTaskState(masterTaskId: string): TaskState | undefined {
-        return this.db.getTask(masterTaskId);
+        return this.db.tasks.get(masterTaskId);
     }
 
     /**
@@ -250,7 +251,7 @@ export class CoogentMCPServer {
      * Call this on session reset to prevent unbounded storage growth.
      */
     purgeTask(masterTaskId: string): void {
-        this.db.deleteTask(masterTaskId);
+        this.db.tasks.delete(masterTaskId);
         log.info(`[CoogentMCPServer] Purged task: ${masterTaskId}`);
     }
 
@@ -260,7 +261,7 @@ export class CoogentMCPServer {
      * to ensure the prompt survives extension restarts.
      */
     upsertSummary(masterTaskId: string, summary: string): void {
-        this.db.upsertTask(masterTaskId, { summary });
+        this.db.tasks.upsert(masterTaskId, { summary });
         log.info(`[CoogentMCPServer] Task summary saved: ${masterTaskId}`);
     }
 
@@ -269,7 +270,7 @@ export class CoogentMCPServer {
      * Called by EngineWiring on `run:completed` event.
      */
     setTaskCompleted(masterTaskId: string): void {
-        this.db.upsertTask(masterTaskId, { completedAt: Date.now() });
+        this.db.tasks.upsert(masterTaskId, { completedAt: Date.now() });
         log.info(`[CoogentMCPServer] Task marked completed: ${masterTaskId}`);
     }
 
@@ -278,7 +279,7 @@ export class CoogentMCPServer {
      * Called by EngineWiring on worker exit to survive session loads.
      */
     upsertWorkerOutput(masterTaskId: string, phaseId: string, output: string, stderr: string = ''): void {
-        this.db.upsertWorkerOutput(masterTaskId, phaseId, output, stderr);
+        this.db.phases.upsertOutput(masterTaskId, phaseId, output, stderr);
     }
 
     /**
@@ -286,7 +287,7 @@ export class CoogentMCPServer {
      * Used during session load to hydrate the webview.
      */
     getWorkerOutputs(masterTaskId: string): Record<string, string> {
-        return this.db.getWorkerOutputs(masterTaskId);
+        return this.db.phases.getOutputs(masterTaskId);
     }
 
     // ── Session Tracking ─────────────────────────────────────────────────
@@ -296,12 +297,12 @@ export class CoogentMCPServer {
      * Replaces the old `current-session` file approach.
      */
     upsertSession(dirName: string, sessionId: string, prompt: string, createdAt: number): void {
-        this.db.upsertSession(dirName, sessionId, prompt, createdAt);
+        this.db.sessions.upsert(dirName, sessionId, prompt, createdAt);
     }
 
     /** Retrieve the most recently created session. */
     getLatestSession(): { dirName: string; sessionId: string; prompt: string; createdAt: number } | undefined {
-        return this.db.getLatestSession();
+        return this.db.sessions.getLatest();
     }
 
     // ── Phase Log Tracking ───────────────────────────────────────────────
@@ -322,7 +323,7 @@ export class CoogentMCPServer {
             completedAt?: number;
         }
     ): void {
-        this.db.upsertPhaseLog(masterTaskId, phaseId, fields);
+        this.db.phases.upsertLog(masterTaskId, phaseId, fields);
     }
 
     /** Retrieve a phase execution log. */
@@ -337,7 +338,7 @@ export class CoogentMCPServer {
         startedAt: number;
         completedAt: number | null;
     } | undefined {
-        return this.db.getPhaseLog(masterTaskId, phaseId);
+        return this.db.phases.getLog(masterTaskId, phaseId);
     }
 
     /**

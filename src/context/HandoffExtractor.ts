@@ -5,8 +5,17 @@
 import type { Phase, PhaseId } from '../types/index.js';
 import type { MCPClientBridge } from '../mcp/MCPClientBridge.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
+import { z } from 'zod';
 import { SecretsGuard } from './SecretsGuard.js';
 import log from '../logger/log.js';
+
+// S2-5 (AI-4): Structured handoff JSON schema
+const HandoffJsonSchema = z.object({
+    decisions: z.array(z.string()).default([]),
+    modified_files: z.array(z.string()).default([]),
+    unresolved_issues: z.array(z.string()).default([]),
+    next_steps_context: z.string().default(''),
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  HandoffReport Interface
@@ -96,7 +105,6 @@ export class HandoffExtractor {
     async extractHandoff(
         phaseId: number,
         workerOutput: string,
-        _workspaceRoot: string,
     ): Promise<HandoffReport> {
         const parsed = this.parseHandoffJson(workerOutput);
 
@@ -147,7 +155,6 @@ export class HandoffExtractor {
     async saveHandoff(
         phaseId: number,
         report: HandoffReport,
-        _sessionDir: string,
         mcpBridge?: MCPClientBridge,
         masterTaskId?: string,
     ): Promise<void> {
@@ -179,8 +186,6 @@ export class HandoffExtractor {
      */
     async buildNextContext(
         phase: Phase,
-        _sessionDir: string,
-        _workspaceRoot: string,
     ): Promise<string> {
         const dependsOn: readonly PhaseId[] = phase.depends_on ?? [];
         if (dependsOn.length === 0) {
@@ -197,7 +202,7 @@ export class HandoffExtractor {
                 const mcpPhaseId = this.phaseIdMap.get(depId);
                 if (mcpPhaseId) {
                     try {
-                        const dbHandoff = this.db.getHandoff(this.masterTaskId, mcpPhaseId);
+                        const dbHandoff = this.db.handoffs.get(this.masterTaskId, mcpPhaseId);
                         if (dbHandoff) {
                             report = {
                                 phaseId: depId,
@@ -258,8 +263,9 @@ export class HandoffExtractor {
     // ═══════════════════════════════════════════════════════════════════════════
 
     /**
-     * Attempt to extract a JSON handoff block from worker output.
-     * Looks for the last ```json ... ``` fenced block.
+     * S2-5 (AI-4): Parse handoff JSON with Zod validation.
+     * Attempts fenced JSON blocks first, then tries raw JSON extraction.
+     * Falls back to Zod `.safeParse()` for structural validation.
      */
     private parseHandoffJson(output: string): Record<string, unknown> | null {
         // Try fenced JSON blocks (last one wins)
@@ -272,24 +278,32 @@ export class HandoffExtractor {
 
         if (lastMatch) {
             try {
-                return JSON.parse(lastMatch.trim());
+                const raw = JSON.parse(lastMatch.trim());
+                const result = HandoffJsonSchema.safeParse(raw);
+                if (result.success) {
+                    return result.data;
+                }
+                log.warn(`[HandoffExtractor] Handoff JSON failed Zod validation: ${result.error.message}`);
+                // Continue to try raw fallback
             } catch {
                 // Fall through to raw JSON attempt
             }
         }
 
-        // Fallback: try to find a raw JSON object with the expected keys
-        const rawRegex = /\{[\s\S]*?"decisions"[\s\S]*?"modified_files"[\s\S]*?\}/g;
-        let lastRawMatch: string | null = null;
-        while ((match = rawRegex.exec(output)) !== null) {
-            lastRawMatch = match[0];
-        }
-
-        if (lastRawMatch) {
-            try {
-                return JSON.parse(lastRawMatch);
-            } catch {
-                // Could not parse
+        // S2-5 (AI-4): Fallback — try to find and validate any JSON object
+        // with at least one expected key (replaces fragile greedy regex)
+        const jsonCandidates = output.match(/\{[\s\S]*?\}/g);
+        if (jsonCandidates) {
+            for (let i = jsonCandidates.length - 1; i >= 0; i--) {
+                try {
+                    const raw = JSON.parse(jsonCandidates[i]);
+                    const result = HandoffJsonSchema.safeParse(raw);
+                    if (result.success) {
+                        return result.data;
+                    }
+                } catch {
+                    // Not valid JSON — try next candidate
+                }
             }
         }
 

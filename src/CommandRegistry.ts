@@ -6,6 +6,8 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 
+import { getSessionDir } from './constants/paths.js';
+
 import type { ServiceContainer } from './ServiceContainer.js';
 import { StateManager } from './state/StateManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
@@ -80,7 +82,7 @@ function showMissionControl(
         makeOnReset(svc, sessionDirName),
         svc.mcpServer,
         svc.mcpBridge,
-        svc.workerRegistry
+        svc.agentRegistry
     );
 }
 
@@ -122,7 +124,7 @@ export function registerAllCommands(
             if (workspaceRoot) {
                 const newId = generateSessionId();
                 const newDirName = formatSessionDirName(newId);
-                const newDir = path.join(workspaceRoot, '.coogent', 'ipc', newDirName);
+                const newDir = getSessionDir(svc.storageBase!, newDirName);
                 svc.workerOutputAccumulator.clear();
                 svc.sandboxBranchCreatedForSession.clear();
                 svc.currentSessionDir = newDir;
@@ -295,7 +297,7 @@ export function registerAllCommands(
                 if (workspaceRoot) {
                     const newId = generateSessionId();
                     const newDirName = formatSessionDirName(newId);
-                    const newDir = path.join(workspaceRoot, '.coogent', 'ipc', newDirName);
+                    const newDir = getSessionDir(svc.storageBase!, newDirName);
                     svc.workerOutputAccumulator.clear();
                     svc.sandboxBranchCreatedForSession.clear();
                     svc.currentSessionDir = newDir;
@@ -386,6 +388,61 @@ export function registerAllCommands(
             } catch (err: any) {
                 vscode.window.showErrorMessage(`Coogent: Failed to open diff review — ${err?.message ?? err}`);
             }
+        })
+    );
+
+    // ── dumpState ──────────────────────────────────────────────────────
+    // S3-5: Diagnostic command outputting FSM state, workers, runbook status.
+    context.subscriptions.push(
+        vscode.commands.registerCommand('coogent.dumpState', () => {
+            const channel = vscode.window.createOutputChannel('Coogent State Dump');
+            channel.clear();
+            channel.appendLine('═══ Coogent State Dump ═══');
+            channel.appendLine(`Timestamp: ${new Date().toISOString()}`);
+            channel.appendLine('');
+
+            // FSM state
+            if (svc.engine) {
+                channel.appendLine(`FSM State: ${svc.engine.getState()}`);
+                channel.appendLine(`Active Worker Count: ${svc.engine.getActiveWorkerCount()}`);
+                channel.appendLine(`Pause Requested: ${svc.engine.isPauseRequested()}`);
+            } else {
+                channel.appendLine('Engine: NOT INITIALIZED');
+            }
+            channel.appendLine('');
+
+            // Runbook status
+            const runbook = svc.engine?.getRunbook();
+            if (runbook) {
+                channel.appendLine(`Runbook Status: ${runbook.status}`);
+                channel.appendLine(`Runbook Project: ${runbook.project_id}`);
+                channel.appendLine(`Total Phases: ${runbook.phases.length}`);
+                const byCounts = {
+                    pending: 0, running: 0, completed: 0, failed: 0,
+                };
+                for (const p of runbook.phases) {
+                    const key = p.status as keyof typeof byCounts;
+                    if (key in byCounts) byCounts[key]++;
+                }
+                channel.appendLine(`  Pending: ${byCounts.pending}  Running: ${byCounts.running}  Completed: ${byCounts.completed}  Failed: ${byCounts.failed}`);
+            } else {
+                channel.appendLine('Runbook: NONE');
+            }
+            channel.appendLine('');
+
+            // Service container
+            channel.appendLine('── Registered Services ──');
+            const initOrder = svc.getInitOrder();
+            channel.appendLine(`Services (${initOrder.length}): ${initOrder.join(', ')}`);
+            channel.appendLine('');
+
+            // Session info
+            channel.appendLine(`Session Dir: ${svc.currentSessionDir ?? 'NONE'}`);
+            channel.appendLine(`Worker Output Accumulators: ${svc.workerOutputAccumulator.size}`);
+
+            channel.appendLine('');
+            channel.appendLine('═══ End State Dump ═══');
+            channel.show(true);
         })
     );
 }

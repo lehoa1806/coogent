@@ -39,7 +39,9 @@ function makeMockEngine() {
 
 function makeMockDB() {
     return {
-        upsertEvaluationResult: jest.fn(),
+        verdicts: {
+            upsertEvaluation: jest.fn(),
+        },
     } as any;
 }
 
@@ -81,8 +83,8 @@ describe('EvaluationOrchestrator — F-1 audit fix: parallel mode persistence', 
         // handleWorkerExited with isLastWorker=false triggers applyVerdictInPlace
         await orchestrator.handleWorkerExited(phase.id as number, 0, '', '', false);
 
-        expect(mockDB.upsertEvaluationResult).toHaveBeenCalledTimes(1);
-        expect(mockDB.upsertEvaluationResult).toHaveBeenCalledWith(
+        expect(mockDB.verdicts.upsertEvaluation).toHaveBeenCalledTimes(1);
+        expect(mockDB.verdicts.upsertEvaluation).toHaveBeenCalledWith(
             'task-001',
             'phase-001-abc',
             expect.objectContaining({
@@ -101,8 +103,8 @@ describe('EvaluationOrchestrator — F-1 audit fix: parallel mode persistence', 
         // Exit code 1 => FAIL for exit_code:0 criteria
         await orchestrator.handleWorkerExited(phase.id as number, 1, '', 'some error', false);
 
-        expect(mockDB.upsertEvaluationResult).toHaveBeenCalledTimes(1);
-        expect(mockDB.upsertEvaluationResult).toHaveBeenCalledWith(
+        expect(mockDB.verdicts.upsertEvaluation).toHaveBeenCalledTimes(1);
+        expect(mockDB.verdicts.upsertEvaluation).toHaveBeenCalledWith(
             'task-001',
             'phase-001-abc',
             expect.objectContaining({

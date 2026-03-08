@@ -5,6 +5,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { EngineState } from '../types/index.js';
+import { getTelemetryLogDir, ENGINE_LOG_FILE } from '../constants/paths.js';
 import log from './log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -47,8 +48,8 @@ export class TelemetryLogger {
     private runDir: string | null = null;
     private initialized = false;
 
-    constructor(workspaceRoot: string, logDirName = '.coogent/logs') {
-        this.logDir = path.join(workspaceRoot, logDirName);
+    constructor(workspaceRoot: string) {
+        this.logDir = getTelemetryLogDir(workspaceRoot);
     }
 
     /**
@@ -113,7 +114,7 @@ export class TelemetryLogger {
         message: string,
         data?: Record<string, unknown>
     ): Promise<void> {
-        await this.appendEntry('engine.jsonl', {
+        await this.appendEntry(ENGINE_LOG_FILE, {
             timestamp: new Date().toISOString(),
             level,
             category: 'state',
@@ -196,6 +197,68 @@ export class TelemetryLogger {
             category: 'context',
             message: `Context assembled: ${totalTokens}/${limit} tokens, ${fileCount} files`,
             data: { totalTokens, limit, fileCount },
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Agent Selection Logging
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /** Log an agent selection event — which agent was chosen and why. */
+    async logAgentSelected(
+        subtaskId: string,
+        agentType: string,
+        score: number,
+        rationale: string[],
+    ): Promise<void> {
+        await this.logEngine('info', `Agent selected: ${agentType} for ${subtaskId}`, {
+            event: 'agent_selected',
+            subtaskId,
+            agentType,
+            score,
+            rationale,
+        });
+    }
+
+    /** Log a successful prompt compilation event. */
+    async logPromptCompiled(
+        subtaskId: string,
+        promptId: string,
+        agentType: string,
+    ): Promise<void> {
+        await this.logEngine('info', `Prompt compiled: ${promptId} (${agentType})`, {
+            event: 'prompt_compiled',
+            subtaskId,
+            promptId,
+            agentType,
+        });
+    }
+
+    /** Log a prompt validation failure event. */
+    async logPromptValidationFailed(
+        subtaskId: string,
+        promptId: string,
+        errors: string[],
+    ): Promise<void> {
+        await this.logEngine('error', `Prompt validation failed: ${promptId}`, {
+            event: 'prompt_validation_failed',
+            subtaskId,
+            promptId,
+            errors,
+        });
+    }
+
+    /** Log a worker mismatch event — agent type doesn't fit the result. */
+    async logWorkerMismatch(
+        subtaskId: string,
+        agentType: string,
+        recommendedReassignment: string | null,
+    ): Promise<void> {
+        await this.logEngine('warn', `Worker mismatch: ${agentType} for ${subtaskId}`, {
+            event: 'worker_mismatch',
+            subtaskId,
+            agentType,
+            recommendedReassignment,
         });
     }
 

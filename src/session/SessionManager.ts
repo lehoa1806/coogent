@@ -9,6 +9,7 @@ import { RUNBOOK_FILENAME } from '../types/index.js';
 import type { Runbook, RunbookStatus } from '../types/index.js';
 import { StateManager } from '../state/StateManager.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
+import { IPC_DIR } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -103,7 +104,7 @@ export class SessionManager {
     private db?: ArtifactDB;
 
     constructor(storageBase: string, currentSessionId: string, currentSessionDirName?: string) {
-        this.ipcDir = path.join(storageBase, 'ipc');
+        this.ipcDir = path.join(storageBase, IPC_DIR);
         this.currentSessionId = currentSessionId;
         this.currentSessionDirName = currentSessionDirName ?? currentSessionId;
     }
@@ -176,7 +177,7 @@ export class SessionManager {
         // ── Primary: DB query ────────────────────────────────────────
         if (this.db) {
             try {
-                const rows = this.db.listSessions();
+                const rows = this.db.sessions.list();
                 for (const row of rows) {
                     // Exclude current active session
                     if (row.sessionDirName === this.currentSessionDirName) continue;
@@ -297,7 +298,7 @@ export class SessionManager {
         // ── Primary: DB search ───────────────────────────────────────
         if (this.db) {
             try {
-                const rows = this.db.listSessions();
+                const rows = this.db.sessions.list();
                 for (const row of rows) {
                     if (row.sessionDirName === this.currentSessionDirName) continue;
                     seenDirNames.add(row.sessionDirName);
@@ -359,7 +360,7 @@ export class SessionManager {
         // Try DB first via session dir name lookup
         if (this.db) {
             try {
-                const rows = this.db.listSessions();
+                const rows = this.db.sessions.list();
                 const match = rows.find(r =>
                     stripSessionDirPrefix(r.sessionDirName) === sessionId ||
                     r.sessionId === sessionId

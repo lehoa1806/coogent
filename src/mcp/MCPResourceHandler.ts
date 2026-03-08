@@ -49,7 +49,7 @@ export class MCPResourceHandler {
                 mimeType: string;
             }> = [];
 
-            const taskIds = this.db.listTaskIds();
+            const taskIds = this.db.tasks.listIds();
             for (const taskId of taskIds) {
                 // Task-level resources
                 resources.push({
@@ -74,7 +74,7 @@ export class MCPResourceHandler {
                 });
 
                 // Phase-level resources — lightweight query avoids full task deserialization
-                const phaseIds = this.db.listPhaseIds(taskId);
+                const phaseIds = this.db.phases.listIds(taskId);
                 for (const phaseId of phaseIds) {
                     resources.push({
                         uri: RESOURCE_URIS.phasePlan(taskId, phaseId),
@@ -104,7 +104,7 @@ export class MCPResourceHandler {
                 throw new Error(`Unknown or malformed resource URI: ${uri}`);
             }
 
-            const task = this.db.getTask(parsed.masterTaskId);
+            const task = this.db.tasks.get(parsed.masterTaskId);
             if (!task) {
                 throw new Error(`Task not found: ${parsed.masterTaskId}`);
             }

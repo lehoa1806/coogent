@@ -68,7 +68,12 @@ coogent/
 │   ├── CommandRegistry.ts        ← VS Code command registrations (14 commands)
 │   ├── EngineWiring.ts           ← Engine ↔ ADK ↔ UI event subscriptions
 │   ├── PlannerWiring.ts          ← PlannerAgent ↔ Engine event wiring
-│   ├── types/index.ts            ← Universal type system (FSM, IPC, branded types)
+│   ├── types/                    ← Domain-scoped type system (engine, phase, ipc, evaluators)
+│   │   ├── engine.ts             ← FSM states, events, transition table
+│   │   ├── phase.ts              ← Phase, Runbook, branded types
+│   │   ├── ipc.ts                ← Host↔Webview message contracts
+│   │   ├── evaluators.ts         ← Evaluator types and results
+│   │   └── index.ts              ← Barrel re-export
 │   │
 │   ├── engine/                   ← Engine (FSM), Scheduler (DAG), SelfHealingController
 │   ├── state/                    ← StateManager (WAL + mutex + AJV validation)
@@ -77,6 +82,7 @@ coogent/
 │   ├── context/                  ← ContextScoper, ASTFileResolver, TokenPruner, TiktokenEncoder, SecretsGuard, RepoMap
 │   ├── evaluators/               ← EvaluatorRegistryV2 (exit_code, regex, toolchain, test_suite) + constants
 │   ├── git/                      ← GitManager (execFile), GitSandboxManager (VS Code Git API)
+│   ├── agent-selection/           ← AgentRegistry, AgentSelector, SelectionPipeline, templates
 │   ├── consolidation/            ← ConsolidationAgent (phase aggregation → report)
 │   ├── session/                  ← SessionManager (history, search, pruning)
 │   ├── planner/                  ← PlannerAgent (prompt → runbook decomposition)
@@ -106,21 +112,26 @@ coogent/
 
 ---
 
-## Worker Registry & Skill Routing
+## Agent Registry & Selection Pipeline
 
-### WorkerRegistry API
+### AgentRegistry API
 
-The `WorkerRegistry` class (`src/adk/WorkerRegistry.ts`) manages worker profile loading and skill-based matching.
+The `AgentRegistry` class (`src/agent-selection/AgentRegistry.ts`) manages agent profile loading with cascading configuration and skill-based matching.
 
 | Method | Signature | Description |
 |---|---|---|
-| `getBestWorker` | `(requiredSkills: string[]) → Promise<WorkerAssignment>` | Returns the best-matching profile using Jaccard similarity. Falls back to the generalist when no skills match above 0. |
+| `getBestAgent` | `(requiredSkills: string[]) → Promise<AgentProfile>` | Returns the best-matching profile using Jaccard similarity + weighted scoring. Falls back to the generalist when no skills match above 0. |
 | `getAvailableTags` | `() → Promise<string[]>` | Returns all unique tags across all loaded profiles. Used by PlannerAgent to populate the prompt. |
-| `getWorkers` | `() → Promise<WorkerProfile[]>` | Returns all loaded profiles. Used by the Worker Studio UI. |
+| `getAgents` | `() → Promise<AgentProfile[]>` | Returns all loaded profiles. Used by the Worker Studio UI. |
+| `getByType` | `(type: AgentType) → AgentProfile \| undefined` | Synchronous lookup by agent type. Used by the SelectionPipeline. |
+
+### SelectionPipeline
+
+The `SelectionPipeline` orchestrates the full flow: `AgentSelector.select()` → `WorkerPromptCompiler.compile()` → `PromptValidator.validate()` → audit record. See [ARCHITECTURE.md](ARCHITECTURE.md#agent-registry--selection-pipeline) for the full algorithm.
 
 ### Adding New Built-In Profiles
 
-Edit `src/workers/defaults.json` to add a new built-in worker:
+Edit `src/agent-selection/registry.json` to add a new built-in agent:
 
 ```json
 {
@@ -128,25 +139,28 @@ Edit `src/workers/defaults.json` to add a new built-in worker:
   "name": "Mobile Expert",
   "description": "Specialist in React Native and Swift UI development",
   "system_prompt": "You are a mobile expert specializing in React Native and SwiftUI...",
-  "tags": ["mobile", "react-native", "swift", "ios", "android"]
+  "tags": ["mobile", "react-native", "swift", "ios", "android"],
+  "handles": ["implementation"],
+  "risk_tolerance": "medium"
 }
 ```
 
 Profiles must have unique `id` values. The `tags` array drives skill-based matching.
 
-### Testing Worker Routing
+### Testing Agent Selection
 
-Tests are in `src/adk/__tests__/WorkerRegistry.test.ts` and cover:
+Tests are in `src/agent-selection/__tests__/` and cover:
 
-- **Default loading** — Built-in profiles are loaded on first access
-- **Cascading overrides** — Workspace `.coogent/workers.json` overrides settings which override defaults
-- **Jaccard matching** — Verifies correct profile selection for various `required_skills` combinations
-- **Tag collection** — `getAvailableTags()` returns deduplicated tags
-- **Lazy initialization** — Registry loads profiles only on first method call
+- **AgentRegistry.test.ts** — Profile loading, cascading overrides, tag collection
+- **AgentSelector.test.ts** — Hard filter, weighted scoring, tie-break, fallback
+- **WorkerPromptCompiler.test.ts** — Template interpolation, prompt assembly
+- **PromptValidator.test.ts** — Structural validation rules
+- **SubtaskSpecBuilder.test.ts** — Spec construction from phase data
+- **WorkerResultHandler.test.ts** — Result parsing and evaluation
 
 Run targeted tests:
 ```bash
-npx jest src/adk/__tests__/WorkerRegistry
+npx jest src/agent-selection
 ```
 
 ---
@@ -264,9 +278,10 @@ function makeMockBridge() {
 | `npm run build:webview` | Build Svelte webview (Vite) |
 | `npm run dev:webview` | Watch mode for webview |
 | `npm run build` | Full build (Host + Webview) |
-| `npm run lint` | TypeScript type check (`tsc --noEmit`) |
-| `npm test` | Run all tests (Jest) |
-| `npm run ci` | lint → test → `npm audit` |
+| `npm run lint` | TypeScript type check + ESLint (`tsc --noEmit && eslint src/`) |
+| `npm test` | Run all host tests (Jest) |
+| `npm run test:webview` | Run webview tests (Vitest) |
+| `npm run ci` | lint → test → test:webview → `npm audit` |
 | `npm run prepackage` | Minified production build |
 | `npm run package` | Create `.vsix` package |
 | `npm run clean` | Remove `out/` directory |

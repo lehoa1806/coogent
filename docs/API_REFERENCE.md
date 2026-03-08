@@ -91,48 +91,58 @@ Communication between the Extension Host and the Svelte Webview uses `postMessag
 
 | `type` | Payload | When Sent |
 |---|---|---|
-| `STATE_SNAPSHOT` | `Partial<AppState>` | State change, panel reveal, panel init |
-| `PHASE_STATUS` | `{ phaseId: string, status: PhaseStatus }` | Phase transition |
-| `PHASE_OUTPUT` | `{ phaseId: string, chunk: string }` | Real-time worker stdout/stderr |
-| `MCP_RESOURCE_DATA` | `{ requestId: string, data?: T, error?: string }` | Response to `MCP_FETCH_RESOURCE` |
+| `STATE_SNAPSHOT` | `{ runbook, engineState, masterTaskId? }` | State change, panel reveal, panel init |
+| `PHASE_STATUS` | `{ phaseId, status, durationMs? }` | Phase transition |
+| `PHASE_OUTPUT` | `{ phaseId, stream, chunk }` | Real-time worker stdout/stderr |
+| `TOKEN_BUDGET` | `{ phaseId, breakdown[], totalTokens, limit }` | After context scoping |
+| `ERROR` | `{ code, message, phaseId? }` | Engine errors (typed `ErrorCode`) |
+| `LOG_ENTRY` | `{ timestamp, level, message }` | Structured log events |
+| `PLAN_DRAFT` | `{ draft: Runbook, fileTree[] }` | Planner agent produced a runbook draft |
+| `PLAN_STATUS` | `{ status, message? }` | Planning spinner updates |
+| `PLAN_SUMMARY` | `{ summary }` | Planning phase output for review |
+| `IMPLEMENTATION_PLAN` | `{ plan }` | Implementation plan markdown |
+| `SESSION_LIST` | `{ sessions[] }` | Recent session list for history drawer |
+| `SESSION_SEARCH_RESULTS` | `{ query, sessions[] }` | Filtered search results |
+| `CONVERSATION_MODE` | `{ mode, smartSwitchTokenThreshold }` | Conversation mode sync |
+| `CONSOLIDATION_REPORT` | `{ report }` | Final report after all phases pass |
+| `MCP_RESOURCE_DATA` | `{ requestId, data, error? }` | Response to `MCP_FETCH_RESOURCE` |
+| `SUGGESTION_DATA` | `{ mentions[], workflows[] }` | @ mention and / workflow popups |
+| `ATTACHMENT_SELECTED` | `{ paths[] }` | File/image attachment selection result |
+| `workers:loaded` | `{ workers: AgentProfile[] }` | Loaded worker profiles |
 
 ### Webview → Host (Request)
 
 | `type` | Payload | Purpose |
 |---|---|---|
-| `MCP_FETCH_RESOURCE` | `{ uri: string, requestId: string }` | Fetch an artifact by URI |
-| `COMMAND` | `{ command: string, args?: unknown[] }` | Trigger an extension command |
-
-### Correlation Pattern
-
-1. **Generate**: The `mcpStore` factory creates a unique `requestId` (UUIDv4/7)
-2. **Track**: A one-time `message` event listener is attached to `window`
-3. **Filter**: Listener ignores messages where `requestId` doesn't match
-4. **Cleanup**: On matching response (or error), listener is removed and store updated
-
-```typescript
-// Svelte store factory (simplified)
-export function createMCPResource<T>(uri: string): MCPResourceStore<T> {
-    const { subscribe, set } = writable<MCPResourceState<T>>({
-        loading: true, data: null, error: null
-    });
-    let requestId = crypto.randomUUID();
-
-    function onMessage(event: MessageEvent) {
-        const msg = event.data;
-        if (msg.type === 'MCP_RESOURCE_DATA' && msg.payload.requestId === requestId) {
-            window.removeEventListener('message', onMessage);
-            if (msg.payload.error) set({ loading: false, data: null, error: msg.payload.error });
-            else set({ loading: false, data: msg.payload.data as T, error: null });
-        }
-    }
-
-    window.addEventListener('message', onMessage);
-    postMessage({ type: 'MCP_FETCH_RESOURCE', payload: { uri, requestId } });
-
-    return { subscribe, destroy: () => window.removeEventListener('message', onMessage) };
-}
-```
+| `CMD_START` | — | Start or resume execution |
+| `CMD_ABORT` | — | Abort the entire run |
+| `CMD_RETRY` | `{ phaseId }` | Retry a failed phase |
+| `CMD_SKIP_PHASE` | `{ phaseId }` | Skip a phase |
+| `CMD_PAUSE_PHASE` | `{ phaseId }` | Pause a running phase |
+| `CMD_STOP_PHASE` | `{ phaseId }` | Stop a running phase |
+| `CMD_RESTART_PHASE` | `{ phaseId }` | Restart a phase from scratch |
+| `CMD_EDIT_PHASE` | `{ phaseId, patch }` | Edit phase prompt/context/criteria |
+| `CMD_LOAD_RUNBOOK` | `{ filePath? }` | Load a runbook from disk |
+| `CMD_RESET` | — | Full reset to IDLE |
+| `CMD_REQUEST_STATE` | — | Request full state snapshot |
+| `CMD_PLAN_REQUEST` | `{ prompt, feedback? }` | Submit prompt for planning |
+| `CMD_PLAN_APPROVE` | — | Approve AI-generated plan |
+| `CMD_PLAN_REJECT` | `{ feedback }` | Reject plan with feedback |
+| `CMD_PLAN_EDIT_DRAFT` | `{ draft: Runbook }` | Edit draft runbook directly |
+| `CMD_PLAN_RETRY_PARSE` | — | Re-parse cached timeout output |
+| `CMD_SET_CONVERSATION_MODE` | `{ mode }` | Set conversation mode |
+| `CMD_REQUEST_REPORT` | — | Request consolidation report |
+| `CMD_REQUEST_PLAN` | — | Request implementation plan |
+| `CMD_REVIEW_DIFF` | `{ phaseId }` | Review diff for a phase |
+| `CMD_RESUME_PENDING` | — | Resume all pending phases |
+| `MCP_FETCH_RESOURCE` | `{ uri, requestId }` | Fetch an artifact by URI |
+| `CMD_UPLOAD_FILE` | — | Attach a file from workspace |
+| `CMD_UPLOAD_IMAGE` | — | Attach an image from workspace |
+| `workers:request` | — | Request loaded worker profiles |
+| `CMD_LIST_SESSIONS` | — | Request recent session list |
+| `CMD_SEARCH_SESSIONS` | `{ query }` | Search past sessions |
+| `CMD_LOAD_SESSION` | `{ sessionId }` | Load a specific session |
+| `CMD_DELETE_SESSION` | `{ sessionId }` | Delete a session |
 
 ---
 

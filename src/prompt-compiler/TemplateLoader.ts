@@ -2,31 +2,36 @@
 // src/prompt-compiler/TemplateLoader.ts — Loads orchestration and task-family templates
 // ─────────────────────────────────────────────────────────────────────────────
 
-import * as fs from 'fs';
-import * as path from 'path';
 import type { TaskFamily } from './types.js';
+import {
+    ORCHESTRATION_SKELETON,
+    FEATURE_IMPLEMENTATION,
+    BUG_FIX,
+    REFACTOR,
+    MIGRATION,
+    DOCUMENTATION_SYNTHESIS,
+    REPO_ANALYSIS,
+    REVIEW_ONLY,
+} from './templates.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Template file mapping
+//  Template content mapping
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Maps each {@link TaskFamily} to its corresponding template filename.
+ * Maps each {@link TaskFamily} to its inlined template content.
  */
-const FAMILY_TO_FILE: Record<TaskFamily, string> = {
-    feature_implementation: 'feature-implementation.md',
-    bug_fix: 'bug-fix.md',
-    refactor: 'refactor.md',
-    migration: 'migration.md',
-    documentation_synthesis: 'documentation-synthesis.md',
-    repo_analysis: 'repo-analysis.md',
-    review_only: 'review-only.md',
+const FAMILY_TO_CONTENT: Record<TaskFamily, string> = {
+    feature_implementation: FEATURE_IMPLEMENTATION,
+    bug_fix: BUG_FIX,
+    refactor: REFACTOR,
+    migration: MIGRATION,
+    documentation_synthesis: DOCUMENTATION_SYNTHESIS,
+    repo_analysis: REPO_ANALYSIS,
+    review_only: REVIEW_ONLY,
 };
 
-/** Filename of the fixed orchestration skeleton template. */
-const SKELETON_FILE = 'orchestration-skeleton.md';
-
-/** Default fallback family when a template file is missing. */
+/** Default fallback family when a template is missing. */
 const FALLBACK_FAMILY: TaskFamily = 'feature_implementation';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -34,28 +39,17 @@ const FALLBACK_FAMILY: TaskFamily = 'feature_implementation';
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Loads orchestration skeleton and task-family planning templates from disk.
+ * Provides orchestration skeleton and task-family planning templates.
  *
- * Templates are stored as Markdown files in the `templates/` directory adjacent
- * to this module. The loader reads them synchronously at call time so template
- * content is always up to date with the files on disk.
+ * Templates are inlined at build time by esbuild's `loader: { '.md': 'text' }`
+ * option, so no filesystem access is required at runtime. This ensures the
+ * templates are always available regardless of the extension's deployment path.
  *
- * If a requested task-family template file is missing, the loader falls back to
- * `feature-implementation.md` to ensure the compiler always has a usable template.
+ * If a requested task-family template is not found in the mapping, the loader
+ * falls back to `feature_implementation` to ensure the compiler always has a
+ * usable template.
  */
 export class TemplateLoader {
-    /** Resolved path to the templates directory. */
-    private readonly templatesDir: string;
-
-    /**
-     * Create a TemplateLoader.
-     * @param templatesDir - Optional override for the templates directory.
-     *   Defaults to the `templates/` folder adjacent to this compiled module.
-     */
-    constructor(templatesDir?: string) {
-        this.templatesDir = templatesDir ?? path.join(__dirname, 'templates');
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
     //  Public API
     // ─────────────────────────────────────────────────────────────────────────
@@ -67,48 +61,26 @@ export class TemplateLoader {
      * and worker contract rules that are common to every planning invocation.
      *
      * @returns The skeleton template content as a string.
-     * @throws If the skeleton file cannot be read.
      */
     loadSkeleton(): string {
-        return this.readTemplate(SKELETON_FILE);
+        return ORCHESTRATION_SKELETON;
     }
 
     /**
      * Load the planning template for a given task family.
      *
-     * If the template file for the requested family does not exist on disk,
-     * this method falls back to `feature-implementation.md`.
+     * If the template for the requested family is not available, this method
+     * falls back to `feature_implementation`.
      *
      * @param family - The classified task family.
      * @returns The task-family template content as a string.
      */
     loadTemplate(family: TaskFamily): string {
-        const filename = FAMILY_TO_FILE[family];
-        if (!filename) {
+        const content = FAMILY_TO_CONTENT[family];
+        if (!content) {
             // Unknown family — use fallback
-            return this.readTemplate(FAMILY_TO_FILE[FALLBACK_FAMILY]);
+            return FAMILY_TO_CONTENT[FALLBACK_FAMILY];
         }
-
-        const fullPath = path.join(this.templatesDir, filename);
-        if (!fs.existsSync(fullPath)) {
-            // Template file missing — fall back to feature-implementation
-            return this.readTemplate(FAMILY_TO_FILE[FALLBACK_FAMILY]);
-        }
-
-        return this.readTemplate(filename);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    //  Internals
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Read a template file from the templates directory.
-     * @param filename - The template filename (e.g., 'bug-fix.md').
-     * @returns The file content as a UTF-8 string.
-     */
-    private readTemplate(filename: string): string {
-        const fullPath = path.join(this.templatesDir, filename);
-        return fs.readFileSync(fullPath, 'utf-8');
+        return content;
     }
 }

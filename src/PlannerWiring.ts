@@ -10,6 +10,7 @@ import { buildImplementationPlanMarkdown } from './utils/planMarkdown.js';
 import log from './logger/log.js';
 import type { ServiceContainer } from './ServiceContainer.js';
 import type { ArtifactDB } from './mcp/ArtifactDB.js';
+import { getDebugDir } from './constants/paths.js';
 import type { Runbook } from './types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -32,10 +33,10 @@ export function wirePlanner(
     // ── Engine → PlannerAgent ──────────────────────────────────────────
     engine.on('plan:request', (prompt: string) => {
         (async () => {
-            // Inject fresh available tags from WorkerRegistry before planning
-            if (svc.workerRegistry) {
+            // Inject fresh available tags from AgentRegistry before planning
+            if (svc.agentRegistry) {
                 try {
-                    const tags = await svc.workerRegistry.getAvailableTags();
+                    const tags = await svc.agentRegistry.getAvailableTags();
                     plannerAgent.setAvailableTags(tags);
                     log.info(`[PlannerWiring] Injected ${tags.length} available tags into PlannerAgent`);
                 } catch (err) {
@@ -62,10 +63,8 @@ export function wirePlanner(
 
             // F-4 audit fix: Write debug clones outside IPC tree to .coogent/debug/<sessionDirName>/
             // (previously written to <sessionDir>/debug/ which is under IPC)
-            if (svc.stateManager) {
-                const sessionDir = svc.stateManager.getSessionDir();
-                const storageRoot = path.dirname(path.dirname(sessionDir)); // up from ipc/<sessionDirName>
-                const debugDir = path.join(storageRoot, 'debug', sessionDirName);
+            if (svc.stateManager && svc.storageBase) {
+                const debugDir = getDebugDir(svc.storageBase, sessionDirName);
                 fs.mkdir(debugDir, { recursive: true })
                     .then(() => fs.writeFile(path.join(debugDir, 'prompt.md'), prompt, 'utf-8'))
                     .catch(err => log.warn('[PlannerWiring] Debug clone (prompt) failed (non-fatal):', err));
@@ -83,7 +82,7 @@ export function wirePlanner(
                 if (db) {
                     try {
                         const implPlanMd = buildImplementationPlanMarkdown(currentDraft);
-                        db.upsertPlanRevision(sessionDirName, {
+                        db.audits.upsertPlanRevision(sessionDirName, {
                             feedback,
                             draftJson: JSON.stringify(currentDraft),
                             implementationPlanMd: implPlanMd,
@@ -96,9 +95,9 @@ export function wirePlanner(
             }
 
             // Re-inject fresh tags on re-plan as well
-            if (svc.workerRegistry) {
+            if (svc.agentRegistry) {
                 try {
-                    const tags = await svc.workerRegistry.getAvailableTags();
+                    const tags = await svc.agentRegistry.getAvailableTags();
                     plannerAgent.setAvailableTags(tags);
                 } catch {
                     // Best-effort — continue without tags
@@ -118,7 +117,7 @@ export function wirePlanner(
             const db: ArtifactDB | undefined = mcpServer.getArtifactDB?.();
             if (db) {
                 try {
-                    db.upsertPlanRevision(sessionDirName, {
+                    db.audits.upsertPlanRevision(sessionDirName, {
                         draftJson: JSON.stringify(approvedDraft),
                         implementationPlanMd: buildImplementationPlanMarkdown(approvedDraft),
                         status: 'approved',
@@ -163,7 +162,7 @@ export function wirePlanner(
             const db: ArtifactDB | undefined = mcpServer.getArtifactDB?.();
             if (db) {
                 try {
-                    db.upsertPlanRevision(sessionDirName, {
+                    db.audits.upsertPlanRevision(sessionDirName, {
                         draftJson: JSON.stringify(draft),
                         implementationPlanMd: buildImplementationPlanMarkdown(draft),
                         // BL-5 audit fix: Persist raw LLM output for audit trail
@@ -185,10 +184,8 @@ export function wirePlanner(
                 .catch(err => log.error('[Coogent] Failed to store implementation plan in MCP:', err));
 
             // F-4 audit fix: Write debug clones outside IPC tree
-            if (svc.stateManager) {
-                const sessionDir = svc.stateManager.getSessionDir();
-                const storageRoot = path.dirname(path.dirname(sessionDir));
-                const debugDir = path.join(storageRoot, 'debug', sessionDirName);
+            if (svc.storageBase) {
+                const debugDir = getDebugDir(svc.storageBase, sessionDirName);
                 fs.mkdir(debugDir, { recursive: true })
                     .then(() => fs.writeFile(path.join(debugDir, 'implementation-plan.md'), implPlanContent, 'utf-8'))
                     .catch(err => log.warn('[PlannerWiring] Debug clone (impl plan) failed (non-fatal):', err));

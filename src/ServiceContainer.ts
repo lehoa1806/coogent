@@ -19,7 +19,7 @@ import type { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 import type { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
 import type { MCPClientBridge } from './mcp/MCPClientBridge.js';
 import type { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
-import type { WorkerRegistry } from './adk/WorkerRegistry.js';
+import type { AgentRegistry } from './agent-selection/AgentRegistry.js';
 
 /**
  * Centralised container holding all extension service instances.
@@ -45,7 +45,7 @@ export class ServiceContainer {
     mcpServer: CoogentMCPServer | undefined;
     mcpBridge: MCPClientBridge | undefined;
     sidebarMenu: SidebarMenuProvider | undefined;
-    workerRegistry: WorkerRegistry | undefined;
+    agentRegistry: AgentRegistry | undefined;
     workspaceRoots: string[] | undefined;
 
     /** Extension-managed storage base path (from context.storageUri). */
@@ -143,7 +143,7 @@ export class ServiceContainer {
         this.mcpServer = undefined;
         this.mcpBridge = undefined;
         this.sidebarMenu = undefined;
-        this.workerRegistry = undefined;
+        this.agentRegistry = undefined;
         this.workspaceRoots = undefined;
         this.storageBase = undefined;
         this.workerOutputAccumulator.clear();
@@ -174,7 +174,7 @@ export type ResolvableServices = {
     mcpServer: CoogentMCPServer;
     mcpBridge: MCPClientBridge;
     sidebarMenu: SidebarMenuProvider;
-    workerRegistry: WorkerRegistry;
+    agentRegistry: AgentRegistry;
     workspaceRoots: string[];
     storageBase: string;
 };

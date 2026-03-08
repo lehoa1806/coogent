@@ -135,14 +135,16 @@ describe('StateManager', () => {
     function createMockDB() {
         const store: Record<string, { runbookJson?: string }> = {};
         return {
-            upsertTask(masterTaskId: string, fields: { runbookJson?: string }) {
-                if (!store[masterTaskId]) store[masterTaskId] = {};
-                if (fields.runbookJson !== undefined) {
-                    store[masterTaskId].runbookJson = fields.runbookJson;
-                }
-            },
-            getTask(masterTaskId: string) {
-                return store[masterTaskId] ?? undefined;
+            tasks: {
+                upsert(masterTaskId: string, fields: { runbookJson?: string }) {
+                    if (!store[masterTaskId]) store[masterTaskId] = {};
+                    if (fields.runbookJson !== undefined) {
+                        store[masterTaskId].runbookJson = fields.runbookJson;
+                    }
+                },
+                get(masterTaskId: string) {
+                    return store[masterTaskId] ?? undefined;
+                },
             },
             /** Test helper — peek at stored data. */
             _store: store,
@@ -154,7 +156,7 @@ describe('StateManager', () => {
         const mockDB = createMockDB();
 
         // Seed DB with runbook JSON
-        mockDB.upsertTask('task-1', { runbookJson: JSON.stringify(validRunbook) });
+        mockDB.tasks.upsert('task-1', { runbookJson: JSON.stringify(validRunbook) });
         sm.setArtifactDB(mockDB as any, 'task-1');
 
         // No IPC file exists — DB should be the only source
@@ -175,7 +177,7 @@ describe('StateManager', () => {
         expect(runbook).toEqual(validRunbook);
 
         // Verify promotion: DB should now have the runbook
-        const stored = mockDB.getTask('task-1');
+        const stored = mockDB.tasks.get('task-1');
         expect(stored?.runbookJson).toBeDefined();
         expect(JSON.parse(stored!.runbookJson!)).toEqual(validRunbook);
     });
@@ -199,7 +201,7 @@ describe('StateManager', () => {
         expect(recovered).toBe(true);
 
         // Verify DB persistence
-        const stored = mockDB.getTask('task-1');
+        const stored = mockDB.tasks.get('task-1');
         expect(stored?.runbookJson).toBeDefined();
         expect(JSON.parse(stored!.runbookJson!)).toEqual(validRunbook);
     });

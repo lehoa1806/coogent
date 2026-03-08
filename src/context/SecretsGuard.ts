@@ -2,13 +2,16 @@
 // src/context/SecretsGuard.ts — Pre-injection secrets detection
 // ─────────────────────────────────────────────────────────────────────────────
 // Scans file content for common secret patterns before injecting into
-// ephemeral AI workers. Non-blocking: returns findings for logging only.
+// ephemeral AI workers.
 //
 // Sprint 4 enhancement: Allowlist support to reduce false positives.
+// S1-3 (SEC-1): Optional blocking mode via `blockOnDetection` flag.
+// S1-7 (SEC-6): ReDoS-safe regex compilation for user-defined patterns.
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import { getCoogentDir } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 export interface ScanResult {
@@ -90,7 +93,7 @@ export class SecretsGuard {
         if (cached) return cached;
 
         const emptyAllowlist: Allowlist = { patterns: [], hashes: new Set() };
-        const filePath = path.join(workspaceRoot, '.coogent', 'secrets-allowlist.json');
+        const filePath = path.join(getCoogentDir(workspaceRoot), 'secrets-allowlist.json');
 
         try {
             const raw = await fs.readFile(filePath, 'utf-8');
@@ -101,7 +104,13 @@ export class SecretsGuard {
                 for (const p of parsed['allowed_patterns']) {
                     if (typeof p === 'string') {
                         try {
-                            patterns.push(new RegExp(p));
+                            // S1-7 (SEC-6): Validate user-defined regex against ReDoS
+                            const re = new RegExp(p);
+                            if (!SecretsGuard.isRegexSafe(re, p)) {
+                                log.warn(`[SecretsGuard] Skipping potentially unsafe regex pattern: ${p}`);
+                                continue;
+                            }
+                            patterns.push(re);
                         } catch {
                             log.warn(`[SecretsGuard] Invalid allowlist pattern: ${p}`);
                         }
@@ -187,7 +196,7 @@ export class SecretsGuard {
         }
 
         // 4. High-entropy strings in assignment-like patterns
-        const assignmentRe = /(?:['"]?\w+['"]?\s*[:=]\s*)['"]([A-Za-z0-9+/=_\-]{16,})['"\/]/g;
+        const assignmentRe = /(?:['"]?\w+['"]?\s*[:=]\s*)['"]([A-Za-z0-9+/=_-]{16,})['"]/g;
         let m: RegExpExecArray | null;
         while ((m = assignmentRe.exec(content)) !== null) {
             const value = m[1];
@@ -212,6 +221,27 @@ export class SecretsGuard {
         return findings.length > 0
             ? { safe: false, findings }
             : { safe: true, findings: [] };
+    }
+
+    /**
+     * S1-3 (SEC-1): Scan with blocking mode.
+     * Same as `scan()` but throws `SecretsBlockedError` if secrets are
+     * detected and `blockOnDetection` is true.
+     */
+    static scanWithBlocking(
+        content: string,
+        filePath: string,
+        blockOnDetection: boolean,
+        allowlist?: Allowlist,
+    ): ScanResult {
+        const result = SecretsGuard.scan(content, filePath, allowlist);
+        if (!result.safe && blockOnDetection) {
+            throw new SecretsBlockedError(
+                `Secrets detected in ${filePath}: ${result.findings.join('; ')}`,
+                result.findings,
+            );
+        }
+        return result;
     }
 
     /**
@@ -290,5 +320,44 @@ export class SecretsGuard {
             'sample', '...', 'none', 'null', 'undefined', 'empty',
         ];
         return placeholders.some(p => lower.includes(p));
+    }
+
+    /**
+     * S1-7 (SEC-6): Test if a regex pattern is safe from ReDoS.
+     * Runs a test string through the regex with a timeout.
+     * Returns false if the regex takes > 50ms on a crafted input.
+     */
+    private static isRegexSafe(re: RegExp, source: string): boolean {
+        // Heuristic: patterns with nested quantifiers are high-risk
+        if (/([+*])\??[^)]*\1/.test(source) || /(\([^)]*\)){2,}[+*]/.test(source)) {
+            // Test with a crafted adversarial string
+            const testStr = 'a'.repeat(50) + '!';
+            const start = Date.now();
+            try {
+                re.test(testStr);
+            } catch {
+                return false;
+            }
+            return Date.now() - start < 50;
+        }
+        return true;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  S1-3 (SEC-1): SecretsBlockedError
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Thrown when secrets are detected and blocking mode is enabled.
+ * Contains the list of findings for UI display.
+ */
+export class SecretsBlockedError extends Error {
+    constructor(
+        message: string,
+        public readonly findings: string[],
+    ) {
+        super(message);
+        this.name = 'SecretsBlockedError';
     }
 }
