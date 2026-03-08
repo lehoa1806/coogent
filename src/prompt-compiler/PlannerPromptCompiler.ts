@@ -256,6 +256,9 @@ export class PlannerPromptCompiler {
         const lines: string[] = [];
         lines.push(`workspace_type: ${fp.workspaceType}`);
         lines.push(`workspace_folders: ${fp.workspaceFolders.join(', ')}`);
+        if (fp.detectedSubdirectory) {
+            lines.push(`detected_project_root: ${fp.detectedSubdirectory}`);
+        }
         lines.push(`primary_languages: ${fp.primaryLanguages.join(', ') || 'none detected'}`);
         lines.push(`key_frameworks: ${fp.keyFrameworks.join(', ') || 'none detected'}`);
         lines.push(`package_manager: ${fp.packageManager}`);

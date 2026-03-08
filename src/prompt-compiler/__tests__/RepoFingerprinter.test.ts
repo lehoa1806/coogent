@@ -2,7 +2,8 @@ jest.mock('vscode', () => ({
     commands: { registerCommand: jest.fn() },
     window: { showWarningMessage: jest.fn(), showErrorMessage: jest.fn(), showInformationMessage: jest.fn() },
     workspace: { workspaceFolders: [], fs: { readFile: jest.fn(), stat: jest.fn(), readDirectory: jest.fn() } },
-    Uri: { file: jest.fn((p: string) => ({ fsPath: p })), joinPath: jest.fn((_base: any, rel: string) => ({ fsPath: `/mock/${rel}` })) },
+    Uri: { file: jest.fn((p: string) => ({ fsPath: p })), joinPath: jest.fn((_base: any, rel: string) => ({ fsPath: `${_base.fsPath}/${rel}` })) },
+    FileType: { File: 1, Directory: 2 },
 }), { virtual: true });
 
 import { RepoFingerprinter } from '../RepoFingerprinter.js';
@@ -64,6 +65,54 @@ function setupEmptyMockFs(): void {
     mockFs.readFile.mockRejectedValue(new Error('File not found'));
     mockFs.stat.mockRejectedValue(new Error('File not found'));
     mockFs.readDirectory.mockResolvedValue([]);
+}
+
+/**
+ * Register a mock file system with a project in a subdirectory.
+ *
+ * Sets up:
+ *  - Root: no manifest files, one subdirectory named `subdirName`
+ *  - Subdir: contains the given `files` (keyed by relative path from subdir)
+ *
+ * @param subdirName — The child directory name (e.g., 'coogent')
+ * @param files — Files within the subdirectory (relative to it)
+ */
+function setupSubdirProject(subdirName: string, files: Record<string, string>): void {
+    mockFs.readFile.mockImplementation(async (uri: { fsPath: string }) => {
+        for (const [key, content] of Object.entries(files)) {
+            // Match e.g. /tmp/test-workspace/coogent/package.json
+            if (uri.fsPath.endsWith(`${subdirName}/${key}`)) {
+                return encode(content);
+            }
+        }
+        throw new Error(`File not found: ${uri.fsPath}`);
+    });
+
+    mockFs.stat.mockImplementation(async (uri: { fsPath: string }) => {
+        for (const key of Object.keys(files)) {
+            if (uri.fsPath.endsWith(`${subdirName}/${key}`)) {
+                return { type: 1 /* FileType.File */ };
+            }
+        }
+        // The subdir itself "exists" as a directory
+        if (uri.fsPath.endsWith(subdirName)) {
+            return { type: 2 /* FileType.Directory */ };
+        }
+        throw new Error(`File not found: ${uri.fsPath}`);
+    });
+
+    // Root readDirectory returns the subdirectory entry
+    mockFs.readDirectory.mockImplementation(async (uri: { fsPath: string }) => {
+        // Root listing: return subdirectory as a dir
+        if (uri.fsPath.endsWith('test-workspace')) {
+            return [[subdirName, 2 /* FileType.Directory */]];
+        }
+        // Subdir listing: return file entries
+        return Object.keys(files).map(f => {
+            const basename = f.split('/').pop()!;
+            return [basename, 1 /* FileType.File */];
+        });
+    });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -238,5 +287,62 @@ describe('RepoFingerprinter', () => {
         expect(result).toBeDefined();
         expect(result.workspaceType).toBe('single');
         expect(result.workspaceFolders).toEqual(['.']);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Subdirectory project detection
+    // ─────────────────────────────────────────────────────────────────────────
+
+    it('should detect a Node project in a subdirectory when root has no manifests', async () => {
+        setupSubdirProject('coogent', {
+            'package.json': JSON.stringify({
+                devDependencies: {
+                    typescript: '^5.0.0',
+                    vitest: '^1.0.0',
+                    eslint: '^8.0.0',
+                    esbuild: '^0.18.0',
+                },
+            }),
+        });
+
+        const result = await fingerprinter.fingerprint();
+
+        expect(result.detectedSubdirectory).toBe('coogent');
+        expect(result.primaryLanguages).toContain('typescript');
+        expect(result.testStack).toContain('vitest');
+        expect(result.lintStack).toContain('eslint');
+        expect(result.buildStack).toContain('esbuild');
+        expect(result.packageManager).not.toBe('unknown');
+    });
+
+    it('should NOT set detectedSubdirectory when root has a manifest', async () => {
+        setupMockFiles({
+            'package.json': JSON.stringify({
+                dependencies: { express: '^4.18.0' },
+            }),
+        });
+
+        const result = await fingerprinter.fingerprint();
+
+        expect(result.detectedSubdirectory).toBeUndefined();
+        expect(result.primaryLanguages).toContain('typescript');
+    });
+
+    it('should skip hidden directories during subdirectory scanning', async () => {
+        // Only .hidden dir has a package.json — should be skipped
+        mockFs.readFile.mockRejectedValue(new Error('File not found'));
+        mockFs.stat.mockRejectedValue(new Error('File not found'));
+        mockFs.readDirectory.mockImplementation(async (uri: { fsPath: string }) => {
+            if (uri.fsPath.endsWith('test-workspace')) {
+                return [['.hidden', 2 /* FileType.Directory */]];
+            }
+            return [];
+        });
+
+        const result = await fingerprinter.fingerprint();
+
+        // Should NOT have detected the hidden dir
+        expect(result.detectedSubdirectory).toBeUndefined();
+        expect(result.primaryLanguages).toEqual([]);
     });
 });
