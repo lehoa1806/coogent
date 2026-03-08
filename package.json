@@ -321,8 +321,7 @@
     "package": "npx -y @vscode/vsce package",
     "test": "jest --runInBand --detectOpenHandles --forceExit",
     "test:webview": "cd webview-ui && npx vitest run",
-    "ci": "npm run lint && npm test && npm run test:webview && npm audit --audit-level=high",
-    "prepare": "husky"
+    "ci": "npm run lint && npm test && npm run test:webview && npm audit --audit-level=high"
   },
   "devDependencies": {
     "@types/jest": "^29.5.0",

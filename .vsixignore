@@ -1,0 +1,37 @@
+# Source & config (bundled into out/extension.js by esbuild)
+src/**
+tsconfig.json
+esbuild.js
+eslint.config.mjs
+.vsixignore
+
+# Test infrastructure
+**/__tests__/**
+*.test.ts
+jest.config.js
+jest.globalSetup.js
+jest.mdTransform.js
+webview-ui/vitest.config.ts
+webview-ui/src/**
+webview-ui/node_modules/**
+webview-ui/package.json
+webview-ui/tsconfig*.json
+webview-ui/svelte.config.js
+webview-ui/vite.config.ts
+
+# Git hooks & dev tooling
+.husky
+.husky/**
+.git/**
+.gitignore
+.eslintrc*
+.prettierrc*
+
+# Docs & audit (not needed at runtime)
+docs/**
+
+# Misc
+node_modules/**
+*.vsix
+.DS_Store
+**/.DS_Store
