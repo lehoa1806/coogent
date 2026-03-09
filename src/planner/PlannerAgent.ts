@@ -597,6 +597,8 @@ export class PlannerAgent extends EventEmitter {
             for (const entry of sorted) {
                 const name = String(entry.name);
                 if (IGNORE.has(name)) continue;
+                // Skip dot-prefixed entries (except .gitignore) — matches RepoMap behaviour
+                if (name.startsWith('.') && name !== '.gitignore') continue;
                 if (charCount > this.config.maxTreeChars) break;
 
                 const relativePath = path.join(prefix, name);
