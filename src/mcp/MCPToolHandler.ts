@@ -31,6 +31,9 @@ import log from '../logger/log.js';
  *   - submit_phase_handoff
  *   - submit_consolidation_report
  *   - get_modified_file_content
+ *   - get_file_slice
+ *   - get_phase_handoff
+ *   - get_symbol_context
  */
 export class MCPToolHandler {
     constructor(
@@ -144,6 +147,50 @@ export class MCPToolHandler {
                                     description:
                                         'Optional context or recommendations for downstream phases.',
                                 },
+                                summary: {
+                                    type: 'string',
+                                    maxLength: 4096,
+                                    description: 'Summary of what was accomplished.',
+                                },
+                                rationale: {
+                                    type: 'string',
+                                    maxLength: 4096,
+                                    description: 'Rationale for decisions made.',
+                                },
+                                constraints: {
+                                    type: 'array',
+                                    items: { type: 'string', maxLength: 500 },
+                                    maxItems: 50,
+                                    description: 'Constraints discovered during execution.',
+                                },
+                                remainingWork: {
+                                    type: 'array',
+                                    items: { type: 'string', maxLength: 500 },
+                                    maxItems: 50,
+                                    description: 'Remaining work for downstream phases.',
+                                },
+                                symbolsTouched: {
+                                    type: 'array',
+                                    items: { type: 'string', maxLength: 500 },
+                                    maxItems: 200,
+                                    description: 'Symbols modified or created.',
+                                },
+                                warnings: {
+                                    type: 'array',
+                                    items: { type: 'string', maxLength: 500 },
+                                    maxItems: 50,
+                                    description: 'Warnings for downstream consumers.',
+                                },
+                                workspaceFolder: {
+                                    type: 'string',
+                                    maxLength: 500,
+                                    description: 'Workspace folder this phase operated in.',
+                                },
+                                changedFilesJson: {
+                                    type: 'string',
+                                    maxLength: 65536,
+                                    description: 'JSON-serialized ChangedFileHandoff array with per-file metadata.',
+                                },
                             },
                         },
                     },
@@ -201,6 +248,81 @@ export class MCPToolHandler {
                             },
                         },
                     },
+                    // ── Retrieval tools ───────────────────────────────────
+                    {
+                        name: MCP_TOOLS.GET_FILE_SLICE,
+                        description:
+                            'Read a specific line range from a file in the workspace.',
+                        inputSchema: {
+                            type: 'object' as const,
+                            required: ['path', 'startLine', 'endLine'],
+                            properties: {
+                                path: {
+                                    type: 'string',
+                                    description: 'Relative path to the file within the workspace.',
+                                    maxLength: 260,
+                                },
+                                startLine: {
+                                    type: 'number',
+                                    description: 'Start line (1-indexed, inclusive).',
+                                },
+                                endLine: {
+                                    type: 'number',
+                                    description: 'End line (1-indexed, inclusive).',
+                                },
+                                workspaceFolder: {
+                                    type: 'string',
+                                    description: 'Optional workspace folder to resolve path against.',
+                                },
+                            },
+                        },
+                    },
+                    {
+                        name: MCP_TOOLS.GET_PHASE_HANDOFF,
+                        description:
+                            'Retrieve stored handoff data for a completed phase.',
+                        inputSchema: {
+                            type: 'object' as const,
+                            required: ['phaseId', 'masterTaskId'],
+                            properties: {
+                                phaseId: {
+                                    type: 'string',
+                                    description: 'Phase ID in phase-<index>-<uuid> format.',
+                                    pattern: PHASE_ID_PATTERN.source,
+                                },
+                                masterTaskId: {
+                                    type: 'string',
+                                    description: 'Master task ID in YYYYMMDD-HHMMSS-<uuid> format.',
+                                    pattern: MASTER_TASK_ID_PATTERN.source,
+                                },
+                            },
+                        },
+                    },
+                    {
+                        name: MCP_TOOLS.GET_SYMBOL_CONTEXT,
+                        description:
+                            'Search for a symbol in a file and return surrounding context (best-effort text search).',
+                        inputSchema: {
+                            type: 'object' as const,
+                            required: ['path', 'symbol'],
+                            properties: {
+                                path: {
+                                    type: 'string',
+                                    description: 'Relative path to the file within the workspace.',
+                                    maxLength: 260,
+                                },
+                                symbol: {
+                                    type: 'string',
+                                    description: 'Symbol name to search for.',
+                                    maxLength: 200,
+                                },
+                                workspaceFolder: {
+                                    type: 'string',
+                                    description: 'Optional workspace folder to resolve path against.',
+                                },
+                            },
+                        },
+                    },
                 ],
             };
         });
@@ -222,6 +344,12 @@ export class MCPToolHandler {
                     return this.handleSubmitConsolidationReport(args);
                 case MCP_TOOLS.GET_MODIFIED_FILE_CONTENT:
                     return this.handleGetModifiedFileContent(args);
+                case MCP_TOOLS.GET_FILE_SLICE:
+                    return this.handleGetFileSlice(args);
+                case MCP_TOOLS.GET_PHASE_HANDOFF:
+                    return this.handleGetPhaseHandoff(args);
+                case MCP_TOOLS.GET_SYMBOL_CONTEXT:
+                    return this.handleGetSymbolContext(args);
                 default:
                     throw new Error(`Unknown tool: ${name}`);
             }
@@ -290,6 +418,28 @@ export class MCPToolHandler {
             ? args['next_steps_context'].slice(0, 4096)
             : undefined;
 
+        // P7: Extract enrichment fields
+        const summary = typeof args['summary'] === 'string'
+            ? args['summary'].slice(0, 4096) : undefined;
+        const rationale = typeof args['rationale'] === 'string'
+            ? args['rationale'].slice(0, 4096) : undefined;
+        const constraints = args['constraints'] != null
+            ? MCPValidator.validateStringArray(args['constraints'], 'constraints', { maxItemLength: 500, maxItems: 50 })
+            : undefined;
+        const remainingWork = args['remainingWork'] != null
+            ? MCPValidator.validateStringArray(args['remainingWork'], 'remainingWork', { maxItemLength: 500, maxItems: 50 })
+            : undefined;
+        const symbolsTouched = args['symbolsTouched'] != null
+            ? MCPValidator.validateStringArray(args['symbolsTouched'], 'symbolsTouched', { maxItemLength: 500, maxItems: 200 })
+            : undefined;
+        const warnings = args['warnings'] != null
+            ? MCPValidator.validateStringArray(args['warnings'], 'warnings', { maxItemLength: 500, maxItems: 50 })
+            : undefined;
+        const workspaceFolder = typeof args['workspaceFolder'] === 'string'
+            ? args['workspaceFolder'].slice(0, 500) : undefined;
+        const changedFilesJson = typeof args['changedFilesJson'] === 'string'
+            ? args['changedFilesJson'].slice(0, 65536) : undefined;
+
         const handoff: PhaseHandoff = {
             phaseId,
             masterTaskId,
@@ -298,6 +448,14 @@ export class MCPToolHandler {
             blockers,
             completedAt: Date.now(),
             nextStepsContext,
+            summary,
+            rationale,
+            constraints,
+            remainingWork,
+            symbolsTouched,
+            warnings,
+            workspaceFolder,
+            changedFilesJson,
         };
 
         // Persist handoff to DB — upsertHandoff ensures parent task/phase rows exist
@@ -416,6 +574,134 @@ export class MCPToolHandler {
                 throw new Error('File not found');
             }
             log.warn(`[MCPToolHandler] File read error: ${filePath}`, (err as Error).message);
+            throw new Error('Failed to read file');
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  Retrieval Tool Implementations (P7)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    private async handleGetFileSlice(
+        args: Record<string, unknown>
+    ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+        const filePath = MCPValidator.validateString(args['path'], 'path');
+        const startLine = Number(args['startLine']);
+        const endLine = Number(args['endLine']);
+
+        if (!Number.isInteger(startLine) || !Number.isInteger(endLine) || startLine < 1 || endLine < startLine) {
+            throw new Error('Invalid line range: startLine and endLine must be positive integers with startLine <= endLine.');
+        }
+
+        if (filePath.length > 260 || !/^[\w\-./]+$/.test(filePath)) {
+            throw new Error('Invalid path: contains disallowed characters or exceeds maximum length.');
+        }
+
+        const root = typeof args['workspaceFolder'] === 'string'
+            ? args['workspaceFolder'] : this.workspaceRoot;
+
+        let resolved: string;
+        let realRoot: string;
+        try {
+            resolved = await fs.realpath(path.resolve(root, filePath));
+            realRoot = await fs.realpath(root);
+        } catch {
+            throw new Error('File not found');
+        }
+        if (!resolved.startsWith(realRoot + path.sep) && resolved !== realRoot) {
+            throw new Error('Access denied');
+        }
+
+        try {
+            const rawContent = await fs.readFile(resolved, 'utf-8');
+            const lines = rawContent.split('\n');
+            const sliced = lines.slice(startLine - 1, endLine);
+            log.info(
+                `[MCPToolHandler] File slice read: ${filePath} L${startLine}-${endLine}`
+            );
+            return {
+                content: [{ type: 'text', text: sliced.join('\n') }],
+            };
+        } catch (err: unknown) {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code === 'ENOENT') { throw new Error('File not found'); }
+            throw new Error('Failed to read file');
+        }
+    }
+
+    private handleGetPhaseHandoff(
+        args: Record<string, unknown>
+    ): { content: Array<{ type: 'text'; text: string }> } {
+        const masterTaskId = MCPValidator.validateMasterTaskId(args['masterTaskId']);
+        const phaseId = MCPValidator.validatePhaseId(args['phaseId']);
+
+        const handoff = this.db.handoffs.get(masterTaskId, phaseId);
+        if (!handoff) {
+            return {
+                content: [{ type: 'text', text: `No handoff found for phase ${phaseId} in task ${masterTaskId}.` }],
+            };
+        }
+
+        log.info(
+            `[MCPToolHandler] Phase handoff retrieved: ${masterTaskId} / ${phaseId}`
+        );
+        return {
+            content: [{ type: 'text', text: JSON.stringify(handoff, null, 2) }],
+        };
+    }
+
+    private async handleGetSymbolContext(
+        args: Record<string, unknown>
+    ): Promise<{ content: Array<{ type: 'text'; text: string }> }> {
+        const filePath = MCPValidator.validateString(args['path'], 'path');
+        const symbol = MCPValidator.validateString(args['symbol'], 'symbol');
+
+        if (filePath.length > 260 || !/^[\w\-./]+$/.test(filePath)) {
+            throw new Error('Invalid path: contains disallowed characters or exceeds maximum length.');
+        }
+        if (symbol.length > 200) {
+            throw new Error('Invalid symbol: exceeds maximum length (200).');
+        }
+
+        const root = typeof args['workspaceFolder'] === 'string'
+            ? args['workspaceFolder'] : this.workspaceRoot;
+
+        let resolved: string;
+        let realRoot: string;
+        try {
+            resolved = await fs.realpath(path.resolve(root, filePath));
+            realRoot = await fs.realpath(root);
+        } catch {
+            throw new Error('File not found');
+        }
+        if (!resolved.startsWith(realRoot + path.sep) && resolved !== realRoot) {
+            throw new Error('Access denied');
+        }
+
+        try {
+            const rawContent = await fs.readFile(resolved, 'utf-8');
+            const lines = rawContent.split('\n');
+            const matchIndex = lines.findIndex(line => line.includes(symbol));
+            if (matchIndex === -1) {
+                return {
+                    content: [{ type: 'text', text: `Symbol "${symbol}" not found in ${filePath}.` }],
+                };
+            }
+
+            const CONTEXT_LINES = 25; // 25 before + 25 after = ~50 lines
+            const start = Math.max(0, matchIndex - CONTEXT_LINES);
+            const end = Math.min(lines.length, matchIndex + CONTEXT_LINES + 1);
+            const slice = lines.slice(start, end);
+
+            log.info(
+                `[MCPToolHandler] Symbol context read: ${symbol} in ${filePath} (L${start + 1}-${end})`
+            );
+            return {
+                content: [{ type: 'text', text: slice.join('\n') }],
+            };
+        } catch (err: unknown) {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code === 'ENOENT') { throw new Error('File not found'); }
             throw new Error('Failed to read file');
         }
     }

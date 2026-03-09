@@ -288,6 +288,13 @@
           "type": "boolean",
           "default": false,
           "description": "Enable shadow mode: run the agent selection pipeline for observability without affecting dispatch."
+        },
+        "coogent.contextBudgetTokens": {
+          "type": "number",
+          "default": 150000,
+          "minimum": 100000,
+          "maximum": 2000000,
+          "description": "Maximum token budget for context pack assembly per phase (default: 150,000)."
         }
       }
     },

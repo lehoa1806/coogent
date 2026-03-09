@@ -217,6 +217,9 @@ describe('DispatchController Integration — Agent Selection Pipeline', () => {
 
             // Phase 2 should be dispatched
             expect(phases[1].status).toBe('running');
+
+            // V2 5.1: Stop the stall watchdog to prevent open handle (setInterval leak)
+            controller.stopStallWatchdog();
         });
     });
 
@@ -228,6 +231,92 @@ describe('DispatchController Integration — Agent Selection Pipeline', () => {
 
             controller.startStallWatchdog();
             controller.stopStallWatchdog();
+        });
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  V2-D 4.3: Context pack builder integration
+    // ═════════════════════════════════════════════════════════════════════
+
+    describe('dispatchReadyPhases with contextPackBuilder', () => {
+        it('calls contextPackBuilder.build with correct inputs when builder is provided', async () => {
+            const upstreamPhase = makePhase({
+                id: 1,
+                status: 'completed',
+                mcpPhaseId: 'phase-001-abc',
+            });
+            const targetPhase = makePhase({
+                id: 2,
+                prompt: 'Implement feature X',
+                context_files: ['src/foo.ts'],
+                depends_on: [asPhaseId(1)],
+            });
+            const runbook = makeRunbook([upstreamPhase, targetPhase]);
+            const engine = createMockEngine(runbook);
+
+            const mockBuild = jest.fn().mockResolvedValue({
+                pack: { tokenUsage: { total: 500 } },
+                manifest: { totals: { totalTokens: 500 } },
+            });
+
+            const controller = new DispatchController(engine, {
+                contextPackBuilder: { build: mockBuild } as any,
+                mcpReady: Promise.resolve(),
+                contextBudgetTokens: 80_000,
+            });
+
+            await controller.dispatchReadyPhases();
+
+            expect(mockBuild).toHaveBeenCalledTimes(1);
+            const input = mockBuild.mock.calls[0][0];
+            expect(input.phaseId).toBe('2');
+            expect(input.contextFiles).toEqual(['src/foo.ts']);
+            expect(input.upstreamPhaseIds).toContain('phase-001-abc');
+            expect(input.maxTokens).toBe(80_000);
+            expect(targetPhase.status).toBe('running');
+        });
+
+        it('resolves contextPackBuilder from a getter function (V2-A lazy init)', async () => {
+            const phases = [makePhase({ id: 1 })];
+            const runbook = makeRunbook(phases);
+            const engine = createMockEngine(runbook);
+
+            const mockBuild = jest.fn().mockResolvedValue({
+                pack: { tokenUsage: { total: 100 } },
+                manifest: { totals: { totalTokens: 100 } },
+            });
+
+            // Simulate the getter pattern used in EngineWiring
+            const builderGetter = () => ({ build: mockBuild } as any);
+
+            const controller = new DispatchController(engine, {
+                contextPackBuilder: builderGetter,
+                mcpReady: Promise.resolve(),
+            });
+
+            await controller.dispatchReadyPhases();
+
+            expect(mockBuild).toHaveBeenCalledTimes(1);
+            expect(phases[0].status).toBe('running');
+        });
+
+        it('dispatches successfully even when contextPackBuilder.build throws', async () => {
+            const phases = [makePhase({ id: 1 })];
+            const runbook = makeRunbook(phases);
+            const engine = createMockEngine(runbook);
+
+            const mockBuild = jest.fn().mockRejectedValue(new Error('DB not ready'));
+
+            const controller = new DispatchController(engine, {
+                contextPackBuilder: { build: mockBuild } as any,
+                mcpReady: Promise.resolve(),
+            });
+
+            await controller.dispatchReadyPhases();
+
+            // Phase should still be dispatched despite builder failure
+            expect(phases[0].status).toBe('running');
+            expect(engine.emit).toHaveBeenCalledWith('phase:execute', phases[0]);
         });
     });
 });

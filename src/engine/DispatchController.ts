@@ -10,6 +10,7 @@ import type { EngineInternals } from './EngineInternals.js';
 import { SelectionPipeline, SubtaskSpecBuilder, type SubtaskDraft } from '../agent-selection/index.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import type { TelemetryLogger } from '../logger/TelemetryLogger.js';
+import type { ContextPackBuilder } from '../context/ContextPackBuilder.js';
 
 /** Options for DispatchController construction. */
 export interface DispatchControllerOptions {
@@ -23,6 +24,16 @@ export interface DispatchControllerOptions {
     readonly logger?: TelemetryLogger;
     /** Session directory name for audit record persistence. */
     readonly sessionDirName?: string;
+    /**
+     * ContextPackBuilder for assembling context packs before worker spawn.
+     * Accepts a getter function to support deferred initialization
+     * (builder is created inside the async MCP init chain).
+     */
+    readonly contextPackBuilder?: ContextPackBuilder | (() => ContextPackBuilder | undefined);
+    /** Promise that resolves once MCP server + ArtifactDB are ready. */
+    readonly mcpReady?: Promise<void>;
+    /** Token budget for context pack assembly. Default: 100_000. */
+    readonly contextBudgetTokens?: number;
 }
 
 /**
@@ -48,6 +59,12 @@ export class DispatchController {
     private readonly sessionDirName: string;
     /** S3-4: Shadow mode — run pipeline for observability without affecting dispatch. */
     private readonly enableShadowMode: boolean;
+    /** ContextPackBuilder getter — resolved lazily at dispatch time. */
+    private readonly contextPackBuilderOrGetter: ContextPackBuilder | (() => ContextPackBuilder | undefined) | undefined;
+    /** Promise that gates context pack build until MCP is ready. */
+    private readonly mcpReady: Promise<void> | undefined;
+    /** Token budget used for context pack assembly. */
+    private readonly contextBudgetTokens: number;
 
     constructor(
         private readonly engine: EngineInternals,
@@ -58,6 +75,9 @@ export class DispatchController {
         this.artifactDb = options?.artifactDb;
         this.telemetryLogger = options?.logger;
         this.sessionDirName = options?.sessionDirName ?? '';
+        this.contextPackBuilderOrGetter = options?.contextPackBuilder;
+        this.mcpReady = options?.mcpReady;
+        this.contextBudgetTokens = options?.contextBudgetTokens ?? 100_000;
     }
 
     /**
@@ -98,6 +118,51 @@ export class DispatchController {
                     await this.runAgentSelection(phase, true /* shadowMode */);
                 } catch (err) {
                     log.warn(`[DispatchController] Shadow mode selection failed for phase ${phase.id}:`, err);
+                }
+            }
+
+            // Build context pack before dispatch (best-effort, non-blocking on failure)
+            // V2-A 1.1: Resolve builder lazily to avoid async race with MCP init
+            const resolvedBuilder = typeof this.contextPackBuilderOrGetter === 'function'
+                ? this.contextPackBuilderOrGetter()
+                : this.contextPackBuilderOrGetter;
+            if (resolvedBuilder) {
+                try {
+                    // V2-A 1.1: await MCP readiness before accessing ArtifactDB
+                    if (this.mcpReady) {
+                        await this.mcpReady;
+                    }
+
+                    // Resolve upstream mcpPhaseIds from dependency numeric IDs
+                    const upstreamPhaseIds: string[] = [];
+                    if (phase.depends_on && runbook) {
+                        const phaseMap = new Map(runbook.phases.map(p => [p.id, p]));
+                        for (const depId of phase.depends_on) {
+                            const depPhase = phaseMap.get(depId);
+                            if (depPhase?.mcpPhaseId && depPhase.status === 'completed') {
+                                upstreamPhaseIds.push(depPhase.mcpPhaseId);
+                            }
+                        }
+                    }
+
+                    const packResult = await resolvedBuilder.build({
+                        sessionId: this.sessionDirName,
+                        taskId: runbook.project_id,
+                        phaseId: String(phase.id),
+                        prompt: phase.prompt,
+                        contextFiles: phase.context_files ?? [],
+                        upstreamPhaseIds,
+                        maxTokens: this.contextBudgetTokens,
+                        ...(phase.requiresFullFileContext !== undefined
+                            ? { requiresFullFileContext: phase.requiresFullFileContext }
+                            : {}),
+                    });
+                    log.info(
+                        `[DispatchController] Context pack built for phase ${phase.id}: ` +
+                        `${packResult.manifest.totals.totalTokens} tokens`,
+                    );
+                } catch (err) {
+                    log.warn(`[DispatchController] Context pack build failed for phase ${phase.id}:`, err);
                 }
             }
 

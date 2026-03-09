@@ -30,7 +30,8 @@ export function wireEngine(
     svc: ServiceContainer,
     workspaceRoot: string,
     workerTimeoutMs: number,
-    workspaceRoots: string[] = [workspaceRoot]
+    workspaceRoots: string[] = [workspaceRoot],
+    contextBudgetTokens = 100_000,
 ): void {
     const { engine, adkController, logger, gitSandbox, gitManager, mcpBridge, mcpServer,
         handoffExtractor, consolidationAgent, outputRegistry,
@@ -53,6 +54,10 @@ export function wireEngine(
             artifactDb: svc.mcpServer.getArtifactDB(),
             sessionDirName: getSessionDirName(),
             ...(logger ? { logger } : {}),
+            // V2-A 1.1: Pass getter so builder is resolved at dispatch time (after MCP init)
+            contextPackBuilder: () => svc.contextPackBuilder,
+            ...(svc.mcpReady ? { mcpReady: svc.mcpReady } : {}),
+            contextBudgetTokens,
         };
         engine.configureDispatch(dispatchOpts);
     }
