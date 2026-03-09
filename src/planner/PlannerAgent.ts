@@ -11,7 +11,7 @@ import type { AgentBackendProvider } from '../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle } from '../adk/ADKController.js';
 import log from '../logger/log.js';
 import { COOGENT_DIR, IPC_DIR, IPC_RESPONSE_FILE } from '../constants/paths.js';
-import { PlannerPromptCompiler, type CompilationManifest } from '../prompt-compiler/index.js';
+import { PlannerPromptCompiler, RepoFingerprinter, type CompilationManifest } from '../prompt-compiler/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Configuration
@@ -146,23 +146,18 @@ export class PlannerAgent extends EventEmitter {
         log.info(`[PlannerAgent] Starting plan generation (prompt=${prompt.slice(0, 80)}..., hasFeedback=${!!feedback})`);
 
         try {
-            // Step 1: Scan workspace
+            // Step 1: Resolve effective project root (may differ from workspaceRoot in wrapper dirs)
             this.emit('plan:status', 'generating', 'Scanning workspace...');
+            const fingerprinter = new RepoFingerprinter(this.config.workspaceRoot);
+            const effectiveRoot = await fingerprinter.getEffectiveRoot();
+            log.info(`[PlannerAgent] Effective project root: ${effectiveRoot}`);
+
+            // Step 1b: Scan file tree from the effective root
             this.fileTree = await this.collectFileTree(
-                this.config.workspaceRoot,
+                effectiveRoot,
                 this.config.maxTreeDepth
             );
             log.info(`[PlannerAgent] File tree collected: ${this.fileTree.length} entries`);
-
-            // Step 1b: Discover tech stack (non-blocking — failures are swallowed)
-            let techStack: TechStackInfo | undefined;
-            try {
-                const promptManager = new PromptTemplateManager(this.config.workspaceRoot);
-                techStack = await promptManager.discoverTechStack();
-                log.info(`[PlannerAgent] Tech stack discovered: runtime=${techStack.runtime}, frameworks=[${techStack.frameworks.join(', ')}]`);
-            } catch (err) {
-                log.warn('[PlannerAgent] Tech stack discovery failed — continuing without:', err);
-            }
 
             // Step 2: Build the planner prompt (PromptCompiler → fallback to legacy)
             let systemPrompt: string;
@@ -170,7 +165,6 @@ export class PlannerAgent extends EventEmitter {
                 const compiler = this.getPromptCompiler();
                 const compiledPrompt = await compiler.compile(prompt, {
                     fileTree: this.fileTree,
-                    ...(techStack !== undefined && { techStack }),
                     ...(this.config.availableTags !== undefined && { availableTags: this.config.availableTags }),
                     ...(feedback !== undefined && { feedback }),
                 });
@@ -191,7 +185,7 @@ export class PlannerAgent extends EventEmitter {
                     prompt,
                     this.fileTree,
                     feedback,
-                    techStack,
+                    undefined,
                     this.config.availableTags,
                 );
             }
