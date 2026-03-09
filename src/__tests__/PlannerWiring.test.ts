@@ -25,13 +25,14 @@ function createMockEngine(): EventEmitter & { abort: jest.Mock; planGenerated: j
     return engine;
 }
 
-function createMockPlannerAgent(): EventEmitter & { plan: jest.Mock; retryParse: jest.Mock; hasTimeoutOutput: jest.Mock; getDraft: jest.Mock; setAvailableTags: jest.Mock; getLastSystemPrompt: jest.Mock; getLastRawOutput: jest.Mock; getLastManifest: jest.Mock } {
+function createMockPlannerAgent(): EventEmitter & { plan: jest.Mock; retryParse: jest.Mock; hasTimeoutOutput: jest.Mock; getDraft: jest.Mock; setAvailableTags: jest.Mock; setMasterTaskId: jest.Mock; getLastSystemPrompt: jest.Mock; getLastRawOutput: jest.Mock; getLastManifest: jest.Mock } {
     const agent = new EventEmitter() as any;
     agent.plan = jest.fn().mockResolvedValue(undefined);
     agent.retryParse = jest.fn().mockResolvedValue(undefined);
     agent.hasTimeoutOutput = jest.fn().mockReturnValue(false);
     agent.getDraft = jest.fn().mockReturnValue(null);
     agent.setAvailableTags = jest.fn();
+    agent.setMasterTaskId = jest.fn();
     agent.getLastSystemPrompt = jest.fn().mockReturnValue(null);
     agent.getLastRawOutput = jest.fn().mockReturnValue(undefined);
     agent.getLastManifest = jest.fn().mockReturnValue(null);
@@ -49,6 +50,8 @@ describe('wirePlanner', () => {
 
     beforeEach(() => {
         svc = new ServiceContainer();
+        svc.currentSessionDirName = 'session-001';
+        svc.storageBase = '/tmp/test-storage';
         engine = createMockEngine();
         planner = createMockPlannerAgent();
         svc.engine = engine as any;
@@ -56,29 +59,29 @@ describe('wirePlanner', () => {
     });
 
     it('does not throw when engine and plannerAgent are present', () => {
-        expect(() => wirePlanner(svc, 'session-001')).not.toThrow();
+        expect(() => wirePlanner(svc)).not.toThrow();
     });
 
     it('returns silently when engine is undefined', () => {
         svc.engine = undefined;
-        expect(() => wirePlanner(svc, 'session-001')).not.toThrow();
+        expect(() => wirePlanner(svc)).not.toThrow();
     });
 
     it('returns silently when plannerAgent is undefined', () => {
         svc.plannerAgent = undefined;
-        expect(() => wirePlanner(svc, 'session-001')).not.toThrow();
+        expect(() => wirePlanner(svc)).not.toThrow();
     });
 
     // ── Engine → PlannerAgent event wiring ─────────────────────────────
 
     it('plan:request triggers plannerAgent.plan(prompt)', () => {
-        wirePlanner(svc, 'session-001');
+        wirePlanner(svc);
         engine.emit('plan:request', 'Refactor auth module');
         expect(planner.plan).toHaveBeenCalledWith('Refactor auth module');
     });
 
     it('plan:rejected triggers plannerAgent.plan(prompt, feedback)', async () => {
-        wirePlanner(svc, 'session-001');
+        wirePlanner(svc);
         engine.emit('plan:rejected', 'Refactor auth', 'Add more phases');
         // The handler wraps in an async IIFE — flush microtasks to let it complete
         await new Promise(r => setTimeout(r, 10));
@@ -86,7 +89,7 @@ describe('wirePlanner', () => {
     });
 
     it('plan:retryParse triggers plannerAgent.retryParse()', () => {
-        wirePlanner(svc, 'session-001');
+        wirePlanner(svc);
         engine.emit('plan:retryParse');
         expect(planner.retryParse).toHaveBeenCalledTimes(1);
     });
@@ -94,40 +97,40 @@ describe('wirePlanner', () => {
     // ── PlannerAgent → Engine event wiring ─────────────────────────────
 
     it('registers plan:generated listener on plannerAgent', () => {
-        wirePlanner(svc, 'session-001');
+        wirePlanner(svc);
         expect(planner.listenerCount('plan:generated')).toBe(1);
     });
 
     it('registers plan:error listener on plannerAgent', () => {
-        wirePlanner(svc, 'session-001');
+        wirePlanner(svc);
         expect(planner.listenerCount('plan:error')).toBe(1);
     });
 
     it('registers plan:timeout listener on plannerAgent', () => {
-        wirePlanner(svc, 'session-001');
+        wirePlanner(svc);
         expect(planner.listenerCount('plan:timeout')).toBe(1);
     });
 
     it('registers plan:status listener on plannerAgent', () => {
-        wirePlanner(svc, 'session-001');
+        wirePlanner(svc);
         expect(planner.listenerCount('plan:status')).toBe(1);
     });
 
     it('plan:error calls engine.abort()', () => {
-        wirePlanner(svc, 'session-001');
+        wirePlanner(svc);
         planner.emit('plan:error', new Error('LLM timeout'));
         expect(engine.abort).toHaveBeenCalledTimes(1);
     });
 
     it('plan:timeout without output calls engine.abort()', () => {
         planner.hasTimeoutOutput.mockReturnValue(false);
-        wirePlanner(svc, 'session-001');
+        wirePlanner(svc);
         planner.emit('plan:timeout', false);
         expect(engine.abort).toHaveBeenCalledTimes(1);
     });
 
     it('plan:timeout with output does NOT call engine.abort()', () => {
-        wirePlanner(svc, 'session-001');
+        wirePlanner(svc);
         planner.emit('plan:timeout', true);
         expect(engine.abort).not.toHaveBeenCalled();
     });
@@ -154,7 +157,7 @@ describe('wirePlanner', () => {
             planner.getLastSystemPrompt.mockReturnValue('system prompt');
             planner.getLastManifest.mockReturnValue(null);
 
-            wirePlanner(svc, 'session-001');
+            wirePlanner(svc);
 
             const mockDraft = { project_id: 'test', phases: [], summary: 'Test' };
             planner.emit('plan:generated', mockDraft, []);
@@ -185,7 +188,7 @@ describe('wirePlanner', () => {
             planner.getLastSystemPrompt.mockReturnValue('system prompt');
             planner.getLastRawOutput.mockReturnValue(undefined);
 
-            wirePlanner(svc, 'session-001');
+            wirePlanner(svc);
 
             const mockDraft = { project_id: 'test', phases: [], summary: 'Test' };
             planner.emit('plan:generated', mockDraft, []);

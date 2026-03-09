@@ -18,15 +18,16 @@ import type { ServiceContainer } from './ServiceContainer.js';
  * Wire all engine events, ADK worker lifecycle events, and consolidation flow.
  * Must be called after all services are initialised on the container.
  *
+ * `sessionDirName` is read from `svc.currentSessionDirName` at event-fire time
+ * (not captured at wire time) to support deferred session creation.
+ *
  * @param svc             The shared service container.
- * @param sessionDirName  The current session directory basename (used as masterTaskId).
  * @param workspaceRoot   Absolute path to the primary workspace folder.
  * @param workerTimeoutMs Worker timeout from the extension configuration.
  * @param workspaceRoots  All active workspace folder paths (defaults to [workspaceRoot]).
  */
 export function wireEngine(
     svc: ServiceContainer,
-    sessionDirName: string,
     workspaceRoot: string,
     workerTimeoutMs: number,
     workspaceRoots: string[] = [workspaceRoot]
@@ -38,6 +39,10 @@ export function wireEngine(
 
     if (!engine || !adkController) return;
 
+    // Deferred session alias: read at call time from the mutable container.
+    // At event-fire time, initSession() will have run (triggered on plan:request).
+    const getSessionDirName = () => svc.currentSessionDirName ?? '';
+
     // ── Wire DispatchController with agent-selection options ──────────
     // Pass ArtifactDB reference and TelemetryLogger so the pipeline can
     // persist audit records and log agent selection events.
@@ -46,7 +51,7 @@ export function wireEngine(
         const dispatchOpts: import('./engine/DispatchController.js').DispatchControllerOptions = {
             useAgentSelection: false,
             artifactDb: svc.mcpServer.getArtifactDB(),
-            sessionDirName,
+            sessionDirName: getSessionDirName(),
             ...(logger ? { logger } : {}),
         };
         engine.configureDispatch(dispatchOpts);
@@ -81,8 +86,8 @@ export function wireEngine(
         // The realpath workspace boundary check is the true security gate.
 
         // Auto-create sandbox branch on first EXECUTING_WORKER per session
-        if (to === 'EXECUTING_WORKER' && !sandboxBranchCreatedForSession.has(sessionDirName) && gitSandbox) {
-            sandboxBranchCreatedForSession.add(sessionDirName);
+        if (to === 'EXECUTING_WORKER' && !sandboxBranchCreatedForSession.has(getSessionDirName()) && gitSandbox) {
+            sandboxBranchCreatedForSession.add(getSessionDirName());
             if (MissionControlPanel.shouldSkipSandbox()) {
                 log.info('[Coogent] Sandbox branch skipped — user chose to continue on current branch.');
             } else {
@@ -110,7 +115,7 @@ export function wireEngine(
             payload: {
                 runbook: rb ?? { project_id: '', status: 'idle', current_phase: 0, phases: [] },
                 engineState: to,
-                masterTaskId: sessionDirName,
+                masterTaskId: getSessionDirName(),
             },
         });
     });
@@ -119,7 +124,7 @@ export function wireEngine(
     engine.on('run:completed', (runbook) => {
         // Persist task completion timestamp (BL-5 audit fix)
         if (mcpServer) {
-            mcpServer.setTaskCompleted(sessionDirName);
+            mcpServer.setTaskCompleted(getSessionDirName());
         }
 
         const phaseCount = runbook.phases.length;
@@ -146,13 +151,13 @@ export function wireEngine(
 
         // Persist phase log entry at start
         if (mcpServer && phase.mcpPhaseId) {
-            mcpServer.upsertPhaseLog(sessionDirName, phase.mcpPhaseId, {
+            mcpServer.upsertPhaseLog(getSessionDirName(), phase.mcpPhaseId, {
                 prompt: phase.prompt,
                 startedAt: Date.now(),
             });
         }
 
-        executePhase(svc, phase, workspaceRoot, workerTimeoutMs, sessionDirName, workspaceRoots).catch((err) => {
+        executePhase(svc, phase, workspaceRoot, workerTimeoutMs, getSessionDirName(), workspaceRoots).catch((err) => {
             log.error('[Coogent] Phase execution error:', err);
         });
     });
@@ -160,7 +165,7 @@ export function wireEngine(
     // ── Engine → phase:heal (SelfHealing) ──────────────────────────────
     engine.on('phase:heal', (phase: Phase, augmentedPrompt: string) => {
         const healPhase = { ...phase, prompt: augmentedPrompt };
-        executePhase(svc, healPhase, workspaceRoot, workerTimeoutMs, sessionDirName, workspaceRoots).catch((err) => {
+        executePhase(svc, healPhase, workspaceRoot, workerTimeoutMs, getSessionDirName(), workspaceRoots).catch((err) => {
             log.error('[Coogent] Self-healing phase execution error:', err);
         });
     });
@@ -201,7 +206,7 @@ export function wireEngine(
                     const phaseObj = runbook?.phases.find(p => p.id === phaseId);
                     const phaseIdStr = phaseObj?.mcpPhaseId;
                     if (phaseIdStr) {
-                        mcpServer.upsertWorkerOutput(sessionDirName, phaseIdStr, accumulatedOutput, accumulatedStderr);
+                        mcpServer.upsertWorkerOutput(getSessionDirName(), phaseIdStr, accumulatedOutput, accumulatedStderr);
                     }
                 }
 
@@ -215,7 +220,7 @@ export function wireEngine(
                             log.warn(`[Coogent] mcpPhaseId missing for phase ${phaseId} — skipping handoff submission.`);
                         } else {
                             await mcpBridge.submitPhaseHandoff(
-                                sessionDirName,
+                                getSessionDirName(),
                                 phaseIdStr,
                                 report.decisions ?? [],
                                 report.modified_files ?? [],
@@ -253,7 +258,7 @@ export function wireEngine(
                     const rb = engine.getRunbook() ?? null;
                     const pObj = rb?.phases.find(p => p.id === phaseId);
                     if (pObj?.mcpPhaseId) {
-                        mcpServer.upsertPhaseLog(sessionDirName, pObj.mcpPhaseId, {
+                        mcpServer.upsertPhaseLog(getSessionDirName(), pObj.mcpPhaseId, {
                             exitCode: exitCode,
                             completedAt: Date.now(),
                         });
@@ -279,7 +284,7 @@ export function wireEngine(
                 const rb = engine.getRunbook() ?? null;
                 const pObj = rb?.phases.find(p => p.id === phaseId);
                 if (pObj?.mcpPhaseId) {
-                    mcpServer.upsertWorkerOutput(sessionDirName, pObj.mcpPhaseId, accOut, accErr);
+                    mcpServer.upsertWorkerOutput(getSessionDirName(), pObj.mcpPhaseId, accOut, accErr);
                 }
             }
         }
@@ -303,7 +308,7 @@ export function wireEngine(
                 const rb = engine.getRunbook() ?? null;
                 const pObj = rb?.phases.find(p => p.id === phaseId);
                 if (pObj?.mcpPhaseId) {
-                    mcpServer.upsertWorkerOutput(sessionDirName, pObj.mcpPhaseId, accOut, accErr);
+                    mcpServer.upsertWorkerOutput(getSessionDirName(), pObj.mcpPhaseId, accOut, accErr);
                 }
             }
         }
@@ -352,7 +357,7 @@ export function wireEngine(
                     const rb = engine.getRunbook() ?? null;
                     const pObj = rb?.phases.find(p => p.id === phaseId);
                     if (pObj?.mcpPhaseId) {
-                        mcpServer.upsertWorkerOutput(sessionDirName, pObj.mcpPhaseId, accOut, accErr);
+                        mcpServer.upsertWorkerOutput(getSessionDirName(), pObj.mcpPhaseId, accOut, accErr);
                         log.debug(`[EngineWiring] F-5: Incremental flush for phase ${phaseId} (${accOut.length + accErr.length} bytes)`);
                     }
                 }
@@ -367,10 +372,10 @@ export function wireEngine(
         const agent = consolidationAgent;
         if (!agent || !runbook) return;
 
-        agent.generateReport(evtSessionDir, runbook, mcpBridge, sessionDirName)
+        agent.generateReport(evtSessionDir, runbook, mcpBridge, getSessionDirName())
             .then(async report => {
                 try {
-                    await agent.saveReport(evtSessionDir, report, mcpBridge, sessionDirName, svc.storageBase);
+                    await agent.saveReport(evtSessionDir, report, mcpBridge, getSessionDirName(), svc.storageBase);
                 } catch (err) {
                     log.error('[Coogent] saveReport failed:', err);
                 }

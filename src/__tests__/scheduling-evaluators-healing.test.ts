@@ -264,7 +264,7 @@ describe('ExplicitFileResolver — context_files passthrough', () => {
 
 describe('EvaluationOrchestrator — applyVerdictInPlace persistence (F-1)', () => {
     function createMockEngine(runbook: any) {
-        const engine = new EventEmitter();
+        const engine: any = new EventEmitter();
         engine.getRunbook = jest.fn().mockReturnValue(runbook);
         engine.getState = jest.fn().mockReturnValue('EXECUTING_WORKER');
         engine.transition = jest.fn();

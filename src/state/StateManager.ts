@@ -9,8 +9,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import Ajv from 'ajv';
-import { RUNBOOK_FILENAME, asTimestamp } from '../types/index.js';
-import type { Runbook, WALEntry, EngineState } from '../types/index.js';
+import { RUNBOOK_FILENAME, asTimestamp, type Runbook, type WALEntry, type EngineState } from '../types/index.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import { WAL_FILE, LOCK_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
@@ -86,10 +85,10 @@ const validateRunbook = ajv.compile<Runbook>(runbookSchema);
  * See 02-review.md § R10 — singleton removed for multi-workspace support.
  */
 export class StateManager {
-    private readonly runbookPath: string;
-    private readonly walPath: string;
-    private readonly lockPath: string;
-    private readonly sessionDir: string;
+    private runbookPath: string;
+    private walPath: string;
+    private lockPath: string;
+    private sessionDir: string;
     private dirEnsured = false;
 
     /** In-memory cache of the last-read runbook. */
@@ -156,6 +155,18 @@ export class StateManager {
     public setArtifactDB(db: ArtifactDB, masterTaskId: string): void {
         this.artifactDb = db;
         this.masterTaskId = masterTaskId;
+    }
+
+    /**
+     * Re-bind the session directory (and derived paths) for deferred session init.
+     * Called when the real session is materialised on first `plan:request`.
+     */
+    public setSessionDir(dir: string): void {
+        this.sessionDir = dir;
+        this.runbookPath = path.join(dir, RUNBOOK_FILENAME);
+        this.walPath = path.join(dir, WAL_FILE);
+        this.lockPath = path.join(dir, LOCK_FILE);
+        this.dirEnsured = false;   // force re-creation on next write
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

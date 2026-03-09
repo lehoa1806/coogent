@@ -20,19 +20,52 @@ import type { Runbook } from './types/index.js';
 /**
  * Wire PlannerAgent events to the Engine and MCP bridge.
  *
- * @param svc            The shared service container.
- * @param sessionDirName The current session directory basename (masterTaskId).
+ * `sessionDirName` is read from `svc.currentSessionDirName` at event-fire time
+ * (not captured at wire time) to support deferred session creation.
+ *
+ * @param svc The shared service container.
  */
 export function wirePlanner(
     svc: ServiceContainer,
-    sessionDirName: string
 ): void {
     const { engine, plannerAgent, mcpBridge, mcpServer } = svc;
     if (!engine || !plannerAgent) return;
 
+    // Deferred session alias: read at call time from the mutable container.
+    const getSessionDirName = () => svc.currentSessionDirName ?? '';
+
     // ── Engine → PlannerAgent ──────────────────────────────────────────
     engine.on('plan:request', (prompt: string) => {
         (async () => {
+            // ── Deferred session init ──────────────────────────────────
+            // Materialise the session on first plan:request so we don't
+            // create orphan sessions when users open a workspace without
+            // submitting a prompt.
+            if (!svc.currentSessionDirName) {
+                const { sessionId, sessionDirName, sessionDir } = svc.initSession();
+                log.info(`[PlannerWiring] Deferred session created: ${sessionDirName}`);
+
+                // Late-bind StateManager to real session dir
+                svc.stateManager?.setSessionDir(sessionDir);
+
+                // Late-bind SessionManager
+                svc.sessionManager?.setCurrentSessionId(sessionId, sessionDirName);
+
+                // Late-bind PlannerAgent master task ID
+                plannerAgent.setMasterTaskId(sessionDirName);
+
+                // Late-bind ArtifactDB
+                if (mcpServer) {
+                    mcpServer.upsertSession(sessionDirName, sessionId, prompt, Date.now());
+                    const db = mcpServer.getArtifactDB?.();
+                    if (db) {
+                        svc.stateManager?.setArtifactDB(db, sessionDirName);
+                        svc.sessionManager?.setArtifactDB(db);
+                        log.info('[PlannerWiring] StateManager + SessionManager wired to ArtifactDB.');
+                    }
+                }
+            }
+
             // Inject fresh available tags from AgentRegistry before planning
             if (svc.agentRegistry) {
                 try {
@@ -45,7 +78,7 @@ export function wirePlanner(
             }
             await plannerAgent.plan(prompt);
             // Persist the original prompt as the task summary in ArtifactDB
-            mcpServer?.upsertSummary(sessionDirName, prompt);
+            mcpServer?.upsertSummary(getSessionDirName(), prompt);
 
             // S6a audit fix: Populate sessions.prompt with actual user prompt
             // (extension.ts initially persists '' because the prompt isn't known yet)
@@ -62,9 +95,8 @@ export function wirePlanner(
             }
 
             // F-4 audit fix: Write debug clones outside IPC tree to .coogent/debug/<sessionDirName>/
-            // (previously written to <sessionDir>/debug/ which is under IPC)
             if (svc.stateManager && svc.storageBase) {
-                const debugDir = getDebugDir(svc.storageBase, sessionDirName);
+                const debugDir = getDebugDir(svc.storageBase, getSessionDirName());
                 fs.mkdir(debugDir, { recursive: true })
                     .then(() => fs.writeFile(path.join(debugDir, 'prompt.md'), prompt, 'utf-8'))
                     .catch(err => log.warn('[PlannerWiring] Debug clone (prompt) failed (non-fatal):', err));
@@ -82,7 +114,7 @@ export function wirePlanner(
                 if (db) {
                     try {
                         const implPlanMd = buildImplementationPlanMarkdown(currentDraft);
-                        db.audits.upsertPlanRevision(sessionDirName, {
+                        db.audits.upsertPlanRevision(getSessionDirName(), {
                             feedback,
                             draftJson: JSON.stringify(currentDraft),
                             implementationPlanMd: implPlanMd,
@@ -117,7 +149,7 @@ export function wirePlanner(
             const db: ArtifactDB | undefined = mcpServer.getArtifactDB?.();
             if (db) {
                 try {
-                    db.audits.upsertPlanRevision(sessionDirName, {
+                    db.audits.upsertPlanRevision(getSessionDirName(), {
                         draftJson: JSON.stringify(approvedDraft),
                         implementationPlanMd: buildImplementationPlanMarkdown(approvedDraft),
                         status: 'approved',
@@ -152,7 +184,7 @@ export function wirePlanner(
         if (mcpServer) {
             const plannerPrompt = plannerAgent.getLastSystemPrompt();
             if (plannerPrompt) {
-                mcpServer.upsertPhaseLog(sessionDirName, 'phase-000-planner', {
+                mcpServer.upsertPhaseLog(getSessionDirName(), 'phase-000-planner', {
                     prompt: plannerPrompt,
                     startedAt: Date.now(),
                 });
@@ -162,7 +194,7 @@ export function wirePlanner(
             const db: ArtifactDB | undefined = mcpServer.getArtifactDB?.();
             if (db) {
                 try {
-                    db.audits.upsertPlanRevision(sessionDirName, {
+                    db.audits.upsertPlanRevision(getSessionDirName(), {
                         draftJson: JSON.stringify(draft),
                         implementationPlanMd: buildImplementationPlanMarkdown(draft),
                         // BL-5 audit fix: Persist raw LLM output for audit trail
@@ -179,13 +211,13 @@ export function wirePlanner(
         // Store the plan in MCP state (canonical source)
         if (mcpBridge) {
             const implPlanContent = buildImplementationPlanMarkdown(draft);
-            mcpBridge.submitImplementationPlan(sessionDirName, implPlanContent)
+            mcpBridge.submitImplementationPlan(getSessionDirName(), implPlanContent)
                 .then(() => log.info('[Coogent] Implementation plan stored in MCP state.'))
                 .catch(err => log.error('[Coogent] Failed to store implementation plan in MCP:', err));
 
             // F-4 audit fix: Write debug clones outside IPC tree
             if (svc.storageBase) {
-                const debugDir = getDebugDir(svc.storageBase, sessionDirName);
+                const debugDir = getDebugDir(svc.storageBase, getSessionDirName());
                 fs.mkdir(debugDir, { recursive: true })
                     .then(() => fs.writeFile(path.join(debugDir, 'implementation-plan.md'), implPlanContent, 'utf-8'))
                     .catch(err => log.warn('[PlannerWiring] Debug clone (impl plan) failed (non-fatal):', err));

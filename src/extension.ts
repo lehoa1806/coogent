@@ -5,7 +5,6 @@
 // wiring are delegated to CommandRegistry, EngineWiring, and PlannerWiring.
 
 import * as vscode from 'vscode';
-import { randomUUID } from 'node:crypto';
 import * as fsSync from 'node:fs';
 
 import { RUNBOOK_FILENAME, asPhaseId } from './types/index.js';
@@ -22,7 +21,7 @@ import { parseLogLevel } from './logger/LogStream.js';
 import { GitManager } from './git/GitManager.js';
 import { GitSandboxManager } from './git/GitSandboxManager.js';
 import { PlannerAgent } from './planner/PlannerAgent.js';
-import { SessionManager, formatSessionDirName } from './session/SessionManager.js';
+import { SessionManager } from './session/SessionManager.js';
 import { HandoffExtractor } from './context/HandoffExtractor.js';
 import { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 import { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
@@ -36,7 +35,7 @@ import { registerAllCommands, preFlightGitCheck } from './CommandRegistry.js';
 import { wireEngine } from './EngineWiring.js';
 import { wirePlanner } from './PlannerWiring.js';
 import { getStorageBasePath, getWorkspaceRoots, getPrimaryRoot } from './utils/WorkspaceHelper.js';
-import { getCoogentDir, getSessionDir } from './constants/paths.js';
+import { getCoogentDir } from './constants/paths.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Shared Services
@@ -104,17 +103,18 @@ export function activate(context: vscode.ExtensionContext): void {
     const tokenLimit = config.get<number>('tokenLimit', 100_000);
     const workerTimeoutMs = config.get<number>('workerTimeoutMs', 900_000);
 
-    // ── Resolve session ────────────────────────────────────────────────
-    const sessionId = randomUUID();
-    const sessionDirName = formatSessionDirName(sessionId);
-    log.info(`[Coogent] Creating fresh session: ${sessionDirName}`);
-    const sessionDir = getSessionDir(storageBase, sessionDirName);
-    svc.currentSessionDir = sessionDir;
-    log.info('[Coogent] Session dir:', sessionDir);
+    // ── Session (deferred) ─────────────────────────────────────────────
+    // Session directory and ID are NOT created here. They are materialised
+    // lazily on the first `plan:request` event (see PlannerWiring.ts).
+    // This avoids orphan sessions when the user opens a workspace but
+    // never submits a prompt.
+    log.info('[Coogent] Session creation deferred until first prompt.');
 
     // ── Initialize services ────────────────────────────────────────────
-    svc.stateManager = new StateManager(sessionDir);
-    log.info('[Coogent] StateManager initialized');
+    // StateManager starts with an empty sentinel dir; it will be re-bound
+    // to the real session dir once initSession() is called.
+    svc.stateManager = new StateManager('');
+    log.info('[Coogent] StateManager initialized (deferred session dir)');
 
     svc.engine = new Engine(svc.stateManager, { workspaceRoot: primaryRoot });
     log.info('[Coogent] Engine initialized');
@@ -122,7 +122,7 @@ export function activate(context: vscode.ExtensionContext): void {
     svc.gitManager = new GitManager(primaryRoot);
     svc.gitSandbox = new GitSandboxManager(primaryRoot);
 
-    svc.sessionManager = new SessionManager(storageBase, sessionId, sessionDirName);
+    svc.sessionManager = new SessionManager(storageBase, '' /* deferred */);
 
     const adkAdapter = new AntigravityADKAdapter(primaryRoot);
     svc.adkController = new ADKController(adkAdapter, primaryRoot);
@@ -149,7 +149,7 @@ export function activate(context: vscode.ExtensionContext): void {
       maxTreeDepth: 4,
       maxTreeChars: 8000,
     });
-    svc.plannerAgent.setMasterTaskId(sessionDirName);
+    // PlannerAgent.masterTaskId set in PlannerWiring on first plan:request
     log.info('[Coogent] PlannerAgent initialized');
 
     svc.handoffExtractor = new HandoffExtractor();
@@ -167,30 +167,12 @@ export function activate(context: vscode.ExtensionContext): void {
     svc.mcpServer.init(coogentDir)
       .then(async () => {
         log.info('[Coogent] ArtifactDB initialised.');
-        // Persist session metadata to SQLite (replaces old current-session file)
-        // F-2 audit fix: Use '[pending]' sentinel instead of '' so a crash before
-        // PlannerWiring backfills the real prompt leaves a distinguishable marker.
-        svc.mcpServer!.upsertSession(sessionDirName, sessionId, '[pending]', Date.now());
-        // Wire StateManager → DB for runbook persistence (S1 audit fix)
-        const db = svc.mcpServer!.getArtifactDB();
-        if (db) {
-          svc.stateManager?.setArtifactDB(db, sessionDirName);
-          svc.sessionManager?.setArtifactDB(db);
-          log.info('[Coogent] StateManager + SessionManager wired to ArtifactDB.');
-        }
 
-        // ── Crash recovery (must run AFTER DB wiring so loadRunbook() hits DB) ──
-        const recovered = await svc.stateManager!.recoverFromCrash();
-        if (recovered) {
-          try {
-            await svc.engine?.loadRunbook();
-          } catch (err) {
-            log.error('[Coogent] Failed to load recovered runbook:', err);
-          }
-          vscode.window.showWarningMessage(
-            'Coogent: Recovered from an interrupted session. Review state before continuing.'
-          );
-        }
+        // DB wiring is deferred until plan:request materialises the session.
+        // At this point we only connect the MCP bridge so it's ready.
+        // When initSession() runs (in PlannerWiring), it will call
+        // upsertSession(), stateManager.setArtifactDB(), and
+        // sessionManager.setArtifactDB().
 
         return svc.mcpBridge!.connect();
       })
@@ -214,8 +196,8 @@ export function activate(context: vscode.ExtensionContext): void {
     log.info('[Coogent] Activity Bar sidebar menu registered.');
 
     // ── Wire events (delegated) ────────────────────────────────────────
-    wireEngine(svc, sessionDirName, primaryRoot, workerTimeoutMs, workspaceRoots);
-    wirePlanner(svc, sessionDirName);
+    wireEngine(svc, primaryRoot, workerTimeoutMs, workspaceRoots);
+    wirePlanner(svc);
 
     // ── Reactive configuration ─────────────────────────────────────────
     context.subscriptions.push(
