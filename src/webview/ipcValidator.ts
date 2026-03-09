@@ -4,7 +4,7 @@
 // See 02-review.md § P1-3.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { WebviewToHostMessage } from '../types/index.js';
+import type { WebviewToHostMessage, WebviewToHostMessageType } from '../types/index.js';
 
 const VALID_TYPES_NO_PAYLOAD = new Set(['CMD_START', 'CMD_ABORT', 'CMD_REQUEST_STATE', 'CMD_PLAN_APPROVE', 'CMD_PLAN_RETRY_PARSE', 'CMD_RESET', 'CMD_REQUEST_REPORT', 'CMD_REQUEST_PLAN', 'CMD_RESUME_PENDING', 'CMD_UPLOAD_FILE', 'CMD_UPLOAD_IMAGE', 'CMD_LIST_SESSIONS', 'workers:request']);
 const VALID_TYPES_WITH_PHASEID = new Set(['CMD_RETRY', 'CMD_SKIP_PHASE', 'CMD_PAUSE_PHASE', 'CMD_STOP_PHASE', 'CMD_RESTART_PHASE', 'CMD_REVIEW_DIFF']);
@@ -138,7 +138,6 @@ type _ExhaustiveWebviewMessageTypes = {
 // If this line errors, a new WebviewToHostMessageType is not yet handled above.
 // Uses an exported type alias (zero runtime footprint) instead of declare+void to avoid
 // Jest ReferenceError: _guard is not defined. Exported symbols are never flagged as unused.
-import type { WebviewToHostMessageType } from '../types/index.js';
 export type _AssertExhaustive = _ExhaustiveWebviewMessageTypes extends Record<WebviewToHostMessageType, true>
     ? true
     : never;

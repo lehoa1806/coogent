@@ -13,12 +13,10 @@ import {
     EngineEvent,
     STATE_TRANSITIONS,
     asTimestamp,
-} from '../types/index.js';
-import type {
-    Runbook,
-    Phase,
-    HostToWebviewMessage,
-    EvaluationResult,
+    type Runbook,
+    type Phase,
+    type HostToWebviewMessage,
+    type EvaluationResult,
 } from '../types/index.js';
 import { StateManager } from '../state/StateManager.js';
 import { Scheduler } from './Scheduler.js';
@@ -28,8 +26,7 @@ import { PlanningController } from './PlanningController.js';
 import { PhaseController } from './PhaseController.js';
 import { EvaluationOrchestrator } from './EvaluationOrchestrator.js';
 import { SessionController } from './SessionController.js';
-import { DispatchController } from './DispatchController.js';
-import type { DispatchControllerOptions } from './DispatchController.js';
+import { DispatchController, type DispatchControllerOptions } from './DispatchController.js';
 import type { EngineInternals } from './EngineInternals.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════

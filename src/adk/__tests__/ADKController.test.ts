@@ -3,8 +3,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { ADKController } from '../ADKController.js';
 import { MockADKAdapter } from './mocks/MockADKAdapter.js';
-import type { Phase } from '../../types/index.js';
-import { asPhaseId } from '../../types/index.js';
+import { asPhaseId, type Phase } from '../../types/index.js';
 
 describe('ADKController (with MockADKAdapter)', () => {
     let controller: ADKController;

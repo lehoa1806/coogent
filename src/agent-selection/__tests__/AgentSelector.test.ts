@@ -1,8 +1,7 @@
 import { AgentRegistry } from '../AgentRegistry.js';
 import { AgentSelector } from '../AgentSelector.js';
-import { SubtaskSpecBuilder } from '../SubtaskSpecBuilder.js';
+import { SubtaskSpecBuilder, type SubtaskDraft } from '../SubtaskSpecBuilder.js';
 import type { SubtaskSpec } from '../types.js';
-import type { SubtaskDraft } from '../SubtaskSpecBuilder.js';
 
 /** Helper to build a SubtaskSpec from a simple draft. */
 function buildSpec(overrides: Partial<SubtaskDraft> = {}): SubtaskSpec {

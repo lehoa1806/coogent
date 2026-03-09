@@ -1,5 +1,4 @@
-import { SubtaskSpecBuilder } from '../SubtaskSpecBuilder.js';
-import type { SubtaskDraft, NormalizedRequirementContext } from '../SubtaskSpecBuilder.js';
+import { SubtaskSpecBuilder, type SubtaskDraft, type NormalizedRequirementContext } from '../SubtaskSpecBuilder.js';
 
 describe('SubtaskSpecBuilder', () => {
     describe('inferTaskType', () => {

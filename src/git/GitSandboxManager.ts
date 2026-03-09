@@ -289,7 +289,7 @@ export class GitSandboxManager {
             const prefix = options.branchPrefix ?? 'coogent/';
             const sanitizedSlug = options.taskSlug
                 .replace(/\s+/g, '-')           // spaces → hyphens
-                .replace(/[^a-zA-Z0-9\-\/]/g, '') // strip non-alphanumeric (keep - and /)
+                .replace(/[^a-zA-Z0-9\-/]/g, '') // strip non-alphanumeric (keep - and /)
                 .replace(/-{2,}/g, '-')         // collapse consecutive hyphens
                 .replace(/^-+|-+$/g, '')        // strip leading/trailing hyphens
                 .toLowerCase();
@@ -490,7 +490,7 @@ export class GitSandboxManager {
             const prefix = options.branchPrefix ?? 'coogent/';
             const sanitizedSlug = options.taskSlug
                 .replace(/\s+/g, '-')
-                .replace(/[^a-zA-Z0-9\-\/]/g, '')
+                .replace(/[^a-zA-Z0-9\-/]/g, '')
                 .replace(/-{2,}/g, '-')
                 .replace(/^-+|-+$/g, '')
                 .toLowerCase();

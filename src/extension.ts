@@ -245,8 +245,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     log.info('[Coogent] Extension activated.');
 
-  } catch (err: any) {
-    const msg = err?.message || String(err);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
     vscode.window.showErrorMessage(`[Coogent] Activation failed: ${msg}`);
     log.error('[Coogent] Activation error:', err);
   }
@@ -260,7 +260,7 @@ export async function deactivate(): Promise<void> {
   log.info('[Coogent] Extension deactivating...');
 
   await Promise.allSettled([
-    svc.engine?.abort().catch(log.onError),
+    svc.engine?.getState() !== 'IDLE' ? svc.engine?.abort().catch(log.onError) : undefined,
     svc.adkController?.killAllWorkers().catch(log.onError),
     svc.plannerAgent?.abort().catch(log.onError),
     svc.mcpBridge?.disconnect().catch((err) =>

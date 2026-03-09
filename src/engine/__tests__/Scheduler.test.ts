@@ -1,6 +1,5 @@
 import { Scheduler } from '../Scheduler.js';
-import type { Phase } from '../../types/index.js';
-import { asPhaseId } from '../../types/index.js';
+import { asPhaseId, type Phase } from '../../types/index.js';
 
 describe('Scheduler', () => {
     let scheduler: Scheduler;

@@ -5,10 +5,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { StateManager } from '../StateManager.js';
-import type { SecretStorageLike } from '../StateManager.js';
-import { RUNBOOK_FILENAME } from '../../types/index.js';
-import type { Runbook, EngineState } from '../../types/index.js';
+import { StateManager, type SecretStorageLike } from '../StateManager.js';
+import { RUNBOOK_FILENAME, type Runbook, type EngineState } from '../../types/index.js';
 
 const ENCRYPTED_PREFIX = 'ENC:';
 

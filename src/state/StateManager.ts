@@ -338,7 +338,7 @@ export class StateManager {
             let walEntry: WALEntry;
             try {
                 walEntry = JSON.parse(walRaw) as WALEntry;
-            } catch (parseErr) {
+            } catch {
                 // Corrupt WAL — delete it and log warning (#33)
                 log.warn('[StateManager] Corrupt WAL file (invalid JSON). Deleting...');
                 await fs.unlink(this.walPath).catch(() => { });

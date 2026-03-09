@@ -3,8 +3,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { Engine } from '../Engine.js';
 import { StateManager } from '../../state/StateManager.js';
-import type { Runbook } from '../../types/index.js';
-import { asPhaseId } from '../../types/index.js';
+import { asPhaseId, type Runbook } from '../../types/index.js';
 
 // Mock saveRunbook to be a no-op — Engine tests are about FSM state transitions,
 // not disk persistence. This eliminates all WAL I/O and ENOTEMPTY issues.

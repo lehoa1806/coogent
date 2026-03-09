@@ -10,8 +10,8 @@ import { COOGENT_DIR } from '../constants/paths.js';
 import {
     resolveFileAcrossRoots,
     parseWorkspaceQualifiedPath,
+    type ResolvedFile,
 } from '../utils/WorkspaceHelper.js';
-import type { ResolvedFile } from '../utils/WorkspaceHelper.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Explicit File Resolver (V1 — default)

@@ -7,8 +7,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { HandoffExtractor, type HandoffReport } from '../HandoffExtractor.js';
-import type { Phase } from '../../types/index.js';
-import { asPhaseId } from '../../types/index.js';
+import { asPhaseId, type Phase } from '../../types/index.js';
 
 describe('HandoffExtractor', () => {
     let extractor: HandoffExtractor;
