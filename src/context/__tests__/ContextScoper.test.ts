@@ -149,4 +149,37 @@ describe('ContextScoper', () => {
         // If even entry.ts alone exceeds 50 tokens (with wrapper overhead),
         // then ok will be false — which is also a valid outcome for a 50-token budget
     });
+
+    it('skips symlinked files that resolve outside workspace instead of throwing', async () => {
+        // Create a real file inside the workspace
+        await fs.writeFile(path.join(tmpDir, 'local.txt'), 'local content');
+
+        // Create a temp dir OUTSIDE the workspace and symlink into it
+        const externalDir = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-external-'));
+        await fs.writeFile(path.join(externalDir, 'remote.txt'), 'remote content');
+        await fs.symlink(
+            path.join(externalDir, 'remote.txt'),
+            path.join(tmpDir, 'remote-link.txt'),
+        );
+
+        const phase = {
+            id: asPhaseId(1), status: 'pending', prompt: '',
+            context_files: ['local.txt', 'remote-link.txt'],
+            success_criteria: ''
+        } as Phase;
+
+        // Should NOT throw — should skip the symlinked file and assemble the local one
+        const res = await scoper.assemble(phase, tmpDir);
+
+        expect(res.ok).toBe(true);
+        if (res.ok) {
+            expect(res.payload).toContain('<<<FILE: local.txt>>>');
+            expect(res.payload).toContain('local content');
+            // The symlinked file should be skipped
+            expect(res.payload).not.toContain('remote content');
+        }
+
+        // Cleanup external dir
+        await fs.rm(externalDir, { recursive: true, force: true });
+    });
 });
