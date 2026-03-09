@@ -260,7 +260,7 @@ export async function deactivate(): Promise<void> {
   log.info('[Coogent] Extension deactivating...');
 
   await Promise.allSettled([
-    svc.engine?.abort().catch(log.onError),
+    svc.engine?.getState() !== 'IDLE' ? svc.engine?.abort().catch(log.onError) : undefined,
     svc.adkController?.killAllWorkers().catch(log.onError),
     svc.plannerAgent?.abort().catch(log.onError),
     svc.mcpBridge?.disconnect().catch((err) =>

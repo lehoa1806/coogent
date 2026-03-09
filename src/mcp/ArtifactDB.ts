@@ -168,12 +168,6 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id
 -- Agent selection audit index
 CREATE INDEX IF NOT EXISTS idx_selection_audits_session ON selection_audits(session_id);
 
--- S4-9: Schema version tracking for migration management
-CREATE TABLE IF NOT EXISTS schema_version (
-  version INTEGER PRIMARY KEY,
-  applied_at INTEGER NOT NULL,
-  description TEXT NOT NULL DEFAULT ''
-);
 `;
 
 /** Current schema version — bump this when adding new migrations. */
@@ -217,6 +211,17 @@ const MAX_BACKUPS = 3;
  *   db.close();
  */
 export class ArtifactDB {
+    /** Read the current schema version from the DB (0 if no rows). */
+    private static readSchemaVersion(db: Database): number {
+        try {
+            const rows = db.exec('SELECT MAX(version) FROM schema_version');
+            if (rows.length > 0 && rows[0].values.length > 0) {
+                return (rows[0].values[0][0] as number) ?? 0;
+            }
+        } catch { /* table might not exist yet on very first boot */ }
+        return 0;
+    }
+
     private db: Database;
     private readonly dbPath: string;
 
@@ -336,48 +341,46 @@ export class ArtifactDB {
         // Enable foreign key enforcement
         db.run('PRAGMA foreign_keys=ON;');
 
-        // Run schema DDL (idempotent) — exec() handles multi-statement strings;
-        // run() would silently execute only the first CREATE TABLE.
-        db.exec(SCHEMA_SQL);
+        // ── Version-gated schema migrations ────────────────────────────────
+        // Bootstrap the version-tracking table (always idempotent — single
+        // lightweight CREATE IF NOT EXISTS) so we can read the current version.
+        db.exec(`CREATE TABLE IF NOT EXISTS schema_version (
+            version INTEGER PRIMARY KEY,
+            applied_at INTEGER NOT NULL,
+            description TEXT NOT NULL DEFAULT ''
+        );`);
 
-        // ── Schema Migrations (idempotent) ────────────────────────────────
-        // BL-5 audit fix: Add raw_llm_output column to plan_revisions
-        try {
-            db.run('ALTER TABLE plan_revisions ADD COLUMN raw_llm_output TEXT');
-        } catch {
-            // Column already exists — ignore
-        }
+        const currentVersion = ArtifactDB.readSchemaVersion(db);
 
-        // F-6 audit fix: Add compilation_manifest column to plan_revisions
-        try {
-            db.run('ALTER TABLE plan_revisions ADD COLUMN compilation_manifest TEXT');
-        } catch {
-            // Column already exists — ignore
-        }
+        if (currentVersion < SCHEMA_VERSION) {
+            log.info(`[ArtifactDB] Schema outdated (v${currentVersion} → v${SCHEMA_VERSION}), running migrations…`);
 
-        // Plan requirement detection: add plan_required flag to phases
-        // NULL = unknown (legacy), 1 = required, 0 = not required
-        try {
-            db.run('ALTER TABLE phases ADD COLUMN plan_required INTEGER');
-        } catch {
-            // Column already exists — ignore
-        }
+            // Run full DDL (idempotent) — exec() handles multi-statement strings;
+            // run() would silently execute only the first CREATE TABLE.
+            db.exec(SCHEMA_SQL);
 
-        // S4-9: Record schema version for migration tracking
-        try {
-            const versionRows = db.exec('SELECT MAX(version) as v FROM schema_version');
-            const currentVersion = (versionRows.length > 0 && versionRows[0].values.length > 0)
-                ? (versionRows[0].values[0][0] as number ?? 0)
-                : 0;
-            if (currentVersion < SCHEMA_VERSION) {
-                db.run(
-                    'INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)',
-                    [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: selection_audits, phase_logs, plan_revisions`]
-                );
-                log.info(`[ArtifactDB] Schema version updated: ${currentVersion} → ${SCHEMA_VERSION}`);
-            }
-        } catch (err) {
-            log.warn('[ArtifactDB] Schema version tracking failed:', err);
+            // ── Incremental column migrations (idempotent) ────────────────
+            // BL-5 audit fix: Add raw_llm_output column to plan_revisions
+            try {
+                db.run('ALTER TABLE plan_revisions ADD COLUMN raw_llm_output TEXT');
+            } catch { /* Column already exists */ }
+
+            // F-6 audit fix: Add compilation_manifest column to plan_revisions
+            try {
+                db.run('ALTER TABLE plan_revisions ADD COLUMN compilation_manifest TEXT');
+            } catch { /* Column already exists */ }
+
+            // Plan requirement detection: add plan_required flag to phases
+            try {
+                db.run('ALTER TABLE phases ADD COLUMN plan_required INTEGER');
+            } catch { /* Column already exists */ }
+
+            // Record the new schema version
+            db.run(
+                'INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)',
+                [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: selection_audits, phase_logs, plan_revisions`]
+            );
+            log.info(`[ArtifactDB] Schema migrated to v${SCHEMA_VERSION}.`);
         }
 
 
