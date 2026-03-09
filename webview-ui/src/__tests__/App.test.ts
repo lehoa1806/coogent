@@ -56,15 +56,42 @@ describe('App', () => {
         patchState({ engineState: 'PLANNING' });
         render(App);
         expect(screen.getByText('Planning…')).toBeInTheDocument();
+        expect(
+            screen.getByRole('img', { name: 'Planning in progress' }),
+        ).toBeInTheDocument();
     });
 
-    it('displays user prompt during PLANNING state', () => {
+    it('displays user prompt with Preview/Raw toggle during PLANNING state', () => {
         patchState({
             engineState: 'PLANNING',
             lastPrompt: 'Build authentication module',
         });
         render(App);
-        expect(screen.getByText('Build authentication module')).toBeInTheDocument();
+        expect(screen.getByText('Your prompt')).toBeInTheDocument();
+        expect(screen.getByText('Preview')).toBeInTheDocument();
+        expect(screen.getByText('Raw')).toBeInTheDocument();
+    });
+
+    it('switches between Preview and Raw for the planning prompt', async () => {
+        patchState({
+            engineState: 'PLANNING',
+            lastPrompt: '# Hello',
+        });
+        const { container } = render(App);
+
+        const previewBtn = screen.getByText('Preview');
+        const rawBtn = screen.getByText('Raw');
+
+        // Click Raw to ensure we're in raw mode
+        await fireEvent.click(rawBtn);
+        expect(rawBtn.closest('button')).toHaveClass('active');
+        // Raw mode shows the prompt inside a <p class="prompt-text">
+        expect(container.querySelector('.prompt-text')).toBeInTheDocument();
+
+        // Switch to Preview — should show rendered markdown (no .prompt-text)
+        await fireEvent.click(previewBtn);
+        expect(previewBtn.closest('button')).toHaveClass('active');
+        expect(container.querySelector('.prompt-text')).not.toBeInTheDocument();
     });
 
     it('does not show tabs during PLANNING state', () => {

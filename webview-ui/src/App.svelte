@@ -16,6 +16,8 @@
   import WorkerTerminal from "./components/WorkerTerminal.svelte";
   import ChatInput from "./components/ChatInput.svelte";
   import WorkerStudio from "./components/WorkerStudio.svelte";
+  import ViewModeTabs from "./components/ViewModeTabs.svelte";
+  import MarkdownRenderer from "./components/MarkdownRenderer.svelte";
 
   import ReportModal from "./components/ReportModal.svelte";
 
@@ -24,6 +26,8 @@
   let showPlanModal = $state(false);
   /** Active view tab: 'phases' (default) or 'workers' */
   let activeView: "phases" | "workers" = $state("phases");
+  /** Preview/Raw toggle for the planning prompt */
+  let promptViewMode: "preview" | "raw" = $state("preview");
 
   function handleToggleTerminal() {
     showTerminal = !showTerminal;
@@ -101,12 +105,51 @@
     {#if isPlanning}
       <!-- Planning state: show user's prompt with spinner -->
       <div class="planning-view">
-        <div class="planning-spinner"></div>
+        <svg
+          class="planning-spinner"
+          width="36"
+          height="36"
+          viewBox="0 0 36 36"
+          role="img"
+          aria-label="Planning in progress"
+        >
+          <circle cx="18" cy="4" r="3" fill="var(--vscode-charts-purple, #a78bfa)">
+            <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite" begin="0s" />
+          </circle>
+          <circle cx="30.1" cy="11" r="3" fill="var(--vscode-charts-purple, #a78bfa)">
+            <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite" begin="0.15s" />
+          </circle>
+          <circle cx="32" cy="25" r="3" fill="var(--vscode-charts-purple, #a78bfa)">
+            <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite" begin="0.3s" />
+          </circle>
+          <circle cx="24" cy="33" r="3" fill="var(--vscode-charts-purple, #a78bfa)">
+            <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite" begin="0.45s" />
+          </circle>
+          <circle cx="12" cy="33" r="3" fill="var(--vscode-charts-purple, #a78bfa)">
+            <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite" begin="0.6s" />
+          </circle>
+          <circle cx="4" cy="25" r="3" fill="var(--vscode-charts-purple, #a78bfa)">
+            <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite" begin="0.75s" />
+          </circle>
+          <circle cx="5.9" cy="11" r="3" fill="var(--vscode-charts-purple, #a78bfa)">
+            <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite" begin="0.9s" />
+          </circle>
+        </svg>
         <p class="planning-label">Planning…</p>
         {#if appState.lastPrompt}
           <div class="planning-prompt">
-            <span class="prompt-label">Your prompt</span>
-            <p class="prompt-text">{appState.lastPrompt}</p>
+            <div class="prompt-header">
+              <span class="prompt-label">Your prompt</span>
+              <ViewModeTabs
+                value={promptViewMode}
+                onchange={(mode) => (promptViewMode = mode)}
+              />
+            </div>
+            {#if promptViewMode === "preview"}
+              <MarkdownRenderer content={appState.lastPrompt} />
+            {:else}
+              <p class="prompt-text">{appState.lastPrompt}</p>
+            {/if}
           </div>
         {/if}
       </div>
@@ -235,12 +278,9 @@
   }
 
   .planning-spinner {
-    width: 32px;
-    height: 32px;
-    border: 3px solid rgba(128, 128, 128, 0.2);
-    border-top-color: var(--vscode-charts-purple, #a78bfa);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
+    width: 36px;
+    height: 36px;
+    flex-shrink: 0;
   }
 
   .planning-label {
@@ -264,6 +304,17 @@
     text-align: left;
   }
 
+  .prompt-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .prompt-header .prompt-label {
+    margin-bottom: 0;
+  }
+
   .prompt-label {
     font-size: 10px;
     text-transform: uppercase;
@@ -281,12 +332,6 @@
     white-space: pre-wrap;
     word-wrap: break-word;
     margin: 0;
-  }
-
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
   }
 
   @keyframes pulse {

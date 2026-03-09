@@ -71,6 +71,8 @@
 
     // ── All Phases modal tab ─────────────────────────────────────────────
     let modalTab: "prompt" | "plan" = $state("plan");
+    /** Preview/Raw toggle for the Original Prompt tab in the View-All modal */
+    let modalPromptViewMode: "preview" | "raw" = $state("preview");
 
     // ── Carousel nav ─────────────────────────────────────────────────────
     function prevSlide() {
@@ -210,7 +212,17 @@
                     <!-- Original Prompt tab -->
                     {#if originalPrompt}
                         <div class="modal-prompt-body">
-                            <p>{originalPrompt}</p>
+                            <div class="modal-prompt-header">
+                                <ViewModeTabs
+                                    value={modalPromptViewMode}
+                                    onchange={(m) => (modalPromptViewMode = m)}
+                                />
+                            </div>
+                            {#if modalPromptViewMode === "preview"}
+                                <MarkdownRenderer content={originalPrompt} />
+                            {:else}
+                                <p>{originalPrompt}</p>
+                            {/if}
                         </div>
                     {:else}
                         <div class="modal-prompt-empty">
@@ -575,6 +587,12 @@
         color: var(--vscode-foreground);
         white-space: pre-wrap;
         word-wrap: break-word;
+    }
+
+    .modal-prompt-header {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 12px;
     }
 
     .modal-prompt-empty {
