@@ -259,6 +259,104 @@ export class HandoffExtractor {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
+    //  Implementation Plan Extraction (file-IPC fallback)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Extract an implementation plan from the worker's accumulated output.
+     *
+     * When the worker runs via file-based IPC (no vscode.lm), it cannot call
+     * `submit_implementation_plan` via the in-process MCP server. This method
+     * post-processes the worker output to extract the plan for persistence.
+     *
+     * Extraction heuristics (in priority order):
+     *   1. Fenced block: ` ```implementation_plan ... ``` `
+     *   2. Heading-based: Content under `## Proposed Changes` or
+     *      `## Implementation Plan` headings, up to the handoff JSON block.
+     *
+     * @param workerOutput  The full accumulated stdout from the worker.
+     * @param masterTaskId  Master task ID for dedup check.
+     * @param phaseId       MCP phase ID string for dedup check.
+     * @returns The plan markdown, or `null` if no plan found or already persisted.
+     */
+    extractImplementationPlan(
+        workerOutput: string,
+        masterTaskId?: string,
+        phaseId?: string,
+    ): string | null {
+        // Dedup guard: skip extraction if a plan already exists in ArtifactDB
+        if (this.db && masterTaskId && phaseId) {
+            try {
+                const task = this.db.tasks.get(masterTaskId);
+                const phase = task?.phases.get(phaseId);
+                if (phase?.implementationPlan) {
+                    log.info(
+                        `[HandoffExtractor] Implementation plan already exists for ` +
+                        `${masterTaskId}/${phaseId} — skipping extraction.`
+                    );
+                    return null;
+                }
+            } catch (err) {
+                log.warn(`[HandoffExtractor] Dedup check failed:`, err);
+                // Continue with extraction — better to duplicate than lose the plan
+            }
+        }
+
+        // Heuristic 1: Fenced ` ```implementation_plan ``` ` block
+        const fencedPlanRegex = /```implementation_plan\s*\n([\s\S]*?)```/g;
+        let lastFencedPlan: string | null = null;
+        let fencedMatch: RegExpExecArray | null;
+        while ((fencedMatch = fencedPlanRegex.exec(workerOutput)) !== null) {
+            lastFencedPlan = fencedMatch[1].trim();
+        }
+        if (lastFencedPlan && lastFencedPlan.length > 100) {
+            log.info(
+                `[HandoffExtractor] Extracted implementation plan from fenced block ` +
+                `(${lastFencedPlan.length} chars).`
+            );
+            return lastFencedPlan;
+        }
+
+        // Heuristic 2: Heading-based extraction
+        // Look for ## Proposed Changes or ## Implementation Plan
+        const headingPattern = /^(#{1,2}\s+(?:Proposed Changes|Implementation Plan))\s*$/im;
+        const headingMatch = headingPattern.exec(workerOutput);
+        if (headingMatch) {
+            const startIdx = headingMatch.index;
+
+            // End boundary: the handoff JSON block or next top-level section
+            // that is NOT part of the plan (e.g. ## Verification, ```json)
+            const remainingOutput = workerOutput.slice(startIdx);
+
+            // Find the end: either the handoff JSON fence or a non-plan heading
+            const endPatterns = [
+                /\n```json\s*\n\s*\{[\s\S]*?"decisions"/,    // handoff JSON block
+                /\n#{1,2}\s+(?:Verification|Context from Previous|MCP Context|Task)\b[^\n]*\n/i,
+            ];
+
+            let endIdx = remainingOutput.length;
+            for (const pattern of endPatterns) {
+                const endMatch = pattern.exec(remainingOutput);
+                if (endMatch && endMatch.index < endIdx) {
+                    endIdx = endMatch.index;
+                }
+            }
+
+            const plan = remainingOutput.slice(0, endIdx).trim();
+            if (plan.length > 100) {
+                log.info(
+                    `[HandoffExtractor] Extracted implementation plan from heading ` +
+                    `"${headingMatch[1]}" (${plan.length} chars).`
+                );
+                return plan;
+            }
+        }
+
+        log.debug(`[HandoffExtractor] No implementation plan found in worker output.`);
+        return null;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     //  Private helpers
     // ═══════════════════════════════════════════════════════════════════════════
 

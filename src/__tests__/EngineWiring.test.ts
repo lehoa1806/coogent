@@ -222,6 +222,50 @@ describe('wireEngine', () => {
         expect(engine.onWorkerExited).toHaveBeenCalledWith(2, 0);
     });
 
+    // ── IPC-FIX: Implementation plan extraction from worker output ──────
+    it('worker:exited(0) extracts and submits implementation plan from worker output', async () => {
+        const planText = '## Proposed Changes\n\n### Module A\n#### [MODIFY] [a.ts](file:///workspace/a.ts)\nRefactor to use async/await pattern throughout.\n\n### Module B\n#### [NEW] [b.ts](file:///workspace/b.ts)\nCreate new utility for shared validation logic.';
+        const mockReport = { decisions: ['d1'], modified_files: ['a.ts'], unresolved_issues: [] };
+        const mockHandoffExtractor = {
+            extractHandoff: jest.fn().mockResolvedValue(mockReport),
+            extractImplementationPlan: jest.fn().mockReturnValue(planText),
+            generateDistillationPrompt: jest.fn().mockReturnValue(''),
+            buildNextContext: jest.fn().mockResolvedValue(''),
+        };
+        const mockMcpBridge = {
+            submitPhaseHandoff: jest.fn().mockResolvedValue(undefined),
+            submitImplementationPlan: jest.fn().mockResolvedValue(undefined),
+        };
+
+        svc.handoffExtractor = mockHandoffExtractor as any;
+        svc.mcpBridge = mockMcpBridge as any;
+        svc.currentSessionDir = '/workspace/.coogent/ipc/session-001';
+
+        engine.getRunbook.mockReturnValue({
+            phases: [{ id: 1, mcpPhaseId: 'phase-001-abc' }],
+        });
+
+        wireEngine(svc, '/workspace', 60000);
+        svc.workerOutputAccumulator.set(1, `Some output...\n${planText}\n\`\`\`json\n{"decisions":["d1"]}\n\`\`\``);
+
+        adk.emit('worker:exited', 1, 0);
+        await new Promise(r => setTimeout(r, 50));
+
+        // Should have called extractImplementationPlan with the accumulated output
+        expect(mockHandoffExtractor.extractImplementationPlan).toHaveBeenCalledWith(
+            expect.any(String),
+            'session-001',
+            'phase-001-abc',
+        );
+
+        // Should have submitted the plan via mcpBridge
+        expect(mockMcpBridge.submitImplementationPlan).toHaveBeenCalledWith(
+            'session-001',
+            planText,
+            'phase-001-abc',
+        );
+    });
+
     // ── F-5 audit fix: Incremental flush timer ─────────────────────────
 
     describe('F-5: incremental worker output flush', () => {

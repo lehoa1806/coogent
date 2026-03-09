@@ -302,4 +302,162 @@ describe('HandoffExtractor', () => {
             expect(ctx).toContain('No handoff report found');
         });
     });
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  extractImplementationPlan (file-IPC fallback)
+    // ═════════════════════════════════════════════════════════════════════════
+
+    describe('extractImplementationPlan', () => {
+        it('should extract plan from fenced implementation_plan block', () => {
+            const planContent = [
+                '## Proposed Changes',
+                '',
+                '### Component A',
+                '#### [MODIFY] [foo.ts](file:///workspace/foo.ts)',
+                'Add error handling to the fetch call.',
+                '',
+                '### Component B',
+                '#### [NEW] [bar.ts](file:///workspace/bar.ts)',
+                'Create the new utility module.',
+            ].join('\n');
+
+            const workerOutput = [
+                'Working on the task...',
+                '',
+                '```implementation_plan',
+                planContent,
+                '```',
+                '',
+                'Done!',
+            ].join('\n');
+
+            const result = extractor.extractImplementationPlan(workerOutput);
+            expect(result).not.toBeNull();
+            expect(result).toContain('## Proposed Changes');
+            expect(result).toContain('Component A');
+            expect(result).toContain('Component B');
+        });
+
+        it('should extract plan from ## Proposed Changes heading', () => {
+            const workerOutput = [
+                'Analyzing the codebase...',
+                '',
+                '## Proposed Changes',
+                '',
+                '### Auth Module',
+                '#### [MODIFY] [auth.ts](file:///workspace/auth.ts)',
+                'Implement JWT refresh token rotation.',
+                '',
+                '### Database Layer',
+                '#### [MODIFY] [db.ts](file:///workspace/db.ts)',
+                'Add connection pooling configuration.',
+                '',
+                '## Verification Plan',
+                'Run tests with `npm test`.',
+            ].join('\n');
+
+            const result = extractor.extractImplementationPlan(workerOutput);
+            expect(result).not.toBeNull();
+            expect(result).toContain('## Proposed Changes');
+            expect(result).toContain('Auth Module');
+            expect(result).toContain('Database Layer');
+            // Should NOT include the Verification section
+            expect(result).not.toContain('## Verification Plan');
+        });
+
+        it('should extract plan from ## Implementation Plan heading', () => {
+            const workerOutput = [
+                '## Implementation Plan',
+                '',
+                'We need to refactor the router module to support middleware chains.',
+                'The changes span three files and require careful ordering.',
+                '',
+                '### Step 1: Router.ts',
+                'Add the middleware array to the route definition.',
+                '',
+                '### Step 2: Middleware.ts',
+                'Create the middleware chain runner.',
+            ].join('\n');
+
+            const result = extractor.extractImplementationPlan(workerOutput);
+            expect(result).not.toBeNull();
+            expect(result).toContain('## Implementation Plan');
+            expect(result).toContain('Router.ts');
+            expect(result).toContain('Middleware.ts');
+        });
+
+        it('should stop extraction before handoff JSON block', () => {
+            const workerOutput = [
+                '## Proposed Changes',
+                '',
+                '### Module X',
+                '#### [MODIFY] [x.ts](file:///workspace/x.ts)',
+                'Update the handler to validate input before dispatching.',
+                '',
+                '```json',
+                '{"decisions":["Updated handler"],"modified_files":["x.ts"],"unresolved_issues":[],"next_steps_context":"Done"}',
+                '```',
+            ].join('\n');
+
+            const result = extractor.extractImplementationPlan(workerOutput);
+            expect(result).not.toBeNull();
+            expect(result).toContain('## Proposed Changes');
+            expect(result).toContain('Module X');
+            expect(result).not.toContain('"decisions"');
+        });
+
+        it('should return null when no plan is found', () => {
+            const workerOutput = [
+                'Just doing some work...',
+                'No plan here, just execution.',
+                '',
+                '```json',
+                '{"decisions":["Done"],"modified_files":[],"unresolved_issues":[],"next_steps_context":""}',
+                '```',
+            ].join('\n');
+
+            const result = extractor.extractImplementationPlan(workerOutput);
+            expect(result).toBeNull();
+        });
+
+        it('should return null for plans shorter than minimum threshold', () => {
+            const workerOutput = [
+                '## Proposed Changes',
+                '',
+                'Short plan.',
+            ].join('\n');
+
+            // Plan content is < 200 chars for heading heuristic
+            const result = extractor.extractImplementationPlan(workerOutput);
+            expect(result).toBeNull();
+        });
+
+        it('should skip extraction when plan already exists in ArtifactDB (dedup)', () => {
+            const mockDB = {
+                tasks: {
+                    get: () => ({
+                        phases: {
+                            get: () => ({
+                                implementationPlan: '# Existing plan\nAlready submitted.',
+                            }),
+                        },
+                    }),
+                },
+            };
+            extractor.setArtifactDB(mockDB as any, 'task-001');
+
+            const workerOutput = [
+                '```implementation_plan',
+                '## Proposed Changes\n\n### A\nLine '.repeat(20), // > 100 chars
+                '```',
+            ].join('\n');
+
+            const result = extractor.extractImplementationPlan(
+                workerOutput,
+                'task-001',
+                'phase-001-uuid',
+            );
+            expect(result).toBeNull();
+        });
+    });
 });
