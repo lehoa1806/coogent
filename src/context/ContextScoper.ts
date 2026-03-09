@@ -5,9 +5,8 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as vscode from 'vscode';
-import type { ContextResult, Phase } from '../types/index.js';
-import { ExplicitFileResolver, ASTFileResolver } from './FileResolver.js';
-import type { FileResolver } from '../types/index.js';
+import type { ContextResult, Phase, FileResolver } from '../types/index.js';
+import { ASTFileResolver, ExplicitFileResolver } from './FileResolver.js';
 import { TokenPruner, type PrunableEntry } from './TokenPruner.js';
 import { TiktokenEncoder } from './TiktokenEncoder.js';
 import { SecretsGuard } from './SecretsGuard.js';

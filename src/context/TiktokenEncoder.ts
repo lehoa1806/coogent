@@ -2,8 +2,7 @@
 // src/context/TiktokenEncoder.ts — Precise token counting via js-tiktoken
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { TokenEncoder } from './ContextScoper.js';
-import { CharRatioEncoder } from './ContextScoper.js';
+import { CharRatioEncoder, type TokenEncoder } from './ContextScoper.js';
 import log from '../logger/log.js';
 
 /**

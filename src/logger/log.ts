@@ -12,8 +12,7 @@
 //   2. disposeLog()                   — call once in deactivate()
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { LogStream, LogLevel } from './LogStream.js';
-import type { LogStreamOptions } from './LogStream.js';
+import { LogStream, LogLevel, type LogStreamOptions } from './LogStream.js';
 
 let _instance: LogStream | undefined;
 

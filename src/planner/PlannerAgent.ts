@@ -5,16 +5,13 @@
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { Runbook } from '../types/index.js';
-import { PromptTemplateManager } from '../context/PromptTemplateManager.js';
-import type { TechStackInfo } from '../context/PromptTemplateManager.js';
-import { asPhaseId } from '../types/index.js';
+import { asPhaseId, type Runbook } from '../types/index.js';
+import { PromptTemplateManager, type TechStackInfo } from '../context/PromptTemplateManager.js';
 import type { AgentBackendProvider } from '../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle } from '../adk/ADKController.js';
 import log from '../logger/log.js';
 import { COOGENT_DIR, IPC_DIR, IPC_RESPONSE_FILE } from '../constants/paths.js';
-import { PlannerPromptCompiler } from '../prompt-compiler/index.js';
-import type { CompilationManifest } from '../prompt-compiler/index.js';
+import { PlannerPromptCompiler, type CompilationManifest } from '../prompt-compiler/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Configuration

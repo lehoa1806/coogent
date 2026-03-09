@@ -44,5 +44,24 @@ module.exports = {
         // ── Disabled (too noisy for existing codebase) ───────────────────
         '@typescript-eslint/no-inferrable-types': 'off',
         '@typescript-eslint/ban-ts-comment': 'off',
+        // Typed EventEmitter pattern requires interface+class declaration merging
+        '@typescript-eslint/no-unsafe-declaration-merging': 'off',
     },
+    overrides: [
+        {
+            // Test files: allow `any` for mock casts and `require()` inside jest.mock factories
+            files: ['**/__tests__/**/*.ts', '**/*.test.ts', '**/*.spec.ts'],
+            rules: {
+                '@typescript-eslint/no-explicit-any': 'off',
+                '@typescript-eslint/no-require-imports': 'off',
+            },
+        },
+        {
+            // Declaration files: `any` is often necessary
+            files: ['**/*.d.ts'],
+            rules: {
+                '@typescript-eslint/no-explicit-any': 'off',
+            },
+        },
+    ],
 };

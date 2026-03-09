@@ -2,9 +2,8 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { PromptValidator } from '../PromptValidator.js';
 import { AgentRegistry } from '../AgentRegistry.js';
-import { SubtaskSpecBuilder } from '../SubtaskSpecBuilder.js';
+import { SubtaskSpecBuilder, type SubtaskDraft } from '../SubtaskSpecBuilder.js';
 import type { CompiledWorkerPrompt, SubtaskSpec, AssumptionPolicy, Deliverable, AgentProfile } from '../types.js';
-import type { SubtaskDraft } from '../SubtaskSpecBuilder.js';
 
 // ─── Inline compile helper (mirrors WorkerPromptCompiler logic) ───────────────
 // We replicate compilation here because WorkerPromptCompiler.ts uses

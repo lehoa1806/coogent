@@ -9,8 +9,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { StateManager } from '../state/StateManager.js';
 import { Engine } from '../engine/Engine.js';
-import type { Runbook, Phase } from '../types/index.js';
-import { asPhaseId } from '../types/index.js';
+import { asPhaseId, type Runbook, type Phase } from '../types/index.js';
 
 describe('Coogent Integration: End-to-End Pillar 1', () => {
     let tmpDir: string;

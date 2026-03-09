@@ -5,8 +5,7 @@
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { RUNBOOK_FILENAME } from '../types/index.js';
-import type { Runbook, RunbookStatus } from '../types/index.js';
+import { RUNBOOK_FILENAME, type Runbook, type RunbookStatus } from '../types/index.js';
 import { StateManager } from '../state/StateManager.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import { IPC_DIR } from '../constants/paths.js';
@@ -385,7 +384,8 @@ export class SessionManager {
     public getSessionDir(sessionId: string): string {
         // Fast path: try prefixed lookup by scanning
         try {
-            const entries = require('node:fs').readdirSync(this.ipcDir, { withFileTypes: true });
+            const nodeFs = require('node:fs') as typeof import('node:fs'); // eslint-disable-line @typescript-eslint/no-require-imports
+            const entries = nodeFs.readdirSync(this.ipcDir, { withFileTypes: true });
             for (const e of entries) {
                 if (e.isDirectory() && e.name.endsWith(sessionId)) {
                     return path.join(this.ipcDir, e.name);

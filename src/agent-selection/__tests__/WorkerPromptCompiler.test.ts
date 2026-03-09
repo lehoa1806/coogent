@@ -1,7 +1,6 @@
 import type { SubtaskSpec, AgentProfile, CompiledWorkerPrompt, AssumptionPolicy, Deliverable } from '../types.js';
-import { SubtaskSpecBuilder } from '../SubtaskSpecBuilder.js';
+import { SubtaskSpecBuilder, type SubtaskDraft } from '../SubtaskSpecBuilder.js';
 import { AgentRegistry } from '../AgentRegistry.js';
-import type { SubtaskDraft } from '../SubtaskSpecBuilder.js';
 import {
     BASE_WORKER,
     CODE_EDITOR,

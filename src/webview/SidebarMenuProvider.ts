@@ -3,8 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as vscode from 'vscode';
-import type { SessionManager } from '../session/SessionManager.js';
-import type { SessionSummary } from '../session/SessionManager.js';
+import type { SessionManager, SessionSummary } from '../session/SessionManager.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Tree Item helpers

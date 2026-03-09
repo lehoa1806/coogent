@@ -6,8 +6,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { ConsolidationAgent, type ConsolidationReport } from '../ConsolidationAgent.js';
-import type { Runbook } from '../../types/index.js';
-import { asPhaseId } from '../../types/index.js';
+import { asPhaseId, type Runbook } from '../../types/index.js';
 import type { HandoffReport } from '../../context/HandoffExtractor.js';
 
 describe('ConsolidationAgent', () => {

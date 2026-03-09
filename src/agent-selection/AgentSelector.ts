@@ -8,6 +8,7 @@ import type {
     AgentScore,
     SelectionResult,
     AgentType,
+    AgentMode,
     RiskLevel,
     DeliverableType,
 } from './types.js';
@@ -163,7 +164,7 @@ export class AgentSelector {
 
         // 2. must_include context formats must be in agent's preferred_context
         const missingFormats = spec.context_requirements.must_include.filter(
-            (format) => !profile.preferred_context.includes(format as any),
+            (format) => !profile.preferred_context.includes(format as typeof profile.preferred_context[number]),
         );
         if (missingFormats.length > 0) {
             return `Agent lacks required context formats: ${missingFormats.join(', ')}.`;
@@ -399,7 +400,7 @@ export class AgentSelector {
         };
 
         if (selectedMode !== undefined) {
-            return { ...result, selected_mode: selectedMode as any };
+            return { ...result, selected_mode: selectedMode as AgentMode };
         }
 
         return result;

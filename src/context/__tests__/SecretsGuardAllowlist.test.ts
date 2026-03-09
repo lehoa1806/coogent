@@ -6,8 +6,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as crypto from 'node:crypto';
-import { SecretsGuard } from '../SecretsGuard.js';
-import type { Allowlist } from '../SecretsGuard.js';
+import { SecretsGuard, type Allowlist } from '../SecretsGuard.js';
 
 describe('SecretsGuard — Allowlist', () => {
     let tmpDir: string;

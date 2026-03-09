@@ -2,8 +2,7 @@
 // src/evaluators/__tests__/EvaluatorV2.test.ts — V2 evaluator unit tests
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { asPhaseId } from '../../types/index.js';
-import type { Phase } from '../../types/index.js';
+import { asPhaseId, type Phase } from '../../types/index.js';
 import { ExitCodeEvaluatorV2 } from '../ExitCodeEvaluator.js';
 import { RegexEvaluator } from '../RegexEvaluator.js';
 import { ToolchainEvaluatorV2 } from '../ToolchainEvaluator.js';

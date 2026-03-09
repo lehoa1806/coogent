@@ -16,8 +16,8 @@ import {
     MASTER_TASK_ID_PATTERN,
     PHASE_ID_PATTERN,
     MCP_TOOLS,
+    type PhaseHandoff,
 } from './types.js';
-import type { PhaseHandoff } from './types.js';
 import { safeTruncate } from './CoogentMCPServer.js';
 import { MCPValidator } from './MCPValidator.js';
 import type { ArtifactDB } from './ArtifactDB.js';

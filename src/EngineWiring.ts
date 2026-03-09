@@ -456,9 +456,11 @@ async function executePhase(
     // Step 1: Assemble context
     // Multi-root: prefer assembleMultiRoot if the scoper supports it,
     // otherwise fall back to single-root assemble.
-    const result = (contextScoper as any).assembleMultiRoot
-        ? await (contextScoper as any).assembleMultiRoot(phase, workspaceRoots)
-        : await contextScoper.assemble(phase, workspaceRoot);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- duck-type check for optional multi-root support
+    const scoper = contextScoper as unknown as Record<string, unknown>;
+    const result = typeof scoper?.assembleMultiRoot === 'function'
+        ? await (scoper.assembleMultiRoot as (phase: Phase, roots: string[]) => Promise<import('./types/index.js').ContextResult>)(phase, workspaceRoots)
+        : await contextScoper!.assemble(phase, workspaceRoot);
 
     if (!result.ok) {
         MissionControlPanel.broadcast({

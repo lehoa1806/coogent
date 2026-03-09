@@ -245,8 +245,8 @@ export function activate(context: vscode.ExtensionContext): void {
 
     log.info('[Coogent] Extension activated.');
 
-  } catch (err: any) {
-    const msg = err?.message || String(err);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
     vscode.window.showErrorMessage(`[Coogent] Activation failed: ${msg}`);
     log.error('[Coogent] Activation error:', err);
   }

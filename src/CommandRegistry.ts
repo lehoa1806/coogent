@@ -195,8 +195,8 @@ export function registerAllCommands(
                         }
                     }
                 }
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Coogent: Failed to load session — ${err?.message ?? err}`);
+            } catch (err: unknown) {
+                vscode.window.showErrorMessage(`Coogent: Failed to load session — ${err instanceof Error ? err.message : String(err)}`);
             }
         })
     );
@@ -210,8 +210,8 @@ export function registerAllCommands(
             try {
                 await svc.sessionManager.deleteSession(sessionId);
                 svc.sidebarMenu?.refresh();
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Coogent: Failed to delete session — ${err?.message ?? err}`);
+            } catch (err: unknown) {
+                vscode.window.showErrorMessage(`Coogent: Failed to delete session — ${err instanceof Error ? err.message : String(err)}`);
             }
         })
     );
@@ -244,8 +244,8 @@ export function registerAllCommands(
             }
             try {
                 await svc.engine.loadRunbook();
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Coogent: Failed to load runbook — ${err?.message ?? err}`);
+            } catch (err: unknown) {
+                vscode.window.showErrorMessage(`Coogent: Failed to load runbook — ${err instanceof Error ? err.message : String(err)}`);
             }
         })
     );
@@ -268,8 +268,8 @@ export function registerAllCommands(
             }
             try {
                 await svc.engine.start();
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Coogent: Start failed — ${err?.message ?? err}`);
+            } catch (err: unknown) {
+                vscode.window.showErrorMessage(`Coogent: Start failed — ${err instanceof Error ? err.message : String(err)}`);
             }
         })
     );
@@ -308,8 +308,8 @@ export function registerAllCommands(
                 } else {
                     await svc.engine.reset();
                 }
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Coogent: Reset failed — ${err?.message ?? err}`);
+            } catch (err: unknown) {
+                vscode.window.showErrorMessage(`Coogent: Reset failed — ${err instanceof Error ? err.message : String(err)}`);
             }
         })
     );
@@ -323,8 +323,8 @@ export function registerAllCommands(
             }
             try {
                 await svc.engine.resumePending();
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Coogent: Resume failed — ${err?.message ?? err}`);
+            } catch (err: unknown) {
+                vscode.window.showErrorMessage(`Coogent: Resume failed — ${err instanceof Error ? err.message : String(err)}`);
             }
         })
     );
@@ -343,8 +343,8 @@ export function registerAllCommands(
                 } else {
                     vscode.window.showWarningMessage(`Coogent: ${result.message}`);
                 }
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Coogent: Pre-flight check failed — ${err?.message ?? err}`);
+            } catch (err: unknown) {
+                vscode.window.showErrorMessage(`Coogent: Pre-flight check failed — ${err instanceof Error ? err.message : String(err)}`);
             }
         })
     );
@@ -365,8 +365,8 @@ export function registerAllCommands(
                 } else {
                     vscode.window.showErrorMessage(`Coogent: ${result.message}`);
                 }
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Coogent: Failed to create sandbox — ${err?.message ?? err}`);
+            } catch (err: unknown) {
+                vscode.window.showErrorMessage(`Coogent: Failed to create sandbox — ${err instanceof Error ? err.message : String(err)}`);
             }
         })
     );
@@ -385,8 +385,8 @@ export function registerAllCommands(
                 } else {
                     vscode.window.showErrorMessage(`Coogent: ${result.message}`);
                 }
-            } catch (err: any) {
-                vscode.window.showErrorMessage(`Coogent: Failed to open diff review — ${err?.message ?? err}`);
+            } catch (err: unknown) {
+                vscode.window.showErrorMessage(`Coogent: Failed to open diff review — ${err instanceof Error ? err.message : String(err)}`);
             }
         })
     );

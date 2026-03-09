@@ -3,7 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Database } from './db-types.js';
-import type { SelectionAuditRecord } from '../../agent-selection/types.js';
+import type { SelectionAuditRecord, AgentType } from '../../agent-selection/types.js';
 
 /**
  * Repository for audit and revision data.
@@ -82,7 +82,7 @@ export class AuditRepository {
             JSON.stringify(record.selection_rationale), record.compiled_prompt_id,
             record.fallback_agent ?? null,
             record.worker_run_result ? JSON.stringify(record.worker_run_result) : null,
-            record.timestamp, (record as any).session_id ?? '']
+            record.timestamp, (record as SelectionAuditRecord & { session_id?: string }).session_id ?? '']
         );
         this.scheduleFlush();
     }
@@ -104,10 +104,10 @@ export class AuditRepository {
                 subtask_id: row.subtask_id,
                 subtask_spec: JSON.parse(row.subtask_spec),
                 candidate_agents: JSON.parse(row.candidate_agents),
-                selected_agent: row.selected_agent as any,
+                selected_agent: row.selected_agent as AgentType,
                 selection_rationale: JSON.parse(row.selection_rationale),
                 compiled_prompt_id: row.compiled_prompt_id,
-                fallback_agent: (row.fallback_agent as any) ?? null,
+                fallback_agent: (row.fallback_agent as AgentType | null) ?? null,
                 worker_run_result: row.worker_run_result ? JSON.parse(row.worker_run_result) : undefined,
                 timestamp: row.timestamp,
             });
