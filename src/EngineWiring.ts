@@ -245,6 +245,44 @@ export function wireEngine(
                                 report.modified_files ?? [],
                                 report.unresolved_issues ?? []
                             );
+
+                            // IPC-FIX: Extract and persist implementation plan from worker
+                            // output. When the worker runs via file-based IPC (no vscode.lm),
+                            // it cannot call submit_implementation_plan via the in-process MCP.
+                            // The extractImplementationPlan() dedup guard skips extraction if
+                            // the plan was already submitted (e.g. via vscode.lm path).
+                            try {
+                                const plan = handoffExtractor.extractImplementationPlan(
+                                    accumulatedOutput,
+                                    getSessionDirName(),
+                                    phaseIdStr,
+                                );
+                                if (plan) {
+                                    await mcpBridge.submitImplementationPlan(
+                                        getSessionDirName(),
+                                        plan,
+                                        phaseIdStr,
+                                    );
+                                    log.info(
+                                        `[EngineWiring] Extracted and persisted implementation plan ` +
+                                        `for phase ${phaseId} (${plan.length} chars).`
+                                    );
+                                    MissionControlPanel.broadcast({
+                                        type: 'LOG_ENTRY',
+                                        payload: {
+                                            timestamp: asTimestamp(),
+                                            level: 'info',
+                                            message: `📋 Phase ${phaseId}: implementation plan extracted from worker output.`,
+                                        },
+                                    });
+                                }
+                            } catch (planErr) {
+                                log.warn(
+                                    `[EngineWiring] Phase ${phaseId}: implementation plan ` +
+                                    `extraction/submission failed:`,
+                                    planErr
+                                );
+                            }
                         }
                     }
                 } catch (err) {
@@ -586,10 +624,30 @@ async function executePhase(
                 svc.mcpServer.setPhasePlanRequired(masterTaskId, phase.mcpPhaseId, planRequired);
             }
         } catch (err) {
-            log.warn(`[EngineWiring] Phase ${phase.id}: AgentRegistry lookup failed, using default prompt`, err);
+            log.warn(
+                `[EngineWiring] Phase ${phase.id}: AgentRegistry lookup failed, ` +
+                `falling back to raw prompt processing — planRequired defaults to true.`,
+                err
+            );
+            // Lookup failed → same default as "not configured": raw workers
+            // are expected to produce an implementation plan.
+            if (svc.mcpServer && phase.mcpPhaseId) {
+                svc.mcpServer.setPhasePlanRequired(masterTaskId, phase.mcpPhaseId, true);
+            }
         }
     } else {
-        log.debug(`[EngineWiring] Phase ${phase.id}: agentRegistry not available — skipping skill routing`);
+        log.info(
+            `[EngineWiring] Phase ${phase.id}: AgentRegistry not configured (useAgentSelection=false). ` +
+            `Falling back to raw prompt processing — planRequired defaults to true ` +
+            `because the default CLI worker is expected to produce an implementation plan.`
+        );
+        // Raw prompt workers (e.g. Claude Code) are expected to submit an
+        // implementation plan as part of their standard output flow. Explicitly
+        // set planRequired so MCPResourceHandler knows what to expect when the
+        // webview fetches the phase's implementation_plan resource.
+        if (svc.mcpServer && phase.mcpPhaseId) {
+            svc.mcpServer.setPhasePlanRequired(masterTaskId, phase.mcpPhaseId, true);
+        }
     }
 
     // Step 6: Build effective prompt
