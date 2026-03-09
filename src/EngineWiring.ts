@@ -164,6 +164,19 @@ export function wireEngine(
 
         executePhase(svc, phase, workspaceRoot, workerTimeoutMs, getSessionDirName(), workspaceRoots).catch((err) => {
             log.error('[Coogent] Phase execution error:', err);
+
+            // Recovery: unhandled errors in executePhase() leave the phase stuck
+            // in "running" and the engine in EXECUTING_WORKER. Trigger the failure
+            // path so the FSM can advance (retry, skip, or pause).
+            MissionControlPanel.broadcast({
+                type: 'LOG_ENTRY',
+                payload: {
+                    timestamp: asTimestamp(),
+                    level: 'error',
+                    message: `Phase ${phase.id} failed during setup: ${err instanceof Error ? err.message : String(err)}`,
+                },
+            });
+            engine?.onWorkerFailed(phase.id, 'crash').catch(log.onError);
         });
     });
 
@@ -172,6 +185,7 @@ export function wireEngine(
         const healPhase = { ...phase, prompt: augmentedPrompt };
         executePhase(svc, healPhase, workspaceRoot, workerTimeoutMs, getSessionDirName(), workspaceRoots).catch((err) => {
             log.error('[Coogent] Self-healing phase execution error:', err);
+            engine?.onWorkerFailed(phase.id, 'crash').catch(log.onError);
         });
     });
 

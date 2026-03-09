@@ -120,11 +120,11 @@ export class ContextScoper {
             }
 
             if (!realPath.startsWith(realWorkspaceRoot)) {
-                throw new ContextError(
-                    `Path traversal or symlink escape detected: ${relativePath}`,
-                    'PATH_TRAVERSAL',
-                    relativePath
+                log.warn(
+                    `[ContextScoper] Skipping file outside workspace boundary: ${relativePath} ` +
+                    `(resolved: ${realPath}, workspace: ${realWorkspaceRoot})`
                 );
+                continue;
             }
 
             // #41: Skip files > 10 MB to prevent memory issues
