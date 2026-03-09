@@ -44,6 +44,7 @@ describe('wireEngine', () => {
 
     beforeEach(() => {
         svc = new ServiceContainer();
+        svc.currentSessionDirName = 'session-001';
         engine = createMockEngine();
         adk = createMockADK();
         svc.engine = engine as any;
@@ -51,77 +52,77 @@ describe('wireEngine', () => {
     });
 
     it('does not throw when engine and adkController are present', () => {
-        expect(() => wireEngine(svc, 'session-001', '/workspace', 60000)).not.toThrow();
+        expect(() => wireEngine(svc, '/workspace', 60000)).not.toThrow();
     });
 
     it('returns silently when engine is undefined', () => {
         svc.engine = undefined;
-        expect(() => wireEngine(svc, 'session-001', '/workspace', 60000)).not.toThrow();
+        expect(() => wireEngine(svc, '/workspace', 60000)).not.toThrow();
     });
 
     it('returns silently when adkController is undefined', () => {
         svc.adkController = undefined;
-        expect(() => wireEngine(svc, 'session-001', '/workspace', 60000)).not.toThrow();
+        expect(() => wireEngine(svc, '/workspace', 60000)).not.toThrow();
     });
 
     it('registers ui:message listener on engine', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(engine.listenerCount('ui:message')).toBe(1);
     });
 
     it('registers state:changed listener on engine', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(engine.listenerCount('state:changed')).toBe(1);
     });
 
     it('registers phase:execute listener on engine', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(engine.listenerCount('phase:execute')).toBe(1);
     });
 
     it('registers phase:heal listener on engine', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(engine.listenerCount('phase:heal')).toBe(1);
     });
 
     it('registers phase:checkpoint listener on engine', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(engine.listenerCount('phase:checkpoint')).toBe(1);
     });
 
     it('registers run:completed listener on engine', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(engine.listenerCount('run:completed')).toBe(1);
     });
 
     it('registers run:consolidate listener on engine', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(engine.listenerCount('run:consolidate')).toBe(1);
     });
 
     it('registers worker:exited listener on adkController', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(adk.listenerCount('worker:exited')).toBe(1);
     });
 
     it('registers worker:timeout listener on adkController', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(adk.listenerCount('worker:timeout')).toBe(1);
     });
 
     it('registers worker:crash listener on adkController', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(adk.listenerCount('worker:crash')).toBe(1);
     });
 
     it('registers worker:output listener on adkController', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
         expect(adk.listenerCount('worker:output')).toBe(1);
     });
 
     // ── Worker output accumulation ─────────────────────────────────────
     it('worker:output accumulates stdout into workerOutputAccumulator', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
 
         adk.emit('worker:output', 1, 'stdout', 'hello ');
         adk.emit('worker:output', 1, 'stdout', 'world');
@@ -130,7 +131,7 @@ describe('wireEngine', () => {
     });
 
     it('worker:output does not accumulate stderr', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
 
         adk.emit('worker:output', 1, 'stderr', 'error msg');
 
@@ -139,7 +140,7 @@ describe('wireEngine', () => {
 
     // ── Worker lifecycle → Engine ──────────────────────────────────────
     it('worker:timeout calls engine.onWorkerFailed with "timeout"', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
 
         adk.emit('worker:timeout', 5);
 
@@ -147,7 +148,7 @@ describe('wireEngine', () => {
     });
 
     it('worker:crash calls engine.onWorkerFailed with "crash"', () => {
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
 
         adk.emit('worker:crash', 3);
 
@@ -186,7 +187,7 @@ describe('wireEngine', () => {
             callOrder.push('onWorkerExited');
         });
 
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
 
         // Pre-populate accumulated output
         svc.workerOutputAccumulator.set(1, 'some output');
@@ -209,7 +210,7 @@ describe('wireEngine', () => {
         svc.handoffExtractor = mockHandoffExtractor as any;
         svc.currentSessionDir = '/workspace/.coogent/ipc/session-001';
 
-        wireEngine(svc, 'session-001', '/workspace', 60000);
+        wireEngine(svc, '/workspace', 60000);
 
         svc.workerOutputAccumulator.set(2, 'output');
 
@@ -243,7 +244,7 @@ describe('wireEngine', () => {
                 phases: [{ id: 1, mcpPhaseId: 'phase-001-abc', status: 'running' }],
             });
 
-            wireEngine(svc, 'session-001', '/workspace', 60000);
+            wireEngine(svc, '/workspace', 60000);
             return mockMcpServer;
         }
 

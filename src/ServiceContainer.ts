@@ -4,6 +4,10 @@
 // R1 refactor: Replaces 18 module-level `let` variables in extension.ts with
 // a single, typed container that is passed to extracted wiring modules.
 
+import { randomUUID } from 'node:crypto';
+import { formatSessionDirName, type SessionManager } from './session/SessionManager.js';
+import { getSessionDir } from './constants/paths.js';
+
 import type { StateManager } from './state/StateManager.js';
 import type { Engine } from './engine/Engine.js';
 import type { ADKController } from './adk/ADKController.js';
@@ -13,7 +17,6 @@ import type { GitManager } from './git/GitManager.js';
 import type { GitSandboxManager } from './git/GitSandboxManager.js';
 import type { OutputBufferRegistry } from './adk/OutputBufferRegistry.js';
 import type { PlannerAgent } from './planner/PlannerAgent.js';
-import type { SessionManager } from './session/SessionManager.js';
 import type { HandoffExtractor } from './context/HandoffExtractor.js';
 import type { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 import type { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
@@ -47,6 +50,8 @@ export class ServiceContainer {
     handoffExtractor: HandoffExtractor | undefined;
     consolidationAgent: ConsolidationAgent | undefined;
     currentSessionDir: string | undefined;
+    currentSessionDirName: string | undefined;
+    currentSessionId: string | undefined;
     mcpServer: CoogentMCPServer | undefined;
     mcpBridge: MCPClientBridge | undefined;
     sidebarMenu: SidebarMenuProvider | undefined;
@@ -68,6 +73,24 @@ export class ServiceContainer {
      * switching sessions naturally invalidates the guard without explicit reset code.
      */
     readonly sandboxBranchCreatedForSession = new Set<string>();
+
+    /**
+     * Materialise a new session (UUID + IPC dir name).
+     * Called lazily on first `plan:request` instead of eagerly at boot.
+     * @returns The newly created session identifiers.
+     */
+    initSession(): { sessionId: string; sessionDirName: string; sessionDir: string } {
+        if (!this.storageBase) {
+            throw new Error('[ServiceContainer] Cannot init session — storageBase is not set.');
+        }
+        const sessionId = randomUUID();
+        const sessionDirName = formatSessionDirName(sessionId);
+        const sessionDir = getSessionDir(this.storageBase, sessionDirName);
+        this.currentSessionId = sessionId;
+        this.currentSessionDirName = sessionDirName;
+        this.currentSessionDir = sessionDir;
+        return { sessionId, sessionDirName, sessionDir };
+    }
 
     /**
      * Check whether a service has been initialised.
@@ -124,6 +147,8 @@ export class ServiceContainer {
         this.handoffExtractor = undefined;
         this.consolidationAgent = undefined;
         this.currentSessionDir = undefined;
+        this.currentSessionDirName = undefined;
+        this.currentSessionId = undefined;
         this.mcpServer = undefined;
         this.mcpBridge = undefined;
         this.sidebarMenu = undefined;
@@ -154,6 +179,8 @@ export type ResolvableServices = {
     handoffExtractor: HandoffExtractor;
     consolidationAgent: ConsolidationAgent;
     currentSessionDir: string;
+    currentSessionDirName: string;
+    currentSessionId: string;
     mcpServer: CoogentMCPServer;
     mcpBridge: MCPClientBridge;
     sidebarMenu: SidebarMenuProvider;
@@ -177,6 +204,8 @@ const RESOLVABLE_KEYS: Record<keyof ResolvableServices, true> = {
     handoffExtractor: true,
     consolidationAgent: true,
     currentSessionDir: true,
+    currentSessionDirName: true,
+    currentSessionId: true,
     mcpServer: true,
     mcpBridge: true,
     sidebarMenu: true,
