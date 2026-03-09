@@ -251,6 +251,9 @@ export class PlannerPromptCompiler {
 
     /**
      * Render a {@link RepoFingerprint} as a compact, readable text block.
+     *
+     * When subprojects are present, renders a per-repo profile section
+     * so the planner can see each repo's independent tech stack.
      */
     private formatFingerprint(fp: RepoFingerprint): string {
         const lines: string[] = [];
@@ -259,6 +262,29 @@ export class PlannerPromptCompiler {
         if (fp.detectedSubdirectory) {
             lines.push(`detected_project_root: ${fp.detectedSubdirectory}`);
         }
+
+        // ── Multi-repo: render per-subproject sections ────────────────────
+        if (fp.subprojects && fp.subprojects.length > 0) {
+            lines.push('');
+            for (const sub of fp.subprojects) {
+                lines.push(`### ${sub.name}`);
+                lines.push(`primary_languages: ${sub.primaryLanguages.join(', ') || 'none detected'}`);
+                lines.push(`key_frameworks: ${sub.keyFrameworks.join(', ') || 'none detected'}`);
+                lines.push(`package_manager: ${sub.packageManager}`);
+                lines.push(`test_stack: ${sub.testStack.join(', ') || 'none detected'}`);
+                lines.push(`lint_stack: ${sub.lintStack.join(', ') || 'none detected'}`);
+                lines.push(`typecheck_stack: ${sub.typecheckStack.join(', ') || 'none detected'}`);
+                lines.push(`build_stack: ${sub.buildStack.join(', ') || 'none detected'}`);
+                lines.push('');
+            }
+
+            // Still emit aggregate fields for backward-compatible policy usage
+            lines.push(`architecture_hints: ${fp.architectureHints.join(', ') || 'none'}`);
+            lines.push(`high_risk_surfaces: ${fp.highRiskSurfaces.join(', ') || 'none'}`);
+            return lines.join('\n');
+        }
+
+        // ── Single-repo: flat format ─────────────────────────────────────
         lines.push(`primary_languages: ${fp.primaryLanguages.join(', ') || 'none detected'}`);
         lines.push(`key_frameworks: ${fp.keyFrameworks.join(', ') || 'none detected'}`);
         lines.push(`package_manager: ${fp.packageManager}`);

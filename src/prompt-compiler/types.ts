@@ -88,7 +88,34 @@ export interface NormalizedTaskSpec {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  5. Repo Fingerprint — Compact planning-oriented repo representation
+//  5a. Subproject Profile — Per-repo details in multi-repo workspaces
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * A compact profile for a single sub-repository within a multi-repo workspace.
+ * Each child directory with a project manifest gets its own profile.
+ */
+export interface SubprojectProfile {
+    /** The directory name (e.g. 'noir', 'pyoir'). */
+    readonly name: string;
+    /** Primary programming languages detected for this subproject. */
+    readonly primaryLanguages: readonly string[];
+    /** Key frameworks and libraries detected. */
+    readonly keyFrameworks: readonly string[];
+    /** Package manager in use. */
+    readonly packageManager: string;
+    /** Test frameworks detected. */
+    readonly testStack: readonly string[];
+    /** Lint tools detected. */
+    readonly lintStack: readonly string[];
+    /** Type-checking tools detected. */
+    readonly typecheckStack: readonly string[];
+    /** Build tools detected. */
+    readonly buildStack: readonly string[];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  5b. Repo Fingerprint — Compact planning-oriented repo representation
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
@@ -98,7 +125,7 @@ export interface NormalizedTaskSpec {
  */
 export interface RepoFingerprint {
     /** The workspace layout type. */
-    readonly workspaceType: 'single' | 'multi-root' | 'monorepo';
+    readonly workspaceType: 'single' | 'multi-root' | 'monorepo' | 'multi-repo';
     /** Root folders in the workspace. */
     readonly workspaceFolders: readonly string[];
     /** Primary programming languages detected (e.g., ['typescript', 'python']). */
@@ -121,6 +148,8 @@ export interface RepoFingerprint {
     readonly highRiskSurfaces: readonly string[];
     /** If the project was detected in a subdirectory, its relative path (e.g., 'coogent'). */
     readonly detectedSubdirectory?: string;
+    /** Per-subproject profiles when the workspace contains multiple repos. */
+    readonly subprojects?: readonly SubprojectProfile[];
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

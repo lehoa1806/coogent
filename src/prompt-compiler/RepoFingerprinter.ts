@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as vscode from 'vscode';
-import type { RepoFingerprint } from './types.js';
+import type { RepoFingerprint, SubprojectProfile } from './types.js';
 import { PromptTemplateManager, type TechStackInfo } from '../context/PromptTemplateManager.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -50,6 +50,8 @@ export class RepoFingerprinter {
     private effectiveRoot: vscode.Uri | null = null;
     /** Relative subdirectory name if the project was found in a child dir. */
     private detectedSubdirectory: string | undefined;
+    /** All child directories that contain a project manifest (multi-repo). */
+    private discoveredSubprojects: Array<{ uri: vscode.Uri; name: string }> = [];
 
     constructor(workspaceRoot: string) {
         this.rootUri = vscode.Uri.file(workspaceRoot);
@@ -91,6 +93,47 @@ export class RepoFingerprinter {
 
             const architectureHints = await this.detectArchitectureHints();
             const highRiskSurfaces = await this.detectHighRiskSurfaces();
+
+            // ── Multi-repo: profile each discovered subproject ───────────
+            if (this.discoveredSubprojects.length > 1) {
+                const subprojects = await this.profileAllSubprojects();
+
+                // Union top-level arrays across all subprojects for
+                // backward-compatible policy evaluation.
+                const unionLanguages = this.unionStrings(
+                    subprojects.map(s => [...s.primaryLanguages]),
+                );
+                const unionFrameworks = this.unionStrings(
+                    subprojects.map(s => [...s.keyFrameworks]),
+                );
+                const unionTestStack = this.unionStrings(
+                    subprojects.map(s => [...s.testStack]),
+                );
+                const unionLintStack = this.unionStrings(
+                    subprojects.map(s => [...s.lintStack]),
+                );
+                const unionTypecheckStack = this.unionStrings(
+                    subprojects.map(s => [...s.typecheckStack]),
+                );
+                const unionBuildStack = this.unionStrings(
+                    subprojects.map(s => [...s.buildStack]),
+                );
+
+                return {
+                    workspaceType: 'multi-repo',
+                    workspaceFolders: subprojects.map(s => s.name),
+                    primaryLanguages: unionLanguages,
+                    keyFrameworks: unionFrameworks,
+                    packageManager: 'mixed',
+                    testStack: unionTestStack,
+                    lintStack: unionLintStack,
+                    typecheckStack: unionTypecheckStack,
+                    buildStack: unionBuildStack,
+                    architectureHints,
+                    highRiskSurfaces,
+                    subprojects,
+                };
+            }
 
             return {
                 workspaceType,
@@ -139,7 +182,8 @@ export class RepoFingerprinter {
             }
         }
 
-        // No manifest at root — scan immediate child directories.
+        // No manifest at root — scan ALL immediate child directories for manifests.
+        const candidates: Array<{ uri: vscode.Uri; name: string }> = [];
         try {
             const entries = await vscode.workspace.fs.readDirectory(this.rootUri);
             const subdirs = entries.filter(
@@ -156,14 +200,8 @@ export class RepoFingerprinter {
                         await vscode.workspace.fs.stat(
                             vscode.Uri.joinPath(childUri, manifest),
                         );
-                        // Found a project manifest in a subdirectory.
-                        this.effectiveRoot = childUri;
-                        this.detectedSubdirectory = name;
-                        // Re-create the template manager pointing at the real root.
-                        this.templateManager = new PromptTemplateManager(
-                            childUri.fsPath,
-                        );
-                        return;
+                        candidates.push({ uri: childUri, name });
+                        break; // Found a manifest — no need to check others.
                     } catch {
                         // Manifest not found in this subdir — continue.
                     }
@@ -173,8 +211,26 @@ export class RepoFingerprinter {
             // readDirectory failed — fall through to default.
         }
 
-        // Fallback: use the workspace root as-is.
-        this.effectiveRoot = this.rootUri;
+        if (candidates.length === 1) {
+            // Single subproject — use existing single-project behavior.
+            this.effectiveRoot = candidates[0].uri;
+            this.detectedSubdirectory = candidates[0].name;
+            this.templateManager = new PromptTemplateManager(
+                candidates[0].uri.fsPath,
+            );
+        } else if (candidates.length > 1) {
+            // Multiple subprojects — store them all.
+            // Use the first as the effective root for base detection,
+            // but subprojects will each be profiled independently.
+            this.effectiveRoot = candidates[0].uri;
+            this.discoveredSubprojects = candidates;
+            this.templateManager = new PromptTemplateManager(
+                candidates[0].uri.fsPath,
+            );
+        } else {
+            // Fallback: use the workspace root as-is.
+            this.effectiveRoot = this.rootUri;
+        }
     }
 
     /**
@@ -190,6 +246,85 @@ export class RepoFingerprinter {
         } catch {
             return false;
         }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  Multi-Repo Profiling
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Profile every discovered subproject independently.
+     * Each subproject gets its own `PromptTemplateManager` scoped to its directory.
+     */
+    private async profileAllSubprojects(): Promise<SubprojectProfile[]> {
+        const profiles: SubprojectProfile[] = [];
+
+        for (const { uri, name } of this.discoveredSubprojects) {
+            try {
+                profiles.push(await this.profileSubproject(uri, name));
+            } catch {
+                // Skip subprojects that fail to profile — never throw.
+                profiles.push({
+                    name,
+                    primaryLanguages: [],
+                    keyFrameworks: [],
+                    packageManager: 'unknown',
+                    testStack: [],
+                    lintStack: [],
+                    typecheckStack: [],
+                    buildStack: [],
+                });
+            }
+        }
+
+        return profiles;
+    }
+
+    /**
+     * Profile a single subproject at the given URI.
+     */
+    private async profileSubproject(
+        childUri: vscode.Uri,
+        name: string,
+    ): Promise<SubprojectProfile> {
+        const mgr = new PromptTemplateManager(childUri.fsPath);
+        const techStack = await mgr.discoverTechStack();
+
+        // Temporarily point the effective root at this subproject for toolchain detection.
+        const prevRoot = this.effectiveRoot;
+        this.effectiveRoot = childUri;
+
+        const primaryLanguages = this.derivePrimaryLanguages(techStack);
+        const keyFrameworks = [...techStack.frameworks];
+        const packageManager = techStack.packageManager;
+
+        const [testStack, lintStack, typecheckStack, buildStack] =
+            await this.detectToolchains(techStack);
+
+        // Restore the effective root.
+        this.effectiveRoot = prevRoot;
+
+        return {
+            name,
+            primaryLanguages,
+            keyFrameworks,
+            packageManager,
+            testStack,
+            lintStack,
+            typecheckStack,
+            buildStack,
+        };
+    }
+
+    /**
+     * Merge multiple string arrays into a deduplicated union list.
+     */
+    private unionStrings(arrays: string[][]): string[] {
+        const set = new Set<string>();
+        for (const arr of arrays) {
+            for (const s of arr) set.add(s);
+        }
+        return [...set];
     }
 
     // ═════════════════════════════════════════════════════════════════════════
