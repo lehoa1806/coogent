@@ -229,6 +229,18 @@
         };
     });
 
+    // Auto-expand the Artifacts section when MCP data resolves successfully.
+    // Uses a separate $effect to avoid coupling with the fetch lifecycle above.
+    $effect(() => {
+        if (
+            (handoffData.data || planData.data) &&
+            !handoffData.loading &&
+            !planData.loading
+        ) {
+            showMCPArtifacts = true;
+        }
+    });
+
     function getDepLabel(depId: number): string | number {
         const idx = appState.phases.findIndex((p) => p.id === depId);
         return idx >= 0 ? idx + 1 : depId;

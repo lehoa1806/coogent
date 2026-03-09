@@ -290,7 +290,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
         );
     });
 
-    it('reading phase plan throws when plan_required=true, handoff exists, but no plan', async () => {
+    it('reading phase plan returns informational message when plan_required=true, handoff exists, but no plan', async () => {
         // Mark phase as requiring a plan (e.g., code editor agent)
         server.setPhasePlanRequired(VALID_MASTER_TASK_ID, VALID_PHASE_ID, true);
 
@@ -306,11 +306,14 @@ describe('CoogentMCPServer — Resource Handlers', () => {
             },
         });
 
-        await expect(
-            client.readResource({
-                uri: RESOURCE_URIS.phasePlan(VALID_MASTER_TASK_ID, VALID_PHASE_ID),
-            })
-        ).rejects.toThrow(/expected but not submitted/);
+        const result = await client.readResource({
+            uri: RESOURCE_URIS.phasePlan(VALID_MASTER_TASK_ID, VALID_PHASE_ID),
+        });
+
+        expect(result.contents).toHaveLength(1);
+        expect((result.contents[0] as any).text).toBe(
+            'No implementation plan was submitted for this phase.'
+        );
     });
 
     it('reading phase implementation_plan throws when phase has no handoff and no plan', async () => {

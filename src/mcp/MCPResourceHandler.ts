@@ -127,10 +127,10 @@ export class MCPResourceHandler {
                             content = 'Implementation plan is not applicable for this phase type.';
                         } else if (!phase.implementationPlan) {
                             if (phase.handoff) {
-                                // Phase completed without submitting a plan — plan was expected
-                                throw new Error(
-                                    `Implementation plan was expected but not submitted for phase ${parsed.phaseId}.`
-                                );
+                                // Phase completed without submitting a plan — return informational
+                                // message instead of throwing, since many workers legitimately
+                                // skip plan submission (e.g. CLI-based agents).
+                                content = 'No implementation plan was submitted for this phase.';
                             } else {
                                 // Phase still in progress
                                 throw new Error(
