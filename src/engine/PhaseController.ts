@@ -6,6 +6,7 @@
 
 import { EngineState, EngineEvent, asTimestamp, type Phase, type PhaseId } from '../types/index.js';
 import type { EngineInternals } from './EngineInternals.js';
+import log from '../logger/log.js';
 
 /**
  * Extracted phase-control logic from Engine.
@@ -130,7 +131,9 @@ export class PhaseController {
             },
         });
 
-        this.engine.dispatchReadyPhases();
+        this.engine.dispatchReadyPhases().catch(err => {
+            log.error('[PhaseController] restartPhase dispatch failed:', err);
+        });
     }
 
     /**
@@ -169,7 +172,9 @@ export class PhaseController {
         if (result === null) return;
 
         phase.status = 'completed';
-        runbook.current_phase = phaseId + 1;
+        // P-1 fix: Don't assume sequential IDs — let DAG scheduler determine next phase.
+        const nextReady = this.engine.getScheduler().getReadyPhases(runbook.phases);
+        runbook.current_phase = nextReady.length > 0 ? nextReady[0].id : phaseId;
         await this.engine.persist();
 
         this.engine.emitUIMessage({
@@ -186,9 +191,14 @@ export class PhaseController {
                 await this.engine.persist();
             } else {
                 runbook.status = 'completed';
-                this.engine.transition(EngineEvent.START);
-                this.engine.transition(EngineEvent.WORKER_EXITED);
-                this.engine.transition(EngineEvent.ALL_PHASES_PASS);
+                // P-2 fix: Guard composite transitions — stop if any transition fails.
+                const r1 = this.engine.transition(EngineEvent.START);
+                if (r1 !== null) {
+                    const r2 = this.engine.transition(EngineEvent.WORKER_EXITED);
+                    if (r2 !== null) {
+                        this.engine.transition(EngineEvent.ALL_PHASES_PASS);
+                    }
+                }
                 await this.engine.persist();
                 this.engine.emit('run:completed', runbook);
                 this.engine.emit('run:consolidate', this.engine.getStateManager().getSessionDir());
@@ -206,7 +216,9 @@ export class PhaseController {
             runbook.status = 'running';
             await this.engine.persist();
             this.engine.startStallWatchdog();
-            this.engine.dispatchReadyPhases();
+            this.engine.dispatchReadyPhases().catch(err => {
+                log.error('[PhaseController] skipPhase dispatch failed:', err);
+            });
         }
     }
 }

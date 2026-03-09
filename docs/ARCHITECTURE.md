@@ -11,12 +11,26 @@
 3. [DAG-Aware Parallel Scheduling](#dag-aware-parallel-scheduling)
 4. [In-Process MCP Server](#in-process-mcp-server)
 5. [Context Diffusion Pipeline](#context-diffusion-pipeline)
-6. [Pluggable Evaluator System (V2)](#pluggable-evaluator-system-v2)
-7. [Prompt Compiler Pipeline](#prompt-compiler-pipeline)
-8. [Agent Registry & Selection Pipeline](#agent-registry--selection-pipeline)
-9. [Persistence & Crash Recovery](#persistence--crash-recovery)
-10. [Git Sandboxing](#git-sandboxing)
-11. [Tech Stack](#tech-stack)
+6. [Context Pack Assembly](#context-pack-assembly)
+7. [Worker Output Validation](#worker-output-validation)
+8. [Pluggable Evaluator System (V2)](#pluggable-evaluator-system-v2)
+9. [Prompt Compiler Pipeline](#prompt-compiler-pipeline)
+10. [Agent Registry & Selection Pipeline](#agent-registry--selection-pipeline)
+11. [MCP Prompts](#mcp-prompts)
+12. [MCP Sampling](#mcp-sampling)
+13. [Storage & Path Management](#storage--path-management)
+14. [ArtifactDB Backup & Recovery](#artifactdb-backup--recovery)
+15. [Engine Decomposition (Post-Refactor)](#engine-decomposition-post-refactor)
+16. [PlannerAgent Decomposition](#planneragent-decomposition)
+17. [ArtifactDB Repository Layer](#artifactdb-repository-layer)
+18. [MCP Plugin System](#mcp-plugin-system)
+19. [MCP Validator & Error Codes](#mcp-validator--error-codes)
+20. [End-to-End Request Lifecycle](#end-to-end-request-lifecycle)
+21. [Webview Architecture](#webview-architecture)
+22. [Build Pipeline](#build-pipeline)
+23. [Persistence & Crash Recovery](#persistence--crash-recovery)
+24. [Git Sandboxing](#git-sandboxing)
+25. [Tech Stack](#tech-stack)
 
 ---
 
@@ -283,6 +297,64 @@ The pruner is best-effort — callers must check `PruneResult.withinBudget` afte
 
 ---
 
+## Context Pack Assembly
+
+The `ContextPackBuilder` and `FileContextModeSelector` work together to assemble minimal, budget-aware context payloads for each phase worker.
+
+### ContextPackBuilder — 6-Step Pipeline
+
+`ContextPackBuilder` (~456 lines, `src/context/ContextPackBuilder.ts`) orchestrates context assembly through a deterministic pipeline:
+
+| Step | Action |
+|---|---|
+| 1. Collect upstream handoffs | Loads handoff data from completed dependency phases via ArtifactDB |
+| 2. Identify target files | Resolves explicit `context_files` and upstream-modified files |
+| 3. Choose file context mode | Delegates to `FileContextModeSelector` for per-file granularity |
+| 4. Materialize file context | Reads and formats file content based on the selected mode |
+| 5. Prune to budget | Applies `TokenPruner` if assembled payload exceeds the token limit |
+| 6. Build manifest | Generates an audit manifest recording mode decisions and token counts |
+
+The builder produces a `ContextPack` containing the formatted file payloads, upstream handoff summaries, and a `ContextManifest` for observability.
+
+### FileContextModeSelector — 4 Context Modes
+
+`FileContextModeSelector` (~178 lines, `src/context/FileContextModeSelector.ts`) is a heuristic engine that decides how much of each file to include:
+
+| Mode | Description | When Selected |
+|---|---|---|
+| **Full** | Entire file content | Small files (<500 lines), full-semantics phases, small same-file continuations |
+| **Slice** | Function/class signatures + surrounding context | Medium files where full mode exceeds 40% of token budget |
+| **Patch** | Upstream diff/patch only | File modified by a dependency phase (awareness-only inclusion) |
+| **Metadata** | Path + size + language only | Default fallback when no other mode applies |
+
+V2 enhancement: when a token budget is provided, the selector estimates the cost of `full` mode using the token encoder and downgrades to `slice` if it would exceed 40% of the budget.
+
+---
+
+## Worker Output Validation
+
+`WorkerOutputValidator` (~201 lines, `src/engine/WorkerOutputValidator.ts`) enforces **fail-closed** validation on all worker output before it enters the persistence layer.
+
+### Contract Types
+
+| Contract | Schema | Purpose |
+|---|---|---|
+| `phase_handoff` | `PhaseHandoffSchema` | Validates decisions, modified files, blockers submitted via `submit_phase_handoff` |
+| `implementation_plan` | `ImplementationPlanSchema` | Validates markdown plans submitted via `submit_implementation_plan` |
+| `consolidation_report` | `ConsolidationReportSchema` | Validates final markdown reports (max 512 KB) |
+| `fit_assessment` | `FitAssessmentSchema` | Validates optional worker metadata / skill-match scores |
+
+### Validation Semantics
+
+- **Null/undefined input** → immediate failure (`WORKER_OUTPUT_NULL_INPUT`)
+- **Schema violation** → failure with Zod issue details (`WORKER_OUTPUT_INVALID_FIT`)
+- **Unexpected exception** → failure caught and wrapped (`WORKER_OUTPUT_UNEXPECTED_ERROR`)
+- Returns a discriminated union: `{ success: true, data }` or `{ success: false, error }`
+
+All schemas use Zod with explicit `.max()` bounds on strings and arrays to prevent unbounded payloads.
+
+---
+
 ## Pluggable Evaluator System (V2)
 
 The `EvaluatorRegistryV2` implements the **Strategy pattern** for phase success evaluation.
@@ -475,6 +547,95 @@ The tab sends `workers:request` → receives `workers:loaded` via the standard I
 
 ---
 
+## MCP Prompts
+
+`MCPPromptHandler` (~318 lines, `src/mcp/MCPPromptHandler.ts`) exposes Coogent's internal workflows as discoverable MCP Prompts. This allows MCP clients to invoke structured prompt templates without knowing the internal prompt format.
+
+### Registered Prompts
+
+| Prompt | Arguments | Purpose |
+|---|---|---|
+| `plan_repo_task` | `objective`, `workspace_root`, `tech_stack` | Generate a phased implementation plan with DAG dependencies and success criteria |
+| `review_generated_runbook` | `runbook_json`, `risk_tolerance` | Review and validate an AI-generated runbook for completeness and safety |
+| `repair_failed_phase` | `phase_id`, `failure_reason`, `prior_output` | Diagnose and repair a failed phase with contextual analysis |
+| `consolidate_session` | `session_id`, `unresolved_issues` | Aggregate all phase handoffs into a final session report |
+| `architecture_review_workspace` | `workspace_root`, `focus_areas`, `output_style` | Review workspace architecture, identifying strengths, risks, and improvements |
+
+Each prompt includes a `_version` metadata field (currently `1.0.0`) for contract tracking. Prompt invocations are logged via the standard logger.
+
+---
+
+## MCP Sampling
+
+`SamplingProvider` (~154 lines, `src/mcp/SamplingProvider.ts`) provides a feature-flagged abstraction for requesting LLM inference via MCP Sampling.
+
+### Architecture
+
+| Class | Behavior |
+|---|---|
+| `SamplingProvider` (interface) | Abstract contract with `isAvailable()` and `sample()` methods |
+| `NoopSamplingProvider` | Always reports unavailable; callers must fall back to non-sampling behavior |
+| `MCPSamplingProvider` | Delegates to the MCP Server's `createMessage` API when the client advertises sampling support |
+
+### Constraints
+
+- **Feature-gated**: Controlled by `coogent.enableSampling` VS Code setting
+- **Never for control-plane logic**: Sampling must not be used for deterministic decisions (routing, scheduling, state transitions)
+- **Logged**: All invocations are logged with request class, model metadata, outcome, and token usage
+- **Availability check**: `MCPSamplingProvider.isAvailable()` checks `capabilities.sampling` from the MCP client handshake
+
+---
+
+## Storage & Path Management
+
+`StorageBase` (~87 lines, `src/constants/StorageBase.ts`) is the **unified storage-path abstraction** that all path derivations should delegate to.
+
+### Path Resolution Strategy
+
+| Scenario | Base Path |
+|---|---|
+| `storageUri` provided (VS Code extension-managed) | Uses `storageUri` directly |
+| No `storageUri` (fallback) | `<workspaceRoot>/.coogent` |
+
+### Derived Paths
+
+| Method | Path |
+|---|---|
+| `getBase()` | Root storage directory |
+| `getDBPath()` | SQLite database file (`artifacts.db`) |
+| `getLogsDir()` | JSONL log directory |
+| `getSessionDir(id)` | Per-session data directory |
+| `getBackupDir()` | Backup snapshots directory |
+| `getIPCDir()` | IPC root directory |
+
+All methods are **deterministic and stateless** — pure path computation with no filesystem side-effects. Use the `createStorageBase()` factory for dependency injection.
+
+---
+
+## ArtifactDB Backup & Recovery
+
+`ArtifactDBBackup` (~148 lines, `src/mcp/ArtifactDBBackup.ts`) manages periodic snapshots of the SQLite database for corruption recovery.
+
+### Operations
+
+| Method | Behavior |
+|---|---|
+| `createSnapshot()` | Atomic copy (write to `.tmp`, then `fs.rename`) with ISO-timestamp naming |
+| `rotateBackups(n)` | Retains only the N most recent backups (default: 3), deletes oldest first |
+| `getLatestBackup()` | Returns the path to the newest backup, or `null` |
+| `restoreFromBackup(path)` | Atomic restore: copies backup to `.tmp` adjacent to DB path, then renames into place |
+
+### Safety Properties
+
+- **Atomic writes**: All writes use temp-file + rename to prevent partial files on crash
+- **Lexicographic sorting**: ISO-timestamp filenames (`artifacts-2026-03-09T…`) sort chronologically
+- **Best-effort rotation**: Delete failures are silently caught to avoid blocking on stale files
+- **Post-restore restart**: After restore, the in-memory `sql.js` instance must be reloaded (logged as a warning)
+
+For the backup/recovery runbook, see [Operations — Backup & Recovery](OPERATIONS.md#backup--recovery-runbook).
+
+---
+
 ## Persistence & Crash Recovery
 
 ### Write-Ahead Log (WAL) Pattern
@@ -580,6 +741,269 @@ For example, in a workspace with roots `frontend` and `backend`:
 | Path found in multiple roots | Primary root (first workspace folder) wins; warning logged |
 | Qualified path provided | Exact root used; error if root name not found |
 | Path found in no root | Error logged; file skipped |
+
+---
+
+## Engine Decomposition (Post-Refactor)
+
+The `EngineWiring` module delegates its `executePhase` logic to three focused collaborator classes, extracted in the March 2026 refactor:
+
+| Class | File | Responsibility |
+|---|---|---|
+| `ContextAssemblyAdapter` | `src/engine/ContextAssemblyAdapter.ts` | Delegates context assembly to `ContextPackBuilder`, transforms the result into the format expected by the worker launcher |
+| `WorkerLauncher` | `src/engine/WorkerLauncher.ts` | Handles worker spawning via `ADKController`, including prompt compilation, timeout management, and output bridge setup |
+| `WorkerResultProcessor` | `src/engine/WorkerResultProcessor.ts` | Processes worker exit results — validates output via `WorkerOutputValidator`, persists handoffs, triggers evaluation |
+
+These collaborators are instantiated by `EngineWiring` and injected with their dependencies. The public API of `EngineWiring` remains unchanged — callers still call `wireEngine()` and the collaborators are internal implementation details.
+
+### Decomposition Pattern
+
+```
+EngineWiring.wireEngine()
+    │
+    ├── on 'phase:execute' ──► ContextAssemblyAdapter.assemble()
+    │                              └── ContextPackBuilder.build()
+    │
+    ├── ──────────────────────► WorkerLauncher.launch()
+    │                              ├── SelectionPipeline.run()
+    │                              └── ADKController.spawnWorker()
+    │
+    └── on 'worker:exit' ────► WorkerResultProcessor.process()
+                                   ├── WorkerOutputValidator.validate()
+                                   └── ArtifactDB.upsertHandoff()
+```
+
+---
+
+## PlannerAgent Decomposition
+
+The `PlannerAgent` class (`src/planner/PlannerAgent.ts`) has been decomposed into three collaborators via dependency injection:
+
+| Class | File | Responsibility |
+|---|---|---|
+| `WorkspaceScanner` | `src/planner/WorkspaceScanner.ts` | Scans workspace filesystem structure (file tree, tech stack detection) to provide context for plan generation |
+| `RunbookParser` | `src/planner/RunbookParser.ts` | Parses and validates raw LLM output into structured `Runbook` objects, handling JSON extraction from markdown fences |
+| `PlannerRetryManager` | `src/planner/PlannerRetryManager.ts` | Manages retry logic for planner failures with feedback injection and configurable retry limits |
+
+`PlannerAgent` retains backward-compatible wrapper methods for each delegated responsibility. The collaborators are injected via constructor, enabling isolated unit testing.
+
+---
+
+## ArtifactDB Repository Layer
+
+The `src/mcp/repositories/` directory provides a **typed repository layer** over the raw `ArtifactDB` SQLite interface. Each repository encapsulates queries and mutations for a specific domain:
+
+| Repository | Purpose |
+|---|---|
+| `TaskRepository` | Master task CRUD: summary, implementation plan, consolidation report |
+| `PhaseRepository` | Phase metadata, status transitions, context |
+| `HandoffRepository` | Phase completion artifacts (decisions, modified files, blockers) |
+| `SessionRepository` | Session history, metadata, and lifecycle |
+| `AuditRepository` | Agent selection audit trail records |
+| `VerdictRepository` | Evaluation results (passed/failed, reason, retryPrompt) |
+| `ContextManifestRepository` | Context pack manifests for observability |
+
+Shared types are defined in `db-types.ts`. All repositories receive the `ArtifactDB` instance via constructor injection and use type-safe query methods rather than raw SQL strings.
+
+---
+
+## MCP Plugin System
+
+The MCP server supports an extensible plugin architecture for adding custom resources and tools:
+
+| Component | File | Purpose |
+|---|---|---|
+| `MCPPlugin` | `src/mcp/MCPPlugin.ts` | Interface definition for MCP plugins (resources, tools, lifecycle hooks) |
+| `PluginLoader` | `src/mcp/PluginLoader.ts` | Discovers, validates, and loads plugins with configurable approval gates |
+
+### Plugin Lifecycle
+
+1. **Discovery**: `PluginLoader` scans for plugin declarations
+2. **Approval Gate**: If `coogent.requirePluginApproval` is `true` (default), the user must approve each plugin before activation
+3. **Registration**: Approved plugins register their resources and tools with the MCP server
+4. **Teardown**: Plugins are deactivated on extension deactivation
+
+---
+
+## MCP Validator & Error Codes
+
+### MCPValidator
+
+`MCPValidator` (`src/mcp/MCPValidator.ts`) provides **input validation** at the MCP server boundary:
+
+- Validates resource URI format against expected patterns
+- Validates tool input schemas before handler execution
+- Rejects path traversal attempts (e.g., `../../../etc/passwd`) with `PATH_TRAVERSAL` error code
+- Returns structured error responses with canonical error codes
+
+### Canonical Error Codes
+
+`ErrorCodes` (`src/constants/index.ts`) defines string constants used across all boundary failure sites:
+
+| Code | Boundary | Meaning |
+|---|---|---|
+| `WORKER_OUTPUT_NULL_INPUT` | WorkerOutputValidator | Null/undefined input to validator |
+| `WORKER_OUTPUT_INVALID_FIT` | WorkerOutputValidator | Zod schema violation |
+| `WORKER_OUTPUT_UNEXPECTED_ERROR` | WorkerOutputValidator | Unhandled exception during validation |
+| `PATH_TRAVERSAL` | MCPValidator | Path traversal attempt detected |
+| `MCP_TOOL_INVALID_INPUT` | MCPToolHandler | Invalid tool input schema |
+| `MCP_RESOURCE_NOT_FOUND` | MCPResourceHandler | Requested URI not found |
+| `DISPATCH_VALIDATION_FAILED` | DispatchController | Worker output failed validation before persistence |
+
+All error codes are logged via `TelemetryLogger.logBoundaryEvent()` for structured observability.
+
+---
+
+## End-to-End Request Lifecycle
+
+The following diagram shows the complete request flow from user prompt to consolidated report:
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant MC as MissionControl<br/>(Svelte Webview)
+    participant EH as Extension Host
+    participant PA as PlannerAgent
+    participant E as Engine (FSM)
+    participant DC as DispatchController
+    participant SP as SelectionPipeline
+    participant ADK as ADKController
+    participant W as Worker (AI Agent)
+    participant MCP as CoogentMCPServer
+    participant DB as ArtifactDB (SQLite)
+    participant CA as ConsolidationAgent
+
+    U->>MC: Enter objective
+    MC->>EH: CMD_PLAN_REQUEST { prompt }
+    EH->>E: emit PLAN_REQUEST
+    E->>E: IDLE → PLANNING
+
+    E->>PA: generate(prompt)
+    PA->>PA: WorkspaceScanner.scan()
+    PA->>PA: PlannerPromptCompiler.compile()
+    PA->>PA: LLM call via vscode.lm API
+    PA->>PA: RunbookParser.parse(output)
+    PA-->>E: PLAN_GENERATED { runbook }
+
+    E->>E: PLANNING → PLAN_REVIEW
+    E->>MC: PLAN_DRAFT { draft, fileTree }
+
+    U->>MC: Approve plan
+    MC->>EH: CMD_PLAN_APPROVE
+    EH->>E: emit PLAN_APPROVED
+    E->>E: PLAN_REVIEW → PARSING → READY
+
+    E->>E: emit START
+    E->>E: READY → EXECUTING_WORKER
+
+    loop For each ready phase (DAG-aware)
+        E->>DC: dispatch(phase)
+        DC->>SP: SelectionPipeline.run(subtaskSpec)
+        SP-->>DC: { selection, prompt, audit }
+        DC->>ADK: spawnWorker(compiledPrompt, contextFiles)
+        ADK->>W: Ephemeral AI session
+        W-->>ADK: stdout/stderr stream
+        ADK-->>MC: PHASE_OUTPUT (batched 100ms/4KB)
+        W->>MCP: submit_phase_handoff
+        MCP->>DB: upsertHandoff()
+        W-->>ADK: exit
+        ADK-->>E: WORKER_EXITED
+        E->>E: evaluate phase (EvaluatorRegistryV2)
+    end
+
+    E->>E: ALL_PHASES_PASS → COMPLETED
+    E->>CA: consolidate(allHandoffs)
+    CA-->>MCP: submit_consolidation_report
+    MCP->>DB: upsertTask(report)
+    E->>MC: CONSOLIDATION_REPORT
+```
+
+### Key Flow Properties
+
+| Property | Detail |
+|---|---|
+| **Parallelism** | Independent phases (no `depends_on` edges) dispatch concurrently, up to `maxConcurrentWorkers` |
+| **Frontier dispatch** | When a worker exits successfully, newly unblocked DAG neighbors dispatch immediately |
+| **Self-healing** | Failed phases retry with error feedback injected into the retry prompt (up to `maxRetries`) |
+| **State persistence** | Every mutation is written to the WAL before applying, enabling crash recovery |
+| **Context isolation** | Each worker receives exactly the files listed in its phase `context_files` — no shared state between workers |
+
+---
+
+## Webview Architecture
+
+The Mission Control UI (`webview-ui/`) is a **Svelte 5** single-page application communicating with the Extension Host via `postMessage` IPC.
+
+### Store Architecture
+
+| Store | File | Pattern | Purpose |
+|---|---|---|---|
+| `appState` | `stores/appState.ts` | `$state` / `$derived` | Reactive projection of engine state, phases, and UI mode |
+| `mcpStore` | `stores/mcpStore.ts` | Request-correlation factory | On-demand data fetching via `coogent://` URIs with requestId tracking |
+
+#### `mcpStore` — IPC Correlation Pattern
+
+Heavy Markdown artifacts (plans, reports, handoffs) are _not_ pushed proactively. Instead, the webview fetches them on-demand:
+
+1. **Request**: Component calls `mcpStore.fetch(uri)` → generates a unique `requestId` → sends `MCP_FETCH_RESOURCE { uri, requestId }` to the Extension Host
+2. **Proxy**: Extension Host reads the resource from `CoogentMCPServer` (backed by `ArtifactDB`)
+3. **Response**: Extension Host sends `MCP_RESOURCE_DATA { requestId, data }` back
+4. **Correlation**: `mcpStore` matches the `requestId` and resolves the pending promise
+
+This avoids saturating the IPC channel with large payloads on every state change.
+
+### Component Structure
+
+```
+webview-ui/src/
+├── App.svelte              ← Root: tab navigation, theme sync
+├── components/
+│   ├── PlanReview.svelte   ← Plan display and approval UI
+│   ├── PhaseDetails.svelte ← Per-phase status, output, handoff
+│   ├── PhaseHeader.svelte  ← Phase title, status badge, timing
+│   ├── PhaseActions.svelte ← Retry/skip/stop/restart buttons
+│   ├── PhaseHandoff.svelte ← Handoff artifact display
+│   ├── Terminal.svelte     ← Real-time worker output stream
+│   ├── Markdown.svelte     ← Rendered markdown with mermaid diagrams
+│   └── WorkerStudio.svelte ← Worker profile browser
+├── stores/
+│   ├── appState.ts         ← Global reactive state ($state/$derived)
+│   └── mcpStore.ts         ← IPC fetch-with-correlation
+└── types.ts                ← Frontend type definitions
+```
+
+### Theme Parity
+
+The webview achieves **pixel-perfect theme parity** with the IDE by reading VS Code CSS custom properties (`--vscode-editor-background`, `--vscode-editor-foreground`, etc.) directly. No separate theme file is maintained.
+
+---
+
+## Build Pipeline
+
+### Two-Target Architecture
+
+| Target | Bundler | Entry | Output | Format |
+|---|---|---|---|---|
+| Extension Host | esbuild | `src/extension.ts` | `out/extension.js` | CommonJS (Node.js) |
+| Webview UI | Vite + Svelte | `webview-ui/src/main.ts` | `webview-ui/dist/` | ESM (Browser) |
+
+### esbuild Configuration (`esbuild.js`)
+
+| Feature | Detail |
+|---|---|
+| **Template inlining** | `.md` files loaded as text strings — ensures prompt templates survive single-file bundling |
+| **WASM handling** | `sql-wasm.wasm` copied alongside the output bundle for `sql.js` runtime loading |
+| **Externals** | `vscode` excluded — provided by the Extension Host runtime |
+| **Schema inlining** | Runbook JSON Schema inlined as a TypeScript constant (not loaded from file) to prevent ENOENT in VSIX |
+
+### VSIX Packaging
+
+```bash
+npm run prepackage   # esbuild --minify + Vite build
+npm run package      # npx @vscode/vsce package → coogent-<version>.vsix
+```
+
+The `.vscodeignore` file excludes `src/`, `node_modules/`, `webview-ui/src/`, and test files from the package. The VSIX contains only `out/extension.js`, `webview-ui/dist/`, schemas, and metadata.
 
 ---
 

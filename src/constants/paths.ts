@@ -201,3 +201,10 @@ export function getIpcRequestPath(subTaskDir: string): string {
 export function getIpcResponsePath(subTaskDir: string): string {
     return path.join(subTaskDir, IPC_RESPONSE_FILE);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Unified Storage Base (P1.2)
+//  Re-exported for convenience — prefer StorageBase for new code.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export { StorageBase, createStorageBase } from './StorageBase.js';

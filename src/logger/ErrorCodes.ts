@@ -78,3 +78,39 @@ export enum ErrorCode {
     /** Prompt compilation failed. */
     ERR_SEL_COMPILE_FAILED = 'ERR_SEL_COMPILE_FAILED',
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Boundary Error Codes — string constants (P2.2 Structured Observability)
+// ═══════════════════════════════════════════════════════════════════════════════
+// String constants (not enum) for direct JSON serializability in JSONL logs.
+
+/** Worker LLM output failed Zod validation. */
+export const ERR_WORKER_OUTPUT_VALIDATION_FAILED = 'ERR_WORKER_OUTPUT_VALIDATION_FAILED' as const;
+/** Path traversal attempt blocked by boundary check. */
+export const ERR_MCP_PATH_TRAVERSAL_BLOCKED = 'ERR_MCP_PATH_TRAVERSAL_BLOCKED' as const;
+/** MCP string field exceeded maximum allowed length. */
+export const ERR_MCP_STRING_LENGTH_EXCEEDED = 'ERR_MCP_STRING_LENGTH_EXCEEDED' as const;
+/** Async dispatch (dispatchReadyPhases / advanceSchedule) threw. */
+export const ERR_DISPATCH_ASYNC_FAILURE = 'ERR_DISPATCH_ASYNC_FAILURE' as const;
+/** ArtifactDB backup snapshot creation failed. */
+export const ERR_BACKUP_CREATION_FAILED = 'ERR_BACKUP_CREATION_FAILED' as const;
+/** ArtifactDB backup restore failed. */
+export const ERR_BACKUP_RESTORE_FAILED = 'ERR_BACKUP_RESTORE_FAILED' as const;
+/** Storage source selection event (diagnostic — not an error). */
+export const ERR_STORAGE_SOURCE_SELECTION = 'ERR_STORAGE_SOURCE_SELECTION' as const;
+/** MCP Prompts invocation boundary event. */
+export const ERR_PROMPT_INVOCATION = 'ERR_PROMPT_INVOCATION' as const;
+/** MCP Sampling invocation boundary event. */
+export const ERR_SAMPLING_INVOCATION = 'ERR_SAMPLING_INVOCATION' as const;
+
+/** Union type of all boundary error code string constants. */
+export type BoundaryErrorCode =
+    | typeof ERR_WORKER_OUTPUT_VALIDATION_FAILED
+    | typeof ERR_MCP_PATH_TRAVERSAL_BLOCKED
+    | typeof ERR_MCP_STRING_LENGTH_EXCEEDED
+    | typeof ERR_DISPATCH_ASYNC_FAILURE
+    | typeof ERR_BACKUP_CREATION_FAILED
+    | typeof ERR_BACKUP_RESTORE_FAILED
+    | typeof ERR_STORAGE_SOURCE_SELECTION
+    | typeof ERR_PROMPT_INVOCATION
+    | typeof ERR_SAMPLING_INVOCATION;

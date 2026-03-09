@@ -9,9 +9,19 @@
 | Document | Description |
 |---|---|
 | [README.md](../README.md) | Project overview, problem/solution, quick start |
-| [CONTRIBUTING.md](../CONTRIBUTING.md) | Contribution guidelines, debugging, test suites |
+| [CONTRIBUTING.md](../CONTRIBUTING.md) | Contribution process (stub → links to Developer Guide) |
+| [CHANGELOG.md](../CHANGELOG.md) | Release history (Keep a Changelog format) |
 | [LICENSE](../LICENSE) | MIT License |
-| [schemas/runbook.schema.json](../schemas/runbook.schema.json) | JSON Schema for `.task-runbook.json` |
+
+---
+
+## Schemas
+
+| File | Description |
+|---|---|
+| [runbook.schema.json](../schemas/runbook.schema.json) | JSON Schema for `.task-runbook.json` |
+| [worker.schema.json](../schemas/worker.schema.json) | JSON Schema for `.coogent/workers.json` |
+| [secrets-allowlist.schema.json](../schemas/secrets-allowlist.schema.json) | JSON Schema for secrets allowlist configuration |
 
 ---
 
@@ -19,11 +29,20 @@
 
 | Document | Description |
 |---|---|
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System architecture, FSM design, DAG scheduling, MCP server, persistence, and tech stack |
-| **[USER_GUIDE.md](USER_GUIDE.md)** | Installation, configuration, usage workflows, and settings reference |
-| **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)** | Local development, project structure, testing, build commands, and code style |
-| **[API_REFERENCE.md](API_REFERENCE.md)** | MCP URIs, MCP tools, IPC message contracts, and data model schemas |
-| **[OPERATIONS.md](OPERATIONS.md)** | Deployment, migration runbook, troubleshooting guide, and log locations |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System architecture: FSM, DAG scheduling, MCP server, context pipeline, evaluators, persistence, decomposition patterns, plugin system, error codes, and tech stack |
+| **[USER_GUIDE.md](USER_GUIDE.md)** | Installation, all 18 configuration settings, usage workflows, multi-root workspace support |
+| **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)** | Local development, full project structure, debugging, 75-file test suite reference, build commands, code conventions, and contribution guidelines |
+| **[API_REFERENCE.md](API_REFERENCE.md)** | MCP URIs, MCP tools, IPC message contracts, data model schemas, and branded types |
+| **[OPERATIONS.md](OPERATIONS.md)** | Packaging, deployment, migration runbook, troubleshooting guide, backup/recovery, and log locations |
+
+---
+
+## Examples
+
+| File | Description |
+|---|---|
+| [examples/prompts/exhaustive_multi_phases_review.md](../examples/prompts/exhaustive_multi_phases_review.md) | Multi-phase review prompt example |
+| [examples/prompts/repository_handoff_ai_continuation_briefing.md](../examples/prompts/repository_handoff_ai_continuation_briefing.md) | Repository handoff briefing prompt example |
 
 ---
 

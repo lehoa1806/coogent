@@ -82,7 +82,8 @@ function showMissionControl(
         makeOnReset(svc, sessionDirName),
         svc.mcpServer,
         svc.mcpBridge,
-        svc.agentRegistry
+        svc.agentRegistry,
+        svc.storageBase
     );
 }
 
@@ -150,11 +151,17 @@ export function registerAllCommands(
             }
             if (!sessionId) return;
             const sessionDir = svc.sessionManager.getSessionDir(sessionId);
+            const masterTaskId = path.basename(sessionDir);
             const newStateManager = new StateManager(sessionDir);
+
+            // Bind ArtifactDB so DB-primary runbook persistence works after switch
+            if (svc.mcpServer) {
+                newStateManager.setArtifactDB(svc.mcpServer.getArtifactDB(), masterTaskId);
+            }
+
             try {
                 await svc.engine.switchSession(newStateManager);
                 svc.currentSessionDir = sessionDir;
-                const masterTaskId = path.basename(sessionDir);
                 svc.sessionManager.setCurrentSessionId(sessionId, masterTaskId);
                 svc.plannerAgent?.setMasterTaskId(masterTaskId);
                 showMissionControl(context.extensionUri, svc);

@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import type { EngineState } from '../types/index.js';
 import { getTelemetryLogDir, ENGINE_LOG_FILE } from '../constants/paths.js';
 import { SecretsGuard } from '../context/SecretsGuard.js';
+import type { BoundaryErrorCode } from './ErrorCodes.js';
 import log from './log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -265,6 +266,33 @@ export class TelemetryLogger {
             subtaskId,
             agentType,
             recommendedReassignment,
+        });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Boundary Event Logging (P2.2: Structured Observability)
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Log a structured boundary event with a canonical error code.
+     *
+     * Emits a JSONL record to `engine.jsonl` containing:
+     *   - `code`: machine-parseable boundary error code
+     *   - `timestamp`: ISO 8601
+     *   - `context`: arbitrary structured data about the failure
+     *   - `level`: warn or error (inferred from code prefix)
+     */
+    async logBoundaryEvent(
+        code: BoundaryErrorCode,
+        context: Record<string, unknown>,
+    ): Promise<void> {
+        const level: LogEntry['level'] = 'warn';
+        await this.appendEntry(ENGINE_LOG_FILE, {
+            timestamp: new Date().toISOString(),
+            level,
+            category: 'system',
+            message: `[BOUNDARY] ${code}`,
+            data: { code, ...context },
         });
     }
 

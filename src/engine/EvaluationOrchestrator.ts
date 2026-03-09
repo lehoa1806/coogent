@@ -323,7 +323,7 @@ export class EvaluationOrchestrator {
      * This method is called from within that lock.
      */
     public async handleWorkerFailed(
-        phase: import('../types/index.js').Phase,
+        phase: Phase,
         isLastWorker: boolean,
         reason: 'timeout' | 'crash',
     ): Promise<void> {

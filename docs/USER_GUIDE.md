@@ -30,12 +30,12 @@ Search for **"Coogent — Multi-Agent Engine"** in the Extensions panel and clic
 ### From VSIX
 
 ```
-Cmd+Shift+P → "Extensions: Install from VSIX…" → select coogent-0.1.0.vsix
+Cmd+Shift+P → "Extensions: Install from VSIX…" → select coogent-0.2.0.vsix
 ```
 
-Or via CLI:
+**CLI Installation**:
 ```bash
-code --install-extension coogent-0.1.0.vsix
+code --install-extension coogent-0.2.0.vsix
 ```
 
 ### From Source
@@ -61,15 +61,43 @@ Press **F5** in the IDE to launch the Extension Development Host.
 
 All settings are under `coogent.*` in VS Code Settings (`Cmd+,`):
 
+### Core Settings
+
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `coogent.tokenLimit` | number | `100,000` | Maximum token count for context injection per phase. If exceeded, execution halts and you're asked to decompose the phase further. |
 | `coogent.workerTimeoutMs` | number | `900,000` | Time (ms) before force-killing a worker agent. Default: 15 minutes. |
 | `coogent.maxRetries` | number | `3` | Maximum automatic retries when a phase fails. |
+| `coogent.maxConcurrentWorkers` | number | `4` | Maximum parallel workers (1–16). Higher values increase throughput but consume more memory. |
+| `coogent.contextBudgetTokens` | number | `150,000` | Token budget for context pack assembly per phase (100K–2M). Controls the `ContextPackBuilder` budget. |
+
+### Worker & Conversation Settings
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `coogent.conversationMode` | enum | `isolated` | Worker conversation mode: `isolated` (fresh context per phase), `continuous` (reuse conversation), or `smart-switch` (auto-detect based on token usage). |
+| `coogent.smartSwitchTokenThreshold` | number | `60,000` | Token count at which `smart-switch` mode starts a new conversation. |
+| `coogent.maxWorkerOutputBytes` | number | `10,485,760` | Maximum stdout/stderr capture per worker in bytes (default: 10 MB). Prevents runaway output from consuming memory. |
+| `coogent.customWorkers` | array | `[]` | Custom worker profiles for skill-based routing. Overrides built-in defaults by `id`. See [Custom Worker Profiles](#custom-worker-profiles). |
+| `coogent.enableShadowMode` | boolean | `false` | Run the agent selection pipeline for observability without affecting dispatch. Useful for evaluating selection quality. |
+
+### Logging Settings
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
 | `coogent.logDirectory` | string | `.coogent/logs` | Session log directory, relative to workspace root. |
 | `coogent.logLevel` | enum | `info` | Minimum log verbosity. Options: `trace`, `debug`, `info`, `warn`, `error`, `off`. |
 | `coogent.logMaxSizeMB` | number | `5` | Log file size limit before rotation (1–100 MB). |
-| `coogent.logMaxBackups` | number | `2` | Number of rotated backup files to keep (0–10). |
+| `coogent.logMaxBackups` | number | `2` | Number of rotated backup log files to keep (0–10). |
+
+### Security & Feature Flags
+
+| Setting | Type | Default | Description |
+|---|---|---|---|
+| `coogent.blockOnSecretsDetection` | boolean | `false` | Block phase execution when `SecretsGuard` detects secrets in context files. Default is warn-only (secrets are redacted but execution proceeds). |
+| `coogent.enableEncryption` | boolean | `false` | Encrypt `.task-runbook.json` files at rest using a key stored in VS Code `SecretStorage`. |
+| `coogent.requirePluginApproval` | boolean | `true` | Require user approval before activating MCP plugins. Disable to auto-load all plugins. |
+| `coogent.enableSampling` | boolean | `false` | Enable MCP Sampling for optional AI-assisted review and summarization workflows. See [Architecture — MCP Sampling](ARCHITECTURE.md#mcp-sampling). |
 
 ---
 
@@ -206,6 +234,10 @@ Manage multiple orchestration sessions:
 | `Coogent: Open Diff Review` | View changes since sandbox creation |
 | `Coogent: Load Session` | Resume a previous session |
 | `Coogent: Delete Session` | Remove a session |
+| `Coogent: Resume Pending Phases` | Resume all pending phases after a pause |
+| `Coogent: Dump State` | Dump current engine state to the output channel |
+| `Search Sessions` | Search past sessions by keyword |
+| `Refresh Sessions` | Reload the session history list |
 
 ---
 

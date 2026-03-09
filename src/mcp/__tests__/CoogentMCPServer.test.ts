@@ -35,7 +35,7 @@ async function createConnectedPair(workspaceRoot: string) {
     await server.init(workspaceRoot);
 
     const client = new Client(
-        { name: 'test-client', version: '0.1.0' },
+        { name: 'test-client', version: '0.2.0' },
         { capabilities: {} }
     );
 
@@ -353,7 +353,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
             name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
-                markdown_content: '',
+                markdown_content: '# Plan (summary never set)',
             },
         });
 

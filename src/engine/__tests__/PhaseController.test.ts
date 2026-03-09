@@ -11,6 +11,7 @@ jest.mock('vscode', () => ({
     Uri: { file: jest.fn() },
 }), { virtual: true });
 
+import log from '../../logger/log.js';
 import { PhaseController } from '../PhaseController.js';
 import { EngineState, EngineEvent, asPhaseId, type Phase, type Runbook } from '../../types/index.js';
 
@@ -35,6 +36,7 @@ function makeMockEngine(stateOverride: EngineState = EngineState.IDLE) {
         dispatchReadyPhases: jest.fn().mockResolvedValue(undefined),
         getScheduler: jest.fn().mockReturnValue({
             isAllDone: jest.fn().mockReturnValue(false),
+            getReadyPhases: jest.fn().mockReturnValue([]),
         }),
         getStateManager: jest.fn().mockReturnValue({
             getSessionDir: () => '/tmp/session',
@@ -349,12 +351,15 @@ describe('PhaseController', () => {
     // ─────────────────────────────────────────────────────────────────────
 
     describe('skipPhase()', () => {
-        it('should mark phase as completed and advance current_phase', async () => {
+        it('should mark phase as completed and advance current_phase via scheduler', async () => {
             const phase = makePhase(0, 'failed');
-            const runbook = makeRunbook([phase, makePhase(1)]);
+            const nextPhase = makePhase(1);
+            const runbook = makeRunbook([phase, nextPhase]);
             engine.getRunbook.mockReturnValue(runbook);
             engine.transition.mockReturnValue(EngineState.READY);
             engine.getScheduler().isAllDone.mockReturnValue(false);
+            // P-1: getReadyPhases returns the next available phase
+            engine.getScheduler().getReadyPhases.mockReturnValue([nextPhase]);
 
             await controller.skipPhase(0);
 
@@ -364,6 +369,21 @@ describe('PhaseController', () => {
             expect(engine.emitUIMessage).toHaveBeenCalledWith(
                 expect.objectContaining({ type: 'PHASE_STATUS' })
             );
+        });
+
+        it('should use scheduler for next phase instead of phaseId+1 (P-1 DAG fix)', async () => {
+            // Non-sequential phase IDs: [0, 5, 10]
+            const phases = [makePhase(0, 'failed'), makePhase(5), makePhase(10)];
+            const runbook = makeRunbook(phases);
+            engine.getRunbook.mockReturnValue(runbook);
+            engine.transition.mockReturnValue(EngineState.READY);
+            engine.getScheduler().isAllDone.mockReturnValue(false);
+            engine.getScheduler().getReadyPhases.mockReturnValue([phases[1]]); // phase 5
+
+            await controller.skipPhase(0);
+
+            // P-1 fix: should be 5 (next ready), not 1 (phaseId + 1)
+            expect(runbook.current_phase).toBe(5);
         });
 
         it('should be a no-op when SKIP_PHASE transition fails', async () => {
@@ -381,6 +401,7 @@ describe('PhaseController', () => {
             engine.getRunbook.mockReturnValue(runbook);
             engine.transition.mockReturnValue(EngineState.READY);
             engine.getScheduler().isAllDone.mockReturnValue(true);
+            engine.getScheduler().getReadyPhases.mockReturnValue([]);
 
             await controller.skipPhase(0);
 
@@ -395,11 +416,142 @@ describe('PhaseController', () => {
             engine.getRunbook.mockReturnValue(runbook);
             engine.transition.mockReturnValue(EngineState.READY);
             engine.getScheduler().isAllDone.mockReturnValue(true);
+            engine.getScheduler().getReadyPhases.mockReturnValue([]);
 
             await controller.skipPhase(0);
 
             // Phase 0 is now 'completed' but phase 1 is still 'failed'
             expect(runbook.status).toBe('paused_error');
+        });
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  P0.4: Regression — async dispatchReadyPhases error handling
+    // ─────────────────────────────────────────────────────────────────────
+
+    describe('async dispatch error handling (P0.4 regression)', () => {
+        const dispatchError = new Error('dispatch failed');
+
+        beforeEach(() => {
+            jest.spyOn(log, 'error').mockImplementation(() => { });
+        });
+
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        describe('restartPhase — dispatch rejection', () => {
+            it('should log error with [PhaseController] prefix when dispatchReadyPhases rejects', async () => {
+                const phase = makePhase(0, 'failed');
+                const runbook = makeRunbook([phase, makePhase(1)]);
+                engine.getRunbook.mockReturnValue(runbook);
+                engine._setState(EngineState.ERROR_PAUSED);
+                engine.transition.mockReturnValue(EngineState.EXECUTING_WORKER);
+                engine.dispatchReadyPhases.mockRejectedValue(dispatchError);
+
+                await controller.restartPhase(0);
+
+                // Flush microtask queue to let .catch() run
+                await new Promise(resolve => setImmediate(resolve));
+
+                expect(log.error).toHaveBeenCalledWith(
+                    '[PhaseController] restartPhase dispatch failed:',
+                    dispatchError,
+                );
+            });
+
+            it('should not throw an unhandled promise rejection', async () => {
+                const phase = makePhase(0, 'failed');
+                const runbook = makeRunbook([phase]);
+                engine.getRunbook.mockReturnValue(runbook);
+                engine._setState(EngineState.IDLE);
+                engine.transition.mockReturnValue(EngineState.EXECUTING_WORKER);
+                engine.dispatchReadyPhases.mockRejectedValue(dispatchError);
+
+                // This should not throw — the .catch() handler swallows the rejection
+                await expect(controller.restartPhase(0)).resolves.toBeUndefined();
+
+                // Flush microtask queue
+                await new Promise(resolve => setImmediate(resolve));
+            });
+
+            it('should still execute side effects (persist, emitUIMessage) before dispatch fails', async () => {
+                const phase = makePhase(0, 'failed');
+                const runbook = makeRunbook([phase]);
+                engine.getRunbook.mockReturnValue(runbook);
+                engine._setState(EngineState.ERROR_PAUSED);
+                engine.transition.mockReturnValue(EngineState.EXECUTING_WORKER);
+                engine.dispatchReadyPhases.mockRejectedValue(dispatchError);
+
+                await controller.restartPhase(0);
+
+                // Side effects before dispatch still execute
+                expect(engine.persist).toHaveBeenCalled();
+                expect(engine.emitUIMessage).toHaveBeenCalledWith(
+                    expect.objectContaining({ type: 'LOG_ENTRY' }),
+                );
+                expect(runbook.phases[0].status).toBe('pending');
+                expect(engine.getHealer().clearAttempts).toHaveBeenCalledWith(0);
+            });
+        });
+
+        describe('skipPhase — dispatch rejection', () => {
+            it('should log error with [PhaseController] prefix when dispatchReadyPhases rejects', async () => {
+                const phase0 = makePhase(0, 'failed');
+                const phase1 = makePhase(1);
+                const runbook = makeRunbook([phase0, phase1]);
+                engine.getRunbook.mockReturnValue(runbook);
+                engine.transition.mockReturnValue(EngineState.READY);
+                engine.getScheduler().isAllDone.mockReturnValue(false);
+                engine.getScheduler().getReadyPhases.mockReturnValue([phase1]);
+                engine.dispatchReadyPhases.mockRejectedValue(dispatchError);
+
+                await controller.skipPhase(0);
+
+                // Flush microtask queue to let .catch() run
+                await new Promise(resolve => setImmediate(resolve));
+
+                expect(log.error).toHaveBeenCalledWith(
+                    '[PhaseController] skipPhase dispatch failed:',
+                    dispatchError,
+                );
+            });
+
+            it('should not throw an unhandled promise rejection', async () => {
+                const phase0 = makePhase(0, 'failed');
+                const phase1 = makePhase(1);
+                const runbook = makeRunbook([phase0, phase1]);
+                engine.getRunbook.mockReturnValue(runbook);
+                engine.transition.mockReturnValue(EngineState.READY);
+                engine.getScheduler().isAllDone.mockReturnValue(false);
+                engine.getScheduler().getReadyPhases.mockReturnValue([phase1]);
+                engine.dispatchReadyPhases.mockRejectedValue(dispatchError);
+
+                await expect(controller.skipPhase(0)).resolves.toBeUndefined();
+
+                // Flush microtask queue
+                await new Promise(resolve => setImmediate(resolve));
+            });
+
+            it('should still persist and emit PHASE_STATUS before dispatch fails', async () => {
+                const phase0 = makePhase(0, 'failed');
+                const phase1 = makePhase(1);
+                const runbook = makeRunbook([phase0, phase1]);
+                engine.getRunbook.mockReturnValue(runbook);
+                engine.transition.mockReturnValue(EngineState.READY);
+                engine.getScheduler().isAllDone.mockReturnValue(false);
+                engine.getScheduler().getReadyPhases.mockReturnValue([phase1]);
+                engine.dispatchReadyPhases.mockRejectedValue(dispatchError);
+
+                await controller.skipPhase(0);
+
+                // Side effects before dispatch still execute
+                expect(phase0.status).toBe('completed');
+                expect(engine.persist).toHaveBeenCalled();
+                expect(engine.emitUIMessage).toHaveBeenCalledWith(
+                    expect.objectContaining({ type: 'PHASE_STATUS' }),
+                );
+            });
         });
     });
 });

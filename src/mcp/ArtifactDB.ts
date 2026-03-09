@@ -302,6 +302,14 @@ export class ArtifactDB {
         return (this._contextManifests ??= new ContextManifestRepository(this.db, () => this.scheduleFlush()));
     }
 
+    /**
+     * Delete a session and its associated task record from the database.
+     * Convenience wrapper consistent with the `upsertSession` public API.
+     */
+    deleteSessionFromDB(sessionDirName: string): void {
+        this.sessions.delete(sessionDirName);
+    }
+
     // ── Private constructor — use ArtifactDB.create() ────────────────────
     private constructor(db: Database, dbPath: string) {
         this.db = db;

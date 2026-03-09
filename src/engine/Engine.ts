@@ -202,6 +202,7 @@ export class Engine extends EventEmitter implements EngineInternals {
      * Called from EngineWiring after services are initialised.
      */
     public configureDispatch(options: DispatchControllerOptions): void {
+        this.dispatch.stopStallWatchdog();
         this.dispatch = new DispatchController(this, options);
     }
 

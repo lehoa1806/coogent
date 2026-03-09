@@ -45,6 +45,16 @@ export class SessionRepository {
         return { dirName: row.session_dir_name, sessionId: row.session_id, prompt: row.prompt, createdAt: row.created_at };
     }
 
+    /**
+     * Delete a session and its associated task record.
+     * Removes both the `sessions` row and the corresponding `tasks` row.
+     */
+    delete(sessionDirName: string): void {
+        this.db.run('DELETE FROM sessions WHERE session_dir_name = ?', [sessionDirName]);
+        this.db.run('DELETE FROM tasks WHERE master_task_id = ?', [sessionDirName]);
+        this.scheduleFlush();
+    }
+
     /** List all sessions, joined with tasks to include runbook status. */
     list(): Array<{
         sessionDirName: string; sessionId: string; prompt: string; createdAt: number;

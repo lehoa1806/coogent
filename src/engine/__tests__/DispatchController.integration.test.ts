@@ -4,6 +4,7 @@
 // Validates that scored selections match expected agent types for test subtasks.
 // Tests the dispatch → selection → compile → validate flow.
 
+import log from '../../logger/log.js';
 import { DispatchController } from '../DispatchController.js';
 import { EngineState, EngineEvent, asPhaseId, type Phase, type Runbook, type HostToWebviewMessage } from '../../types/index.js';
 import type { Engine } from '../Engine.js';
@@ -317,6 +318,119 @@ describe('DispatchController Integration — Agent Selection Pipeline', () => {
             // Phase should still be dispatched despite builder failure
             expect(phases[0].status).toBe('running');
             expect(engine.emit).toHaveBeenCalledWith('phase:execute', phases[0]);
+        });
+    });
+
+    // ═════════════════════════════════════════════════════════════════════
+    //  P0.4: Regression — async dispatchReadyPhases error handling
+    // ═════════════════════════════════════════════════════════════════════
+
+    describe('async dispatch error handling (P0.4 regression)', () => {
+        const dispatchError = new Error('dispatch failed');
+
+        beforeEach(() => {
+            jest.spyOn(log, 'error').mockImplementation(() => { });
+        });
+
+        afterEach(() => {
+            jest.restoreAllMocks();
+        });
+
+        describe('advanceSchedule — dispatch rejection', () => {
+            it('should log error with [DispatchController] prefix when dispatchReadyPhases rejects', async () => {
+                const phases = [
+                    makePhase({ id: 1, status: 'completed' }),
+                    makePhase({ id: 2, status: 'pending' }),
+                ];
+                const runbook = makeRunbook(phases);
+                const engine = createMockEngine(runbook);
+                const controller = new DispatchController(engine);
+
+                // Override dispatchReadyPhases to reject
+                jest.spyOn(controller, 'dispatchReadyPhases').mockRejectedValue(dispatchError);
+
+                controller.advanceSchedule();
+
+                // Flush microtask queue to let .catch() run
+                await new Promise(resolve => setImmediate(resolve));
+
+                expect(log.error).toHaveBeenCalledWith(
+                    '[DispatchController] advanceSchedule dispatch failed:',
+                    dispatchError,
+                );
+            });
+
+            it('should not throw an unhandled promise rejection from advanceSchedule', async () => {
+                const phases = [makePhase({ id: 1, status: 'completed' })];
+                const runbook = makeRunbook(phases);
+                const engine = createMockEngine(runbook);
+                const controller = new DispatchController(engine);
+
+                jest.spyOn(controller, 'dispatchReadyPhases').mockRejectedValue(dispatchError);
+
+                // advanceSchedule is void (not async) — should not produce unhandled rejection
+                expect(() => controller.advanceSchedule()).not.toThrow();
+
+                // Flush microtask queue
+                await new Promise(resolve => setImmediate(resolve));
+            });
+        });
+
+        describe('startStallWatchdog — dispatch rejection', () => {
+            it('should log error with [DispatchController] prefix when stall dispatch rejects', async () => {
+                // Create a stalled scenario: FSM in EXECUTING_WORKER, no running phases, ready phases exist
+                const phases = [makePhase({ id: 1, status: 'pending' })];
+                const runbook = makeRunbook(phases);
+                const engine = createMockEngine(runbook);
+                const controller = new DispatchController(engine);
+
+                // Override dispatchReadyPhases to reject
+                jest.spyOn(controller, 'dispatchReadyPhases').mockRejectedValue(dispatchError);
+
+                // Use fake timers to control the stall watchdog interval
+                jest.useFakeTimers();
+
+                controller.startStallWatchdog();
+
+                // Trigger the watchdog interval
+                jest.advanceTimersByTime(30_000);
+
+                // Switch to real timers for promise flushing
+                jest.useRealTimers();
+
+                // Flush microtask queue to let .catch() run
+                await new Promise(resolve => setImmediate(resolve));
+
+                expect(log.error).toHaveBeenCalledWith(
+                    '[DispatchController] stallWatchdog dispatch failed:',
+                    dispatchError,
+                );
+
+                controller.stopStallWatchdog();
+            });
+
+            it('should not throw an unhandled promise rejection from stall watchdog', async () => {
+                const phases = [makePhase({ id: 1, status: 'pending' })];
+                const runbook = makeRunbook(phases);
+                const engine = createMockEngine(runbook);
+                const controller = new DispatchController(engine);
+
+                jest.spyOn(controller, 'dispatchReadyPhases').mockRejectedValue(dispatchError);
+
+                jest.useFakeTimers();
+
+                controller.startStallWatchdog();
+
+                // Should not throw
+                expect(() => jest.advanceTimersByTime(30_000)).not.toThrow();
+
+                jest.useRealTimers();
+
+                // Flush microtask queue
+                await new Promise(resolve => setImmediate(resolve));
+
+                controller.stopStallWatchdog();
+            });
         });
     });
 });

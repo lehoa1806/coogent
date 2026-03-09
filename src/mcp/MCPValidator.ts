@@ -8,6 +8,8 @@ import {
     MASTER_TASK_ID_PATTERN,
     PHASE_ID_PATTERN,
 } from './types.js';
+import log from '../logger/log.js';
+import { ERR_MCP_STRING_LENGTH_EXCEEDED } from '../logger/ErrorCodes.js';
 
 /**
  * Stateless input validation helpers for MCP tool arguments.
@@ -34,10 +36,19 @@ export class MCPValidator {
         return value;
     }
 
-    static validateString(value: unknown, fieldName: string): string {
+    static validateString(value: unknown, fieldName: string, maxLength = 100_000): string {
         if (typeof value !== 'string') {
             throw new Error(
                 `Invalid ${fieldName}: expected a string, got ${typeof value}.`
+            );
+        }
+        if (value.length > maxLength) {
+            log.warn(
+                `[MCPValidator] ${ERR_MCP_STRING_LENGTH_EXCEEDED}: ${fieldName} ` +
+                `(${value.length} > ${maxLength})`,
+            );
+            throw new Error(
+                `Invalid ${fieldName}: exceeds maximum length (${maxLength}).`
             );
         }
         return value;
