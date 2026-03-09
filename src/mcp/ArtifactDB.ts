@@ -13,6 +13,7 @@ import { HandoffRepository } from './repositories/HandoffRepository.js';
 import { VerdictRepository } from './repositories/VerdictRepository.js';
 import { SessionRepository } from './repositories/SessionRepository.js';
 import { AuditRepository } from './repositories/AuditRepository.js';
+import { ContextManifestRepository } from './repositories/ContextManifestRepository.js';
 
 // sql.js ships without TS declarations — resolved via dynamic import()
 // inside the create() factory method. This avoids CJS require() in an
@@ -168,10 +169,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_session_id ON sessions(session_id
 -- Agent selection audit index
 CREATE INDEX IF NOT EXISTS idx_selection_audits_session ON selection_audits(session_id);
 
+CREATE TABLE IF NOT EXISTS context_manifests (
+  manifest_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  workspace_folder TEXT,
+  payload_json TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ctx_manifest_phase ON context_manifests(task_id, phase_id);
+
 `;
 
 /** Current schema version — bump this when adding new migrations. */
-const SCHEMA_VERSION = 4;
+const SCHEMA_VERSION = 5;
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -253,6 +265,7 @@ export class ArtifactDB {
     private _verdicts: VerdictRepository | undefined;
     private _sessions: SessionRepository | undefined;
     private _audits: AuditRepository | undefined;
+    private _contextManifests: ContextManifestRepository | undefined;
 
     /** Task aggregate repository. */
     get tasks(): TaskRepository {
@@ -282,6 +295,11 @@ export class ArtifactDB {
     /** Audit repository (plan revisions + selection audits). */
     get audits(): AuditRepository {
         return (this._audits ??= new AuditRepository(this.db, () => this.scheduleFlush()));
+    }
+
+    /** Context manifest repository. */
+    get contextManifests(): ContextManifestRepository {
+        return (this._contextManifests ??= new ContextManifestRepository(this.db, () => this.scheduleFlush()));
     }
 
     // ── Private constructor — use ArtifactDB.create() ────────────────────
@@ -375,10 +393,20 @@ export class ArtifactDB {
                 db.run('ALTER TABLE phases ADD COLUMN plan_required INTEGER');
             } catch { /* Column already exists */ }
 
+            // v5: Richer handoff columns for context sharing
+            try { db.run('ALTER TABLE handoffs ADD COLUMN summary TEXT'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE handoffs ADD COLUMN rationale TEXT'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE handoffs ADD COLUMN remaining_work TEXT'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE handoffs ADD COLUMN constraints_json TEXT'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE handoffs ADD COLUMN warnings TEXT'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE handoffs ADD COLUMN changed_files_json TEXT'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE handoffs ADD COLUMN workspace_folder TEXT'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE handoffs ADD COLUMN symbols_touched TEXT'); } catch { /* already exists */ }
+
             // Record the new schema version
             db.run(
                 'INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)',
-                [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: selection_audits, phase_logs, plan_revisions`]
+                [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: richer handoff columns, context_manifests table`]
             );
             log.info(`[ArtifactDB] Schema migrated to v${SCHEMA_VERSION}.`);
         }

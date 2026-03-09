@@ -29,6 +29,7 @@ import { MCPClientBridge } from './mcp/MCPClientBridge.js';
 import { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
 import { AgentRegistry } from './agent-selection/AgentRegistry.js';
+import { ContextPackBuilder } from './context/ContextPackBuilder.js';
 
 import { ServiceContainer } from './ServiceContainer.js';
 import { registerAllCommands, preFlightGitCheck } from './CommandRegistry.js';
@@ -102,6 +103,7 @@ export function activate(context: vscode.ExtensionContext): void {
     const config = vscode.workspace.getConfiguration('coogent');
     const tokenLimit = config.get<number>('tokenLimit', 100_000);
     const workerTimeoutMs = config.get<number>('workerTimeoutMs', 900_000);
+    const contextBudgetTokens = config.get<number>('contextBudgetTokens', 100_000);
 
     // ── Session (deferred) ─────────────────────────────────────────────
     // Session directory and ID are NOT created here. They are materialised
@@ -164,9 +166,19 @@ export function activate(context: vscode.ExtensionContext): void {
     const coogentDir = getCoogentDir(primaryRoot);
     svc.mcpServer = new CoogentMCPServer(primaryRoot);
     svc.mcpBridge = new MCPClientBridge(svc.mcpServer, primaryRoot);
-    svc.mcpServer.init(coogentDir)
+    svc.mcpReady = svc.mcpServer.init(coogentDir)
       .then(async () => {
         log.info('[Coogent] ArtifactDB initialised.');
+
+        // Initialize ContextPackBuilder now that ArtifactDB is available
+        if (svc.contextScoper) {
+          svc.contextPackBuilder = new ContextPackBuilder(
+            svc.mcpServer!.getArtifactDB(),
+            svc.contextScoper.getEncoder(),
+            primaryRoot,
+          );
+          log.info('[Coogent] ContextPackBuilder initialized.');
+        }
 
         // DB wiring is deferred until plan:request materialises the session.
         // At this point we only connect the MCP bridge so it's ready.
@@ -196,7 +208,7 @@ export function activate(context: vscode.ExtensionContext): void {
     log.info('[Coogent] Activity Bar sidebar menu registered.');
 
     // ── Wire events (delegated) ────────────────────────────────────────
-    wireEngine(svc, primaryRoot, workerTimeoutMs, workspaceRoots);
+    wireEngine(svc, primaryRoot, workerTimeoutMs, workspaceRoots, contextBudgetTokens);
     wirePlanner(svc);
 
     // ── Reactive configuration ─────────────────────────────────────────

@@ -9,3 +9,4 @@ export { HandoffRepository } from './HandoffRepository.js';
 export { VerdictRepository } from './VerdictRepository.js';
 export { SessionRepository } from './SessionRepository.js';
 export { AuditRepository } from './AuditRepository.js';
+export { ContextManifestRepository } from './ContextManifestRepository.js';

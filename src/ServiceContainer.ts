@@ -23,6 +23,7 @@ import type { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
 import type { MCPClientBridge } from './mcp/MCPClientBridge.js';
 import type { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
 import type { AgentRegistry } from './agent-selection/AgentRegistry.js';
+import type { ContextPackBuilder } from './context/ContextPackBuilder.js';
 
 /**
  * Centralised container holding all extension service instances.
@@ -56,6 +57,9 @@ export class ServiceContainer {
     mcpBridge: MCPClientBridge | undefined;
     sidebarMenu: SidebarMenuProvider | undefined;
     agentRegistry: AgentRegistry | undefined;
+    contextPackBuilder: ContextPackBuilder | undefined;
+    /** Resolves once MCP server + ArtifactDB are fully initialised. */
+    mcpReady: Promise<void> | undefined;
     workspaceRoots: string[] | undefined;
 
     /** Extension-managed storage base path (from context.storageUri). */
@@ -153,6 +157,8 @@ export class ServiceContainer {
         this.mcpBridge = undefined;
         this.sidebarMenu = undefined;
         this.agentRegistry = undefined;
+        this.contextPackBuilder = undefined;
+        this.mcpReady = undefined;
         this.workspaceRoots = undefined;
         this.storageBase = undefined;
         this.workerOutputAccumulator.clear();
@@ -185,6 +191,8 @@ export type ResolvableServices = {
     mcpBridge: MCPClientBridge;
     sidebarMenu: SidebarMenuProvider;
     agentRegistry: AgentRegistry;
+    contextPackBuilder: ContextPackBuilder;
+    mcpReady: Promise<void>;
     workspaceRoots: string[];
     storageBase: string;
 };
@@ -210,6 +218,8 @@ const RESOLVABLE_KEYS: Record<keyof ResolvableServices, true> = {
     mcpBridge: true,
     sidebarMenu: true,
     agentRegistry: true,
+    contextPackBuilder: true,
+    mcpReady: true,
     workspaceRoots: true,
     storageBase: true,
 };

@@ -77,6 +77,11 @@ export class ContextScoper {
         }
     }
 
+    /** Return the underlying token encoder for shared use by ContextPackBuilder. */
+    getEncoder(): TokenEncoder {
+        return this.encoder;
+    }
+
     /**
      * Update the token limit at runtime (called when VS Code settings change).
      * Takes effect on the next `assemble()` call.

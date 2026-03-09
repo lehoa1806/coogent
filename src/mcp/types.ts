@@ -34,6 +34,22 @@ export interface PhaseHandoff {
     completedAt: number;
     /** Contextual information for downstream phases. */
     nextStepsContext?: string | undefined;
+    /** Structured summary of what was accomplished. */
+    summary?: string | undefined;
+    /** Rationale for decisions made during the phase. */
+    rationale?: string | undefined;
+    /** Remaining work for downstream phases. */
+    remainingWork?: string[] | undefined;
+    /** Constraints discovered during execution. */
+    constraints?: string[] | undefined;
+    /** Warnings for downstream consumers. */
+    warnings?: string[] | undefined;
+    /** JSON-serialized ChangedFileHandoff[] with rich per-file metadata. */
+    changedFilesJson?: string | undefined;
+    /** Workspace folder this phase operated in (multi-root support). */
+    workspaceFolder?: string | undefined;
+    /** Symbols touched during the phase. */
+    symbolsTouched?: string[] | undefined;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -157,4 +173,7 @@ export const MCP_TOOLS = {
     SUBMIT_PHASE_HANDOFF: 'submit_phase_handoff',
     SUBMIT_CONSOLIDATION_REPORT: 'submit_consolidation_report',
     GET_MODIFIED_FILE_CONTENT: 'get_modified_file_content',
+    GET_FILE_SLICE: 'get_file_slice',
+    GET_PHASE_HANDOFF: 'get_phase_handoff',
+    GET_SYMBOL_CONTEXT: 'get_symbol_context',
 } as const;

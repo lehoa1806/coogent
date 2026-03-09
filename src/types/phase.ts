@@ -134,6 +134,11 @@ export interface Phase {
      * Used by the Webview to construct valid `coogent://` resource URIs.
      */
     mcpPhaseId?: string;
+    /**
+     * When true, all context files for this phase receive `full` mode.
+     * Useful for review or architecture phases that need complete file understanding.
+     */
+    requiresFullFileContext?: boolean;
 }
 
 /** Global status of the runbook execution. */
