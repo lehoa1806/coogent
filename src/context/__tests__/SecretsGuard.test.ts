@@ -231,4 +231,74 @@ describe('SecretsGuard', () => {
         expect(result).toContain('[REDACTED]');
         expect(result).not.toContain('AKIA');
     });
+
+    // ── Redact: Environment Variable Secrets ──────────────────────────────
+
+    it('redact() masks DB_PASSWORD=hunter2', () => {
+        const input = 'DB_PASSWORD=hunter2';
+        const result = SecretsGuard.redact(input);
+        expect(result).toBe('DB_PASSWORD=[REDACTED]');
+        expect(result).not.toContain('hunter2');
+    });
+
+    it('redact() masks multiple env secrets', () => {
+        const input = 'DB_PASSWORD=realpass\nSECRET_KEY=s3cr3t\nAPI_SECRET=myApiSec';
+        const result = SecretsGuard.redact(input);
+        expect(result).not.toContain('realpass');
+        expect(result).not.toContain('s3cr3t');
+        expect(result).not.toContain('myApiSec');
+        expect(result).toContain('DB_PASSWORD=[REDACTED]');
+        expect(result).toContain('SECRET_KEY=[REDACTED]');
+        expect(result).toContain('API_SECRET=[REDACTED]');
+    });
+
+    it('redact() preserves placeholder env values', () => {
+        const input = 'DB_PASSWORD=changeme';
+        const result = SecretsGuard.redact(input);
+        expect(result).toBe('DB_PASSWORD=changeme');
+    });
+
+    it('redact() masks quoted env secrets', () => {
+        const input = "SECRET_KEY='production_key_abc'";
+        const result = SecretsGuard.redact(input);
+        expect(result).not.toContain('production_key_abc');
+        expect(result).toContain('[REDACTED]');
+    });
+
+    // ── Redact: High-Entropy Strings ──────────────────────────────────────
+
+    it('redact() masks high-entropy strings', () => {
+        // A string with high Shannon entropy (random-looking, 24+ chars)
+        const highEntropyValue = 'aB3xZ9qW7mK2pL5nR8yT4vU';
+        const input = `secret: "${highEntropyValue}"`;
+        const result = SecretsGuard.redact(input);
+        expect(result).toContain('[REDACTED-HIGH-ENTROPY]');
+        expect(result).not.toContain(highEntropyValue);
+    });
+
+    it('redact() does not flag low-entropy strings in assignments', () => {
+        const input = 'config: "aaaaaaaaaaaaaaaa"';
+        const result = SecretsGuard.redact(input);
+        // Low entropy — should not be redacted
+        expect(result).not.toContain('[REDACTED-HIGH-ENTROPY]');
+        expect(result).toContain('aaaaaaaaaaaaaaaa');
+    });
+
+    // ── Redact: Regression tests ──────────────────────────────────────────
+
+    it('redact() still handles existing API key patterns correctly (regression)', () => {
+        const input = [
+            'key=AKIAIOSFODNN7EXAMPLE',
+            'token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0',
+            'apiKey=AIzaSyC0X1Y2Z3a4B5c6D7E8F9G0H1I2J3K4L5M',
+            '-----BEGIN RSA PRIVATE KEY-----',
+        ].join('\n');
+        const result = SecretsGuard.redact(input);
+        expect(result).not.toContain('AKIAIOSFODNN7EXAMPLE');
+        expect(result).not.toContain('eyJhbGci');
+        expect(result).not.toContain('AIzaSy');
+        expect(result).not.toContain('BEGIN RSA PRIVATE KEY');
+        // All replaced with [REDACTED]
+        expect(result.match(/\[REDACTED\]/g)!.length).toBeGreaterThanOrEqual(4);
+    });
 });

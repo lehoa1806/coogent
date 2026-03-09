@@ -11,8 +11,8 @@ import { CoogentMCPServer, safeTruncate } from '../CoogentMCPServer.js';
 import {
     RESOURCE_URIS,
     MCP_TOOLS,
+    type PhaseHandoff,
 } from '../types.js';
-import type { PhaseHandoff } from '../types.js';
 
 // ─── Test Fixtures ───────────────────────────────────────────────────────────
 
@@ -262,6 +262,76 @@ describe('CoogentMCPServer — Resource Handlers', () => {
         expect(handoff.modifiedFiles).toEqual(['src/foo.ts']);
         expect(handoff.blockers).toEqual([]);
         expect(typeof handoff.completedAt).toBe('number');
+    });
+
+    it('reading phase plan returns sentinel when plan_required=false and handoff exists', async () => {
+        // Mark phase as not requiring a plan (e.g., review agent)
+        server.setPhasePlanRequired(VALID_MASTER_TASK_ID, VALID_PHASE_ID, false);
+
+        // Submit a handoff (marks phase as completed) but no implementation plan
+        await client.callTool({
+            name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                phaseId: VALID_PHASE_ID,
+                decisions: ['Review completed'],
+                modified_files: [],
+                blockers: [],
+            },
+        });
+
+        const result = await client.readResource({
+            uri: RESOURCE_URIS.phasePlan(VALID_MASTER_TASK_ID, VALID_PHASE_ID),
+        });
+
+        expect(result.contents).toHaveLength(1);
+        expect((result.contents[0] as any).text).toBe(
+            'Implementation plan is not applicable for this phase type.'
+        );
+    });
+
+    it('reading phase plan throws when plan_required=true, handoff exists, but no plan', async () => {
+        // Mark phase as requiring a plan (e.g., code editor agent)
+        server.setPhasePlanRequired(VALID_MASTER_TASK_ID, VALID_PHASE_ID, true);
+
+        // Submit a handoff without ever submitting an implementation plan
+        await client.callTool({
+            name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                phaseId: VALID_PHASE_ID,
+                decisions: ['Implemented feature'],
+                modified_files: ['src/foo.ts'],
+                blockers: [],
+            },
+        });
+
+        await expect(
+            client.readResource({
+                uri: RESOURCE_URIS.phasePlan(VALID_MASTER_TASK_ID, VALID_PHASE_ID),
+            })
+        ).rejects.toThrow(/expected but not submitted/);
+    });
+
+    it('reading phase implementation_plan throws when phase has no handoff and no plan', async () => {
+        // Create task entry via a plan at master level (so the task exists)
+        await client.callTool({
+            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                markdown_content: '# Master Plan',
+            },
+        });
+
+        // Create a phase row (via setPhasePlanRequired) but don't submit plan or handoff
+        server.setPhasePlanRequired(VALID_MASTER_TASK_ID, VALID_PHASE_ID_2, true);
+
+        // VALID_PHASE_ID_2 has no handoff and no plan — should throw "not yet available"
+        await expect(
+            client.readResource({
+                uri: RESOURCE_URIS.phasePlan(VALID_MASTER_TASK_ID, VALID_PHASE_ID_2),
+            })
+        ).rejects.toThrow(/Resource not yet available/);
     });
 
     // ── Error Cases ──────────────────────────────────────────────────────

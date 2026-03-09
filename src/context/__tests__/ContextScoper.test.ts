@@ -1,5 +1,10 @@
 jest.mock('vscode', () => ({
-    workspace: { workspaceFolders: [] },
+    workspace: {
+        workspaceFolders: [],
+        getConfiguration: () => ({
+            get: () => false,
+        }),
+    },
 }), { virtual: true });
 
 import * as fs from 'node:fs/promises';
@@ -8,8 +13,7 @@ import * as os from 'node:os';
 import { ContextScoper, CharRatioEncoder } from '../ContextScoper.js';
 import { TiktokenEncoder } from '../TiktokenEncoder.js';
 import { ExplicitFileResolver } from '../FileResolver.js';
-import type { Phase } from '../../types/index.js';
-import { asPhaseId } from '../../types/index.js';
+import { asPhaseId, type Phase } from '../../types/index.js';
 
 describe('ContextScoper', () => {
     let tmpDir: string;

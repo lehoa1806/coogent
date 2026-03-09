@@ -78,8 +78,16 @@ export class SecretsGuard {
 
     // ── Allowlist Cache ────────────────────────────────────────────────────
 
-    /** Cached allowlists keyed by workspace root to avoid re-reading per scan. */
-    private static readonly allowlistCache = new Map<string, Allowlist>();
+    /**
+     * M-10: TTL for cached allowlists (5 minutes). When the TTL expires,
+     * the next `loadAllowlist()` call re-reads the config file from disk,
+     * ensuring changes to `secrets-allowlist.json` are picked up without
+     * requiring an extension reload.
+     */
+    private static readonly CACHE_TTL_MS = 5 * 60 * 1_000;
+
+    /** Cached allowlists keyed by workspace root, with creation timestamps. */
+    private static readonly allowlistCache = new Map<string, { allowlist: Allowlist; cachedAt: number }>();
 
     // ── Allowlist Loader ───────────────────────────────────────────────────
 
@@ -90,7 +98,10 @@ export class SecretsGuard {
      */
     static async loadAllowlist(workspaceRoot: string): Promise<Allowlist> {
         const cached = SecretsGuard.allowlistCache.get(workspaceRoot);
-        if (cached) return cached;
+        // M-10: Honour TTL — re-read config if cache entry has expired
+        if (cached && (Date.now() - cached.cachedAt) < SecretsGuard.CACHE_TTL_MS) {
+            return cached.allowlist;
+        }
 
         const emptyAllowlist: Allowlist = { patterns: [], hashes: new Set() };
         const filePath = path.join(getCoogentDir(workspaceRoot), 'secrets-allowlist.json');
@@ -128,7 +139,7 @@ export class SecretsGuard {
             }
 
             const allowlist: Allowlist = { patterns, hashes };
-            SecretsGuard.allowlistCache.set(workspaceRoot, allowlist);
+            SecretsGuard.allowlistCache.set(workspaceRoot, { allowlist, cachedAt: Date.now() });
             log.info(
                 `[SecretsGuard] Loaded allowlist: ${patterns.length} patterns, ${hashes.size} hashes`
             );
@@ -138,7 +149,7 @@ export class SecretsGuard {
             if (!isNotFound) {
                 log.warn('[SecretsGuard] Failed to load allowlist:', (err as Error).message);
             }
-            SecretsGuard.allowlistCache.set(workspaceRoot, emptyAllowlist);
+            SecretsGuard.allowlistCache.set(workspaceRoot, { allowlist: emptyAllowlist, cachedAt: Date.now() });
             return emptyAllowlist;
         }
     }
@@ -249,8 +260,15 @@ export class SecretsGuard {
      * `[REDACTED]`. Used on worker output streams before broadcasting
      * to the UI and persisting to telemetry logs.
      *
+     * Coverage:
+     * - API key patterns (AWS, OpenAI, GitHub, Slack, GitLab, Stripe, JWT, Google)
+     * - Private key headers (RSA, EC, OPENSSH, PGP, DSA)
+     * - Environment variable secrets (DB_PASSWORD, SECRET_KEY, etc.)
+     * - High-entropy strings in assignment patterns (Shannon entropy > 4.5)
+     *
      * @param content - The raw content (stdout/stderr) to redact.
-     * @returns Content with detected secrets replaced by `[REDACTED]`.
+     * @returns Content with detected secrets replaced by `[REDACTED]` or
+     *          `[REDACTED-HIGH-ENTROPY]`.
      */
     static redact(content: string): string {
         let result = content;
@@ -265,6 +283,36 @@ export class SecretsGuard {
             new RegExp(SecretsGuard.PRIVATE_KEY_RE.source, 'g'),
             '[REDACTED]'
         );
+
+        // 3. Environment variable secrets — replace the value portion only
+        for (const key of SecretsGuard.ENV_SECRET_KEYS) {
+            const envRe = new RegExp(
+                `(${key}\\s*=\\s*['"]?)([^'"\\n\\s]+)`,
+                'gi',
+            );
+            result = result.replace(envRe, (_match, prefix: string, value: string) => {
+                if (SecretsGuard.isPlaceholder(value)) return `${prefix}${value}`;
+                return `${prefix}[REDACTED]`;
+            });
+        }
+
+        // 4. High-entropy strings in assignment-like patterns
+        const assignmentRe = /(?:['"]?\w+['"]?\s*[:=]\s*)['"]([A-Za-z0-9+/=_-]{16,})['"]/g;
+        result = result.replace(assignmentRe, (fullMatch, value: string) => {
+            if (
+                value.length >= SecretsGuard.MIN_ENTROPY_VALUE_LENGTH &&
+                SecretsGuard.shannonEntropy(value) > SecretsGuard.ENTROPY_THRESHOLD
+            ) {
+                // Don't double-redact values already caught by API key patterns
+                const alreadyCaught = SecretsGuard.API_KEY_PATTERNS.some(
+                    ({ regex }) => regex.test(value),
+                );
+                if (!alreadyCaught) {
+                    return fullMatch.replace(value, '[REDACTED-HIGH-ENTROPY]');
+                }
+            }
+            return fullMatch;
+        });
 
         return result;
     }

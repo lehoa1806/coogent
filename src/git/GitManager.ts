@@ -97,7 +97,7 @@ export class GitManager {
             // #51: Dry-run to log what would be cleaned
             const dryRun = await this.gitExec('clean', '-fdn');
             if (dryRun.trim()) {
-                console.warn(`[GitManager] git clean will remove:\n${dryRun}`);
+                log.warn(`[GitManager] git clean will remove:\n${dryRun}`);
             }
             await this.gitExec('clean', '-fd');
 

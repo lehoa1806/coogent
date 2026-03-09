@@ -2,10 +2,36 @@
 // src/engine/SelfHealing.ts — Auto-retry with error feedback injection
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { Phase, HealingAttempt } from '../types/index.js';
-import { asPhaseId, asTimestamp } from '../types/index.js';
+import { asPhaseId, asTimestamp, type Phase, type HealingAttempt } from '../types/index.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import log from '../logger/log.js';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  M-2, P11: Sanitize agent output before injecting into healing prompts.
+//  Guards against prompt injection via self-healing: a compromised agent
+//  could embed instructions in its output that propagate to retry attempts.
+//
+//  Strategy:
+//  1. Truncate to last 4000 chars — limits exposure surface.
+//  2. Strip markdown heading markers (# ## ### etc.) — reduces instruction
+//     injection effectiveness since models weight headings as directives.
+//  3. Wrap in <previous_output>…</previous_output> delimiters — helps the
+//     model distinguish prior data from current instructions.
+// ═══════════════════════════════════════════════════════════════════════════════
+const MAX_OUTPUT_CHARS = 4_000;
+
+function sanitizeAgentOutput(raw: string): string {
+    // 1. Truncate to the last MAX_OUTPUT_CHARS characters
+    const truncated = raw.length > MAX_OUTPUT_CHARS
+        ? `[…truncated ${raw.length - MAX_OUTPUT_CHARS} chars…]\n` + raw.slice(-MAX_OUTPUT_CHARS)
+        : raw;
+
+    // 2. Strip markdown heading markers at the start of lines
+    const stripped = truncated.replace(/^#{1,6}\s/gm, '');
+
+    // 3. Wrap in clearly delimited block
+    return `<previous_output>\n${stripped}\n</previous_output>`;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Self-Healing Controller
@@ -130,13 +156,20 @@ export class SelfHealingController {
 
 
     /**
-     * Get the delay before the next retry (exponential backoff).
+     * Get the delay before the next retry (exponential backoff with jitter).
+     *
+     * Jitter (±20%) prevents correlated retries when multiple DAG-parallel
+     * phases fail around the same time — without it, synchronized retries
+     * can overload the same upstream resource repeatedly.
      */
     getRetryDelay(phaseId: number): number {
         const attempts = this.attempts.get(phaseId) ?? [];
         const retryCount = attempts.length;
         // Exponential backoff: 2s, 4s, 8s, ...
-        return this.baseDelayMs * Math.pow(2, retryCount);
+        const baseDelay = this.baseDelayMs * Math.pow(2, retryCount);
+        // L-9: Add ±20% jitter to prevent correlated retries in DAG parallelism
+        const jitterFactor = 0.8 + Math.random() * 0.4;
+        return Math.round(baseDelay * jitterFactor);
     }
 
     /**
@@ -152,6 +185,10 @@ export class SelfHealingController {
         const retryNumber = attempts.length;
         const totalAllowed = phase.max_retries ?? this.maxRetries;
 
+        // M-2 P11: Sanitize stderr before injection to prevent prompt
+        // injection via self-healing output propagation.
+        const sanitizedStderr = sanitizeAgentOutput(lastAttempt.stderr);
+
         return [
             `## Task (Retry ${retryNumber}/${totalAllowed})`,
             phase.prompt,
@@ -160,9 +197,7 @@ export class SelfHealingController {
             `The previous attempt to complete this task failed with exit code ${lastAttempt.exitCode}.`,
             ``,
             `### Error Output`,
-            '```',
-            lastAttempt.stderr.slice(0, 4096), // Cap error context at 4KB
-            '```',
+            sanitizedStderr,
             ``,
             `## Instructions`,
             `Please analyze the error above and fix the issue. Do NOT repeat the same approach.`,
@@ -180,12 +215,16 @@ export class SelfHealingController {
         const retryNumber = attempts.length;
         const totalAllowed = phase.max_retries ?? this.maxRetries;
 
+        // M-2 P11: Sanitize evaluator context before injection to prevent
+        // prompt injection via self-healing output propagation.
+        const sanitizedContext = sanitizeAgentOutput(evaluatorContext);
+
         return [
             `## Task (Retry ${retryNumber}/${totalAllowed})`,
             phase.prompt,
             ``,
             `## ⚠️ Previous Attempt Failed (Evaluator Feedback)`,
-            evaluatorContext,
+            sanitizedContext,
             ``,
             `## Instructions`,
             `Please analyze the evaluator feedback above and fix the issue.`,

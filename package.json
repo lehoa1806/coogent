@@ -304,18 +304,18 @@
   },
   "lint-staged": {
     "src/**/*.ts": [
-      "eslint --max-warnings=100"
+      "eslint --max-warnings=70"
     ]
   },
   "scripts": {
-    "clean": "rm -rf out",
+    "clean": "rimraf out",
     "prepare": "husky",
     "compile": "node esbuild.js",
     "watch": "npm run compile -- --watch",
     "build:webview": "cd webview-ui && npm run build",
     "dev:webview": "cd webview-ui && npm run dev",
     "build": "npm run compile && npm run build:webview",
-    "lint": "tsc --noEmit && eslint src/ --max-warnings=100",
+    "lint": "tsc --noEmit && eslint src/ --max-warnings=50",
     "pretest": "npm run lint",
     "prepackage": "npm run compile -- --minify && npm run build:webview",
     "package": "npx -y @vscode/vsce package",
@@ -334,6 +334,7 @@
     "husky": "^9.1.7",
     "jest": "^29.7.0",
     "lint-staged": "^16.3.2",
+    "rimraf": "^5.0.10",
     "ts-jest": "^29.4.6",
     "typescript": "^5.4.0"
   },

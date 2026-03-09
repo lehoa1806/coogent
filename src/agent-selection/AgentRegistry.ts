@@ -4,10 +4,50 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as fs from 'node:fs';
+import { z } from 'zod';
 import type { AgentProfile, AgentType, TaskType } from './types.js';
 import registryData from './registry.json';
 import { getWorkersConfigPath } from '../constants/paths.js';
 import log from '../logger/log.js';
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Zod Schema — runtime validation for workspace agent profiles (M-3)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Runtime Zod schema for validating `AgentProfile` objects loaded from
+ * workspace `workers.json`. Ensures malformed or malicious profiles are
+ * rejected before they enter the registry.
+ *
+ * Exported so tests can reuse the same schema for assertions.
+ */
+export const AgentProfileSchema = z.object({
+    id: z.string(),
+    name: z.string(),
+    agent_type: z.enum(['Planner', 'CodeEditor', 'Reviewer', 'TestWriter', 'Researcher', 'Debugger']),
+    system_prompt: z.string(),
+    tags: z.array(z.string()),
+    mode: z.enum([
+        'conservative_patch', 'standard_edit', 'cross_file_edit',
+        'api_review', 'behavior_review', 'constraint_audit',
+        'pattern_lookup', 'symbol_trace', 'implementation_comparison',
+    ]).optional(),
+    handles: z.array(z.string()),
+    reasoning_strengths: z.array(z.string()),
+    skills: z.array(z.string()),
+    preferred_context: z.array(z.string()),
+    requires: z.array(z.string()),
+    tolerates_ambiguity: z.enum(['low', 'medium', 'high']),
+    risk_tolerance: z.enum(['low', 'medium', 'high']),
+    best_for: z.array(z.string()),
+    avoid_when: z.array(z.string()),
+    default_output: z.enum([
+        'patch_with_summary', 'patch_with_notes', 'review_report',
+        'test_patch', 'research_summary', 'debug_report', 'task_graph',
+    ]),
+    self_check_capabilities: z.array(z.string()),
+    allowed_tools: z.array(z.string()).optional(),
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  AgentRegistry
@@ -227,17 +267,45 @@ export class AgentRegistry {
             // vscode module not available (e.g. in test environment) — skip L2
         }
 
-        // ── Level 3: Workspace file ──────────────────────────────────────
+        // ── Level 3: Workspace file (with Zod schema validation — M-3) ──
         const wsPath = getWorkersConfigPath(this.workspaceRoot);
         try {
             const raw = await fs.promises.readFile(wsPath, 'utf-8');
-            const wsProfiles = JSON.parse(raw) as AgentProfile[];
-            for (const p of wsProfiles) {
-                merged.set(p.id, p);
+            let parsed: unknown;
+            try {
+                parsed = JSON.parse(raw);
+            } catch {
+                // Entire file is malformed JSON — warn and fall back to L1+L2 only
+                log.warn(`[AgentRegistry] L3 workspace: workers.json at ${wsPath} is not valid JSON — skipped`);
+                this.profiles = merged;
+                return;
             }
-            log.info(`[AgentRegistry] L3 workspace: loaded ${wsProfiles.length} profiles from ${wsPath}`);
+
+            if (!Array.isArray(parsed)) {
+                log.warn(`[AgentRegistry] L3 workspace: workers.json is not an array — skipped`);
+                this.profiles = merged;
+                return;
+            }
+
+            // Validate each profile individually — skip invalid, keep valid
+            let loaded = 0;
+            for (const entry of parsed) {
+                const result = AgentProfileSchema.safeParse(entry);
+                if (result.success) {
+                    merged.set(result.data.id, result.data as AgentProfile);
+                    loaded++;
+                } else {
+                    const id = typeof entry === 'object' && entry !== null && 'id' in entry
+                        ? String((entry as Record<string, unknown>).id)
+                        : '<unknown>';
+                    log.warn(
+                        `[AgentRegistry] L3 workspace: skipping invalid profile "${id}": ${result.error.message}`,
+                    );
+                }
+            }
+            log.info(`[AgentRegistry] L3 workspace: loaded ${loaded}/${parsed.length} profiles from ${wsPath}`);
         } catch {
-            // File not found or parse error — silently skip
+            // File not found — silently skip
             log.debug(`[AgentRegistry] L3 workspace: no workers.json at ${wsPath} (skipped)`);
         }
 

@@ -177,7 +177,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 `;
 
 /** Current schema version — bump this when adding new migrations. */
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -189,6 +189,12 @@ const FLUSH_DEBOUNCE_MS = 500;
 
 /** File permissions for artifacts.db — owner-only read/write. */
 const DB_FILE_MODE = 0o600;
+
+/** H-2 P6: Minimum interval between backups (5 minutes). */
+const BACKUP_INTERVAL_MS = 300_000;
+
+/** H-2 P6: Maximum number of backup files to retain. */
+const MAX_BACKUPS = 3;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ArtifactDB
@@ -214,6 +220,12 @@ export class ArtifactDB {
     private db: Database;
     private readonly dbPath: string;
 
+    /** Path to the `.lock` file used for multi-instance protection. */
+    private readonly lockFilePath: string;
+
+    /** Cached reference to the process 'exit' handler so it can be removed on close(). */
+    private exitHandler: (() => void) | undefined;
+
     /** Handle for the debounced flush timer (cleared on immediate flush). */
     private flushTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -225,6 +237,9 @@ export class ArtifactDB {
 
     /** S3-2 (OB-4): Rolling max flush duration for observability. */
     private _lastFlushDurationMs = 0;
+
+    /** H-2 P6: Timestamp of last successful backup (epoch ms, 0 = never). */
+    private _lastBackupAt = 0;
 
     // ── Repository accessors (lazy-initialized) ──────────────────────────
     private _tasks: TaskRepository | undefined;
@@ -268,6 +283,7 @@ export class ArtifactDB {
     private constructor(db: Database, dbPath: string) {
         this.db = db;
         this.dbPath = dbPath;
+        this.lockFilePath = dbPath + '.lock';
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -282,6 +298,9 @@ export class ArtifactDB {
      * esbuild bundles everything into `out/extension.js`.
      */
     static async create(dbPath: string): Promise<ArtifactDB> {
+        // ── H-1 P5: Acquire file lock for multi-instance protection ────────
+        await ArtifactDB.acquireLock(dbPath);
+
         // Dynamic import — avoids top-level CJS require() and defers WASM
         // loading until the factory is actually called.
         const initSqlJs = (await import('sql.js')).default as (
@@ -336,6 +355,14 @@ export class ArtifactDB {
             // Column already exists — ignore
         }
 
+        // Plan requirement detection: add plan_required flag to phases
+        // NULL = unknown (legacy), 1 = required, 0 = not required
+        try {
+            db.run('ALTER TABLE phases ADD COLUMN plan_required INTEGER');
+        } catch {
+            // Column already exists — ignore
+        }
+
         // S4-9: Record schema version for migration tracking
         try {
             const versionRows = db.exec('SELECT MAX(version) as v FROM schema_version');
@@ -356,10 +383,102 @@ export class ArtifactDB {
 
         const instance = new ArtifactDB(db, dbPath);
 
+        // Register process exit handler to clean up lock file on crash
+        instance.exitHandler = () => instance.disposeLock();
+        process.on('exit', instance.exitHandler);
+
         // Initial flush to persist the schema to disk (async — safe in factory)
         await instance.flushAsync();
 
         return instance;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  H-1 P5: File Lock — Multi-Instance Protection
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Attempt to acquire an exclusive `.lock` file for the given DB path.
+     * Writes the current process PID for debugging. If a lock already exists,
+     * checks whether the holding PID is still alive; stale locks from dead
+     * processes are automatically cleaned up and retried.
+     *
+     * @throws Error if another live VS Code process holds the lock.
+     */
+    private static async acquireLock(dbPath: string): Promise<void> {
+        const lockPath = dbPath + '.lock';
+
+        // Ensure parent directory exists (lock file lives alongside the DB)
+        await fsp.mkdir(path.dirname(lockPath), { recursive: true });
+
+        try {
+            // 'wx' = exclusive create: fails if file already exists
+            const fd = await fsp.open(lockPath, 'wx');
+            await fd.writeFile(String(process.pid));
+            await fd.close();
+            // Lock acquired
+        } catch (err: unknown) {
+            const code = (err as NodeJS.ErrnoException).code;
+            if (code !== 'EEXIST') {
+                throw err; // Unexpected error — propagate
+            }
+
+            // Lock file exists — check if the holder is still alive
+            let holderPid: number | null = null;
+            try {
+                const content = await fsp.readFile(lockPath, 'utf-8');
+                holderPid = parseInt(content.trim(), 10);
+            } catch {
+                // Lock file disappeared between our check and read — retry
+                await ArtifactDB.acquireLock(dbPath);
+                return;
+            }
+
+            if (Number.isNaN(holderPid) || holderPid <= 0) {
+                // Corrupt lock file — delete and retry
+                await fsp.unlink(lockPath).catch(() => { });
+                await ArtifactDB.acquireLock(dbPath);
+                return;
+            }
+
+            // Check if the PID is still alive (signal 0 = existence check)
+            let isAlive = false;
+            try {
+                process.kill(holderPid, 0);
+                isAlive = true;
+            } catch {
+                // Process is dead — stale lock
+            }
+
+            if (isAlive) {
+                throw new Error(
+                    'Another VS Code window is using this workspace\'s Coogent database. ' +
+                    'Only one instance can write at a time.'
+                );
+            }
+
+            // Stale lock from a dead process — clean up and retry
+            log.info(`[ArtifactDB] Removing stale lock file (PID ${holderPid} is dead)`);
+            await fsp.unlink(lockPath).catch(() => { });
+            await ArtifactDB.acquireLock(dbPath);
+        }
+    }
+
+    /**
+     * Remove the `.lock` file and unregister the process exit handler.
+     * Safe to call multiple times (idempotent).
+     */
+    private disposeLock(): void {
+        try {
+            fs.unlinkSync(this.lockFilePath);
+        } catch {
+            // Lock file already removed or never created — safe to ignore
+        }
+
+        if (this.exitHandler) {
+            process.removeListener('exit', this.exitHandler);
+            this.exitHandler = undefined;
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -381,6 +500,9 @@ export class ArtifactDB {
         }
         this.flushSync();
         this.db.close();
+
+        // H-1 P5: Release the lock file on close
+        this.disposeLock();
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -439,6 +561,9 @@ export class ArtifactDB {
                 if (this._lastFlushDurationMs > 200) {
                     log.warn(`ArtifactDB: flush took ${this._lastFlushDurationMs.toFixed(0)}ms`);
                 }
+
+                // H-2 P6: Trigger periodic backup after successful flush
+                await this.backupIfDue();
             } catch (err) {
                 this._isDirty = true;
                 this._lastFlushDurationMs = performance.now() - start;
@@ -470,6 +595,58 @@ export class ArtifactDB {
             fs.renameSync(tmpPath, this.dbPath);
         } catch (err) {
             log.error(`ArtifactDB: flushSync failed: ${err}`);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  H-2 P6: Periodic Database Backup
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Create a timestamped backup of the database file if enough time has
+     * elapsed since the last backup. Best-effort — failures are logged as
+     * warnings but never thrown.
+     *
+     * Backup uses atomic copy (write to `.tmp` then rename) to prevent
+     * partial backups. At most `MAX_BACKUPS` are retained; the oldest is
+     * deleted when a new one is created beyond the limit.
+     */
+    private async backupIfDue(): Promise<void> {
+        const now = Date.now();
+        if (now - this._lastBackupAt < BACKUP_INTERVAL_MS) {
+            return;
+        }
+
+        try {
+            const dbDir = path.dirname(this.dbPath);
+            const dbBase = path.basename(this.dbPath);
+            const backupName = `${dbBase}.backup-${now}`;
+            const backupPath = path.join(dbDir, backupName);
+            const tmpBackupPath = backupPath + '.tmp';
+
+            // Atomic copy: write to tmp first, then rename
+            await fsp.copyFile(this.dbPath, tmpBackupPath);
+            await fsp.rename(tmpBackupPath, backupPath);
+
+            this._lastBackupAt = now;
+            log.info(`[ArtifactDB] Backup created: ${backupName}`);
+
+            // Prune old backups beyond MAX_BACKUPS
+            const entries = await fsp.readdir(dbDir);
+            const backupPrefix = `${dbBase}.backup-`;
+            const backups = entries
+                .filter(f => f.startsWith(backupPrefix))
+                .sort(); // Lexicographic sort — timestamps sort correctly
+
+            if (backups.length > MAX_BACKUPS) {
+                const toDelete = backups.slice(0, backups.length - MAX_BACKUPS);
+                for (const old of toDelete) {
+                    await fsp.unlink(path.join(dbDir, old)).catch(() => { });
+                }
+            }
+        } catch (err) {
+            // Backups are best-effort — never throw
+            log.warn(`[ArtifactDB] Backup failed: ${err}`);
         }
     }
 }

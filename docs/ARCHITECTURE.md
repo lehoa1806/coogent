@@ -11,10 +11,12 @@
 3. [DAG-Aware Parallel Scheduling](#dag-aware-parallel-scheduling)
 4. [In-Process MCP Server](#in-process-mcp-server)
 5. [Context Diffusion Pipeline](#context-diffusion-pipeline)
-6. [Agent Registry & Selection Pipeline](#agent-registry--selection-pipeline)
-7. [Persistence & Crash Recovery](#persistence--crash-recovery)
-8. [Git Sandboxing](#git-sandboxing)
-9. [Tech Stack](#tech-stack)
+6. [Pluggable Evaluator System (V2)](#pluggable-evaluator-system-v2)
+7. [Prompt Compiler Pipeline](#prompt-compiler-pipeline)
+8. [Agent Registry & Selection Pipeline](#agent-registry--selection-pipeline)
+9. [Persistence & Crash Recovery](#persistence--crash-recovery)
+10. [Git Sandboxing](#git-sandboxing)
+11. [Tech Stack](#tech-stack)
 
 ---
 
@@ -258,6 +260,27 @@ The `ContextScoper` prepares minimal file payloads for workers:
 | V1 (current, default) | `TiktokenEncoder` | Model-accurate via `js-tiktoken` WASM (`cl100k_base`), lazy-initialized |
 | V1 (fallback) | `CharRatioEncoder` | Fast, dependency-free (~4 chars/token) — used if tiktoken init fails |
 
+### PromptTemplateManager
+
+`PromptTemplateManager` (~440 lines) dynamically discovers the workspace's tech stack from manifest files and injects contextual variables into the Planner's system prompt.
+
+- **Tech Stack Discovery**: Scans root-level manifests (`package.json`, `requirements.txt`, `pyproject.toml`, `go.mod`, `Cargo.toml`) — no directory walking
+- **Framework Detection**: Maps dependencies to known frameworks (React, Next.js, Django, FastAPI, Gin, Actix, etc.)
+- **Prompt Injection**: Inserts `## Workspace Tech Stack` and `## Available Worker Skills` sections into the planner prompt before the `## User Request` marker
+- **Graceful Fallback**: Missing or unreadable manifests are silently skipped; returns sensible defaults
+
+### TokenPruner
+
+`TokenPruner` (~210 lines) implements heuristic strategies for reducing over-budget context payloads to fit within the configured token limit.
+
+**3-tier pruning strategy (in priority order):**
+
+1. **Drop discovered files**: Remove non-explicit (auto-discovered) files by size, largest first
+2. **Strip function bodies**: Keep signatures only, using brace-counting heuristic for C-family and Swift
+3. **Truncate large files**: Apply a per-file token cap to remaining entries
+
+The pruner is best-effort — callers must check `PruneResult.withinBudget` after pruning.
+
 ---
 
 ## Pluggable Evaluator System (V2)
@@ -285,6 +308,66 @@ Phases may define a `evaluators: EvaluatorType[]` array for multi-evaluator asse
 - **Argument Blacklist**: Interpreter binaries (`node`, `python`, `python3`) block `-e`, `-c`, `--eval`, `exec` flags to prevent arbitrary code execution
 - **Strict Timeouts**: All evaluator child processes enforce configurable timeouts
 - **`execFile`**: All subprocess calls use `execFile` (no shell interpolation)
+
+---
+
+## Prompt Compiler Pipeline
+
+The `src/prompt-compiler/` subsystem (23 items) transforms raw user prompts into fully assembled, auditable master prompts for the Planner agent.
+
+### Architecture
+
+```
+Raw User Prompt → PlannerPromptCompiler.compile(prompt, options)
+                          │
+                          ├─ Step 1: RequirementNormalizer.normalize(prompt)
+                          │   └─ Extracts scope, autonomy prefs, constraints
+                          │
+                          ├─ Step 2: TaskClassifier.classify(normalizedSpec)
+                          │   └─ Determines TaskFamily (feature, bug-fix, refactor, etc.)
+                          │
+                          ├─ Step 3: TemplateLoader.load(taskFamily)
+                          │   └─ Loads family-specific prompt template
+                          │
+                          ├─ Step 4: RepoFingerprinter.fingerprint(workspaceRoot)
+                          │   └─ Scans repo structure, tech stack, conventions
+                          │
+                          ├─ Step 5: PolicyEngine.evaluate(normalizedSpec)
+                          │   └─ Applies policy modules (safety, style, scope)
+                          │
+                          └─ Step 6: assemblePrompt() → CompiledPrompt
+                              └─ Merges skeleton, template, fingerprint, policies
+```
+
+### Modules
+
+| Module | Lines | Purpose |
+|---|---|---|
+| `PlannerPromptCompiler` | ~325 | Top-level orchestrator, runs all pipeline stages |
+| `RequirementNormalizer` | ~271 | Extracts structured `NormalizedTaskSpec` from raw text |
+| `TaskClassifier` | ~139 | Maps normalized specs to `TaskFamily` enum |
+| `TemplateLoader` | ~86 | Loads Markdown templates from `templates/` (inlined at build time) |
+| `RepoFingerprinter` | ~623 | Scans workspace for tech stack, file patterns, conventions |
+| `PolicyEngine` | ~217 | Evaluates and applies policy modules to the prompt |
+| `types.ts` | ~189 | Shared type definitions (`TaskFamily`, `RepoFingerprint`, `CompiledPrompt`, etc.) |
+| `templates.ts` | ~25 | Template registry mapping task families to template IDs |
+
+### Prompt Templates
+
+8 family-specific Markdown templates in `prompt-compiler/templates/`:
+
+| Template | Task Family |
+|---|---|
+| `feature-implementation.md` | New feature development |
+| `bug-fix.md` | Bug investigation and fixing |
+| `refactor.md` | Code refactoring |
+| `migration.md` | Framework/version migration |
+| `documentation-synthesis.md` | Documentation writing |
+| `review-only.md` | Code review and analysis |
+| `repo-analysis.md` | Repository structure analysis |
+| `orchestration-skeleton.md` | Multi-phase task orchestration |
+
+Templates are **inlined at build time** via esbuild's text loader to ensure portability in the bundled VSIX.
 
 ---
 
@@ -396,7 +479,7 @@ The tab sends `workers:request` → receives `workers:loaded` via the standard I
 
 ### Write-Ahead Log (WAL) Pattern
 
-Every mutation follows this sequence (within `.coogent/ipc/<session-id>/`):
+Every mutation follows this sequence (within `storageBase/ipc/<sessionDirName>/`, rooted under extension-managed storage):
 
 1. **Acquire Lock** — `.lock` file via `wx` flag (O_CREAT | O_EXCL)
 2. **Write WAL Entry** — Snapshot to `.wal.json`

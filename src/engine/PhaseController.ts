@@ -4,18 +4,17 @@
 // Sprint 1 Extract: Phase Control cluster from Engine.ts.
 // Handles editPhase, pausePhase, stopPhase, restartPhase, reviewDiff, skipPhase.
 
-import { EngineState, EngineEvent, asTimestamp } from '../types/index.js';
-import type { Phase, PhaseId } from '../types/index.js';
-import type { Engine } from './Engine.js';
+import { EngineState, EngineEvent, asTimestamp, type Phase, type PhaseId } from '../types/index.js';
+import type { EngineInternals } from './EngineInternals.js';
 
 /**
  * Extracted phase-control logic from Engine.
  *
  * Each method receives a phaseId and operates on the runbook through
- * the Engine's public accessors. FSM transitions and events are delegated.
+ * the EngineInternals contract. FSM transitions and events are delegated.
  */
 export class PhaseController {
-    constructor(private readonly engine: Engine) { }
+    constructor(private readonly engine: EngineInternals) { }
 
     /**
      * Edit a phase's prompt, files, or criteria before execution.

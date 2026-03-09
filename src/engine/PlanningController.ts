@@ -5,21 +5,20 @@
 // Manages IDLE → PLANNING → PLAN_REVIEW → PARSING lifecycle.
 
 import log from '../logger/log.js';
-import { EngineState, EngineEvent } from '../types/index.js';
-import type { Runbook } from '../types/index.js';
-import type { Engine } from './Engine.js';
+import { EngineState, EngineEvent, type Runbook } from '../types/index.js';
+import type { EngineInternals } from './EngineInternals.js';
 
 /**
  * Extracted planning-flow logic from Engine.
  *
  * All FSM transitions and event emissions are delegated back to the owning
- * Engine via its public API so the FSM remains the single source of truth.
+ * Engine via the EngineInternals contract so the FSM remains the single source of truth.
  */
 export class PlanningController {
     private planDraft: Runbook | null = null;
     private planPrompt = '';
 
-    constructor(private readonly engine: Engine) { }
+    constructor(private readonly engine: EngineInternals) { }
 
     // ── Accessors (used by Engine delegation) ──────────────────────────────
 

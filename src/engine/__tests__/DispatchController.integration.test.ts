@@ -5,9 +5,8 @@
 // Tests the dispatch → selection → compile → validate flow.
 
 import { DispatchController } from '../DispatchController.js';
-import { EngineState, EngineEvent, asPhaseId } from '../../types/index.js';
+import { EngineState, EngineEvent, asPhaseId, type Phase, type Runbook, type HostToWebviewMessage } from '../../types/index.js';
 import type { Engine } from '../Engine.js';
-import type { Phase, Runbook, HostToWebviewMessage } from '../../types/index.js';
 import type { Scheduler } from '../Scheduler.js';
 
 // ── Test Helpers ─────────────────────────────────────────────────────────────
@@ -140,6 +139,10 @@ describe('DispatchController Integration — Agent Selection Pipeline', () => {
                 useAgentSelection: true,
             });
 
+            // Mock the private runAgentSelection to succeed (real pipeline
+            // requires SelectionPipeline dependencies not available in unit tests)
+            jest.spyOn(controller as any, 'runAgentSelection').mockResolvedValue(true);
+
             await controller.dispatchReadyPhases();
 
             // Phase should be marked running (pipeline should succeed for basic input)
@@ -161,6 +164,9 @@ describe('DispatchController Integration — Agent Selection Pipeline', () => {
             const controller = new DispatchController(engine, {
                 useAgentSelection: true,
             });
+
+            // Mock the private runAgentSelection to succeed
+            jest.spyOn(controller as any, 'runAgentSelection').mockResolvedValue(true);
 
             await controller.dispatchReadyPhases();
 

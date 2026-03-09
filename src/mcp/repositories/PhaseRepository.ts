@@ -42,6 +42,22 @@ export class PhaseRepository {
         return row.implementation_plan ?? undefined;
     }
 
+    /** Set whether an implementation plan is required for a phase. */
+    upsertPlanRequired(masterTaskId: string, phaseId: string, required: boolean): void {
+        this.db.run(
+            'INSERT OR IGNORE INTO tasks (master_task_id) VALUES (?)',
+            [masterTaskId]
+        );
+        this.db.run(
+            `INSERT INTO phases (master_task_id, phase_id, plan_required)
+             VALUES (?, ?, ?)
+             ON CONFLICT(master_task_id, phase_id)
+             DO UPDATE SET plan_required = excluded.plan_required`,
+            [masterTaskId, phaseId, required ? 1 : 0]
+        );
+        this.scheduleFlush();
+    }
+
     /** List all phase IDs belonging to a given master task. */
     listIds(masterTaskId: string): string[] {
         const stmt = this.db.prepare(

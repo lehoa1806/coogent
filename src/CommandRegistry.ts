@@ -432,8 +432,8 @@ export function registerAllCommands(
 
             // Service container
             channel.appendLine('── Registered Services ──');
-            const initOrder = svc.getInitOrder();
-            channel.appendLine(`Services (${initOrder.length}): ${initOrder.join(', ')}`);
+            const active = svc.getActiveServices();
+            channel.appendLine(`Services (${active.length}): ${active.join(', ')}`);
             channel.appendLine('');
 
             // Session info

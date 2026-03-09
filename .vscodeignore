@@ -2,12 +2,7 @@
 src/**
 tsconfig.json
 esbuild.js
-esbuild-webview.js
 jest.config.js
-
-# ── Webview source (bundled into webview-ui/dist/) ────────────────────────────
-webview-ui/main.js
-webview-ui/modules/**
 
 # ── Svelte webview source (bundled into webview-ui/dist/) ──────────────
 # NOTE: webview-ui/dist/** is NOT listed — it must be in the VSIX.

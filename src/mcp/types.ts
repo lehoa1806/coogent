@@ -45,6 +45,13 @@ export interface PhaseArtifacts {
     implementationPlan?: string | undefined;
     /** Handoff data produced when the phase completes. */
     handoff?: PhaseHandoff | undefined;
+    /**
+     * Whether an implementation plan is required for this phase.
+     * `true` = agent produces code/tests (plan expected),
+     * `false` = agent produces reports/summaries (plan not applicable),
+     * `undefined` = unknown (legacy data — treated as `true`).
+     */
+    planRequired?: boolean | undefined;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

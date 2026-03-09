@@ -122,12 +122,24 @@ export class MCPResourceHandler {
 
                 switch (parsed.resource) {
                     case 'implementation_plan':
-                        if (!phase.implementationPlan) {
-                            throw new Error(
-                                `Resource not yet available: implementation plan has not been submitted for phase ${parsed.phaseId} of task ${parsed.masterTaskId}.`
-                            );
+                        if (phase.planRequired === false) {
+                            // Agent type doesn't produce implementation plans
+                            content = 'Implementation plan is not applicable for this phase type.';
+                        } else if (!phase.implementationPlan) {
+                            if (phase.handoff) {
+                                // Phase completed without submitting a plan — plan was expected
+                                throw new Error(
+                                    `Implementation plan was expected but not submitted for phase ${parsed.phaseId}.`
+                                );
+                            } else {
+                                // Phase still in progress
+                                throw new Error(
+                                    `Resource not yet available: implementation plan has not been submitted for phase ${parsed.phaseId} of task ${parsed.masterTaskId}.`
+                                );
+                            }
+                        } else {
+                            content = phase.implementationPlan;
                         }
-                        content = phase.implementationPlan;
                         break;
                     case 'handoff':
                         if (!phase.handoff) {
