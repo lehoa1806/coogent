@@ -8,11 +8,11 @@ jest.mock('vscode', () => ({
 }), { virtual: true });
 
 import { Scheduler } from '../engine/Scheduler';
+import { EventEmitter } from 'events';
 import { SelfHealingController } from '../engine/SelfHealing';
 import { TokenPruner, PrunableEntry } from '../context/TokenPruner';
 import { ExplicitFileResolver } from '../context/FileResolver';
-import type { Phase } from '../types/index';
-import { asPhaseId } from '../types/index';
+import { asPhaseId, type Phase } from '../types/index';
 import { CharRatioEncoder } from '../context/ContextScoper';
 import { EvaluationOrchestrator } from '../engine/EvaluationOrchestrator';
 
@@ -173,11 +173,17 @@ describe('SelfHealingController — retry logic and exponential backoff', () => 
     });
 
     it('calculates exponential backoff delay based on attempt count', () => {
-        expect(healer.getRetryDelay(1)).toBe(1000); // 0 attempts → base
-        healer.recordFailure(1, 1, 'err');
-        expect(healer.getRetryDelay(1)).toBe(2000); // 1 attempt → 2x
-        healer.recordFailure(1, 1, 'err');
-        expect(healer.getRetryDelay(1)).toBe(4000); // 2 attempts → 4x
+        // Mock Math.random to produce deterministic jitter (0.5 → factor 1.0)
+        const randomSpy = jest.spyOn(Math, 'random').mockReturnValue(0.5);
+        try {
+            expect(healer.getRetryDelay(1)).toBe(1000); // 0 attempts → base
+            healer.recordFailure(1, 1, 'err');
+            expect(healer.getRetryDelay(1)).toBe(2000); // 1 attempt → 2x
+            healer.recordFailure(1, 1, 'err');
+            expect(healer.getRetryDelay(1)).toBe(4000); // 2 attempts → 4x
+        } finally {
+            randomSpy.mockRestore();
+        }
     });
 
     it('builds an augmented healing prompt with retry count and error history', () => {
@@ -258,7 +264,6 @@ describe('ExplicitFileResolver — context_files passthrough', () => {
 
 describe('EvaluationOrchestrator — applyVerdictInPlace persistence (F-1)', () => {
     function createMockEngine(runbook: any) {
-        const { EventEmitter } = require('events');
         const engine = new EventEmitter();
         engine.getRunbook = jest.fn().mockReturnValue(runbook);
         engine.getState = jest.fn().mockReturnValue('EXECUTING_WORKER');

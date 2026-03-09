@@ -115,7 +115,7 @@ export class TaskRepository {
         const phases = new Map<string, PhaseArtifacts>();
 
         const phaseStmt = this.db.prepare(
-            'SELECT phase_id, implementation_plan FROM phases WHERE master_task_id = ?'
+            'SELECT phase_id, implementation_plan, plan_required FROM phases WHERE master_task_id = ?'
         );
         phaseStmt.bind([masterTaskId]);
 
@@ -123,9 +123,13 @@ export class TaskRepository {
             const phaseRow = phaseStmt.getAsObject() as {
                 phase_id: string;
                 implementation_plan: string | null;
+                plan_required: number | null;
             };
             phases.set(phaseRow.phase_id, {
                 implementationPlan: phaseRow.implementation_plan ?? undefined,
+                planRequired: phaseRow.plan_required === null
+                    ? undefined
+                    : phaseRow.plan_required === 1,
             });
         }
         phaseStmt.free();

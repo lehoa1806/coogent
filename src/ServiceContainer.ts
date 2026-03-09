@@ -27,6 +27,11 @@ import type { AgentRegistry } from './agent-selection/AgentRegistry.js';
  * Replaces the 18 module-level `let` variables that previously lived in
  * `extension.ts`. Each field is mutable (`undefined` before init, cleared
  * on deactivation) so the existing lifecycle semantics are preserved.
+ *
+ * **Lifecycle**: Services are assigned directly via public property access
+ * during `activate()` in `extension.ts` (e.g., `svc.engine = new Engine(...)`).
+ * Use `resolve()` for type-safe access with runtime initialisation checks,
+ * or `isRegistered()` to test before access.
  */
 export class ServiceContainer {
     stateManager: StateManager | undefined;
@@ -64,41 +69,20 @@ export class ServiceContainer {
      */
     readonly sandboxBranchCreatedForSession = new Set<string>();
 
-    /** Insertion-order tracker for debugging activation sequence. */
-    private readonly initOrder: (keyof ResolvableServices)[] = [];
-
     /**
-     * Register a service instance with initialization-order tracking.
-     * Throws if the service key has already been registered (prevents
-     * accidental double-init bugs that silently replace instances).
-     *
-     * @example
-     *   container.register('engine', new Engine(...));
-     */
-    register<K extends keyof ResolvableServices>(key: K, instance: ResolvableServices[K]): void {
-        if (this[key] !== undefined) {
-            throw new Error(
-                `[ServiceContainer] Service '${key}' is already registered. ` +
-                `Call releaseAll() before re-registering.`
-            );
-        }
-        (this as any)[key] = instance;
-        this.initOrder.push(key);
-    }
-
-    /**
-     * Check whether a service has been registered.
+     * Check whether a service has been initialised.
      */
     isRegistered<K extends keyof ResolvableServices>(key: K): boolean {
         return this[key] !== undefined;
     }
 
     /**
-     * Get the initialization order of registered services.
-     * Useful for debugging activation sequence issues.
+     * Return the list of service keys that are currently initialised.
+     * Useful for diagnostics (e.g., `coogent.dumpState`).
      */
-    getInitOrder(): ReadonlyArray<keyof ResolvableServices> {
-        return [...this.initOrder];
+    getActiveServices(): (keyof ResolvableServices)[] {
+        const keys = Object.keys(RESOLVABLE_KEYS) as (keyof ResolvableServices)[];
+        return keys.filter(k => this[k] !== undefined);
     }
 
     /**
@@ -149,7 +133,6 @@ export class ServiceContainer {
         this.workerOutputAccumulator.clear();
         this.workerStderrAccumulator.clear();
         this.sandboxBranchCreatedForSession.clear();
-        this.initOrder.length = 0;
     }
 }
 
@@ -177,4 +160,27 @@ export type ResolvableServices = {
     agentRegistry: AgentRegistry;
     workspaceRoots: string[];
     storageBase: string;
+};
+
+/** Key set used by `getActiveServices()` to enumerate resolvable properties. */
+const RESOLVABLE_KEYS: Record<keyof ResolvableServices, true> = {
+    stateManager: true,
+    engine: true,
+    adkController: true,
+    contextScoper: true,
+    logger: true,
+    gitManager: true,
+    gitSandbox: true,
+    outputRegistry: true,
+    plannerAgent: true,
+    sessionManager: true,
+    handoffExtractor: true,
+    consolidationAgent: true,
+    currentSessionDir: true,
+    mcpServer: true,
+    mcpBridge: true,
+    sidebarMenu: true,
+    agentRegistry: true,
+    workspaceRoots: true,
+    storageBase: true,
 };

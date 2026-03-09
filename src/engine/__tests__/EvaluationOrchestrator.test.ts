@@ -13,8 +13,7 @@ jest.mock('vscode', () => ({
 
 import { EvaluationOrchestrator } from '../EvaluationOrchestrator.js';
 import { SelfHealingController } from '../SelfHealing.js';
-import type { Phase } from '../../types/index.js';
-import { asPhaseId } from '../../types/index.js';
+import { asPhaseId, type Phase } from '../../types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Mock factories
@@ -113,5 +112,85 @@ describe('EvaluationOrchestrator — F-1 audit fix: parallel mode persistence', 
                 evaluatedAt: expect.any(Number),
             })
         );
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  handleWorkerFailed retry tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('EvaluationOrchestrator — handleWorkerFailed retry logic', () => {
+    let engine: ReturnType<typeof makeMockEngine>;
+    let healer: SelfHealingController;
+    let orchestrator: EvaluationOrchestrator;
+
+    beforeEach(() => {
+        engine = makeMockEngine();
+        healer = new SelfHealingController({ maxRetries: 3, baseDelayMs: 100 });
+        orchestrator = new EvaluationOrchestrator(engine, healer, null);
+    });
+
+    it('should auto-retry on timeout when retries are available', async () => {
+        const phase = makePhase({ max_retries: 2 });
+        const runbook = { phases: [phase], status: 'running' };
+        engine.getRunbook.mockReturnValue(runbook);
+
+        await orchestrator.handleWorkerFailed(phase, true, 'timeout');
+
+        // Phase should be set to 'pending' for retry, not 'failed'
+        expect(phase.status).toBe('pending');
+        // Should schedule a healing timer
+        expect(engine.addHealingTimer).toHaveBeenCalledTimes(1);
+        // Should NOT emit PHASE_STATUS with 'failed'
+        expect(engine.emitUIMessage).not.toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'PHASE_STATUS',
+                payload: expect.objectContaining({ status: 'failed' }),
+            })
+        );
+        // Should transition to ERROR_PAUSED (via WORKER_TIMEOUT) as intermediate state
+        expect(engine.transition).toHaveBeenCalledWith('WORKER_TIMEOUT');
+    });
+
+    it('should go to ERROR_PAUSED when max retries exhausted on timeout', async () => {
+        const phase = makePhase({ max_retries: 0 });
+        const runbook = { phases: [phase], status: 'running' };
+        engine.getRunbook.mockReturnValue(runbook);
+
+        await orchestrator.handleWorkerFailed(phase, true, 'timeout');
+
+        // Phase should be failed
+        expect(phase.status).toBe('failed');
+        // Should NOT schedule a healing timer
+        expect(engine.addHealingTimer).not.toHaveBeenCalled();
+        // Should transition via WORKER_TIMEOUT
+        expect(engine.transition).toHaveBeenCalledWith('WORKER_TIMEOUT');
+        // Runbook should be paused
+        expect(runbook.status).toBe('paused_error');
+    });
+
+    it('should auto-retry on crash when retries are available', async () => {
+        const phase = makePhase({ max_retries: 2 });
+        const runbook = { phases: [phase], status: 'running' };
+        engine.getRunbook.mockReturnValue(runbook);
+
+        await orchestrator.handleWorkerFailed(phase, true, 'crash');
+
+        expect(phase.status).toBe('pending');
+        expect(engine.addHealingTimer).toHaveBeenCalledTimes(1);
+        expect(engine.transition).toHaveBeenCalledWith('WORKER_CRASH');
+    });
+
+    it('should dispatch ready phases when non-last worker fails without retries', async () => {
+        const phase = makePhase({ max_retries: 0 });
+        const runbook = { phases: [phase], status: 'running' };
+        engine.getRunbook.mockReturnValue(runbook);
+
+        await orchestrator.handleWorkerFailed(phase, false, 'crash');
+
+        expect(phase.status).toBe('failed');
+        // isLastWorker=false, so should call dispatchReadyPhases instead of transition
+        expect(engine.transition).not.toHaveBeenCalled();
+        expect(engine.dispatchReadyPhases).toHaveBeenCalled();
     });
 });

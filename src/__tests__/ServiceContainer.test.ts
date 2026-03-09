@@ -126,53 +126,47 @@ describe('ServiceContainer', () => {
         expect(svc.sandboxBranchCreatedForSession.has(dirName)).toBe(true);
     });
 
-    // ── register() / resolve() typed DI ───────────────────────────────
-    it('register() stores and resolve() returns the instance', () => {
+    // ── isRegistered() / resolve() / getActiveServices() ───────────────
+    it('resolve() returns the instance after direct assignment', () => {
         const mockEngine = { fake: 'engine' } as any;
-        svc.register('engine', mockEngine);
+        svc.engine = mockEngine;
         expect(svc.resolve('engine')).toBe(mockEngine);
     });
 
-    it('register() throws on double registration', () => {
-        svc.register('engine', {} as any);
-        expect(() => svc.register('engine', {} as any)).toThrow(
-            /already registered/
-        );
-    });
-
-    it('isRegistered() returns false before and true after registration', () => {
+    it('isRegistered() returns false before and true after direct assignment', () => {
         expect(svc.isRegistered('engine')).toBe(false);
-        svc.register('engine', {} as any);
+        svc.engine = {} as any;
         expect(svc.isRegistered('engine')).toBe(true);
     });
 
-    it('getInitOrder() tracks insertion order', () => {
-        svc.register('stateManager', {} as any);
-        svc.register('engine', {} as any);
-        svc.register('adkController', {} as any);
+    it('getActiveServices() lists only initialised services', () => {
+        expect(svc.getActiveServices()).toEqual([]);
 
-        expect(svc.getInitOrder()).toEqual([
-            'stateManager',
-            'engine',
-            'adkController',
-        ]);
+        svc.stateManager = {} as any;
+        svc.engine = {} as any;
+        svc.adkController = {} as any;
+
+        const active = svc.getActiveServices();
+        expect(active).toContain('stateManager');
+        expect(active).toContain('engine');
+        expect(active).toContain('adkController');
+        expect(active).toHaveLength(3);
     });
 
-    it('releaseAll() clears initOrder', () => {
-        svc.register('engine', {} as any);
-        expect(svc.getInitOrder()).toHaveLength(1);
+    it('releaseAll() clears getActiveServices()', () => {
+        svc.engine = {} as any;
+        expect(svc.getActiveServices()).toHaveLength(1);
 
         svc.releaseAll();
-        expect(svc.getInitOrder()).toHaveLength(0);
+        expect(svc.getActiveServices()).toHaveLength(0);
     });
 
-    it('register() works again after releaseAll()', () => {
-        svc.register('engine', {} as any);
+    it('direct assignment works again after releaseAll()', () => {
+        svc.engine = {} as any;
         svc.releaseAll();
 
-        // Should not throw — re-registration is allowed after release
         const newEngine = { fresh: true } as any;
-        svc.register('engine', newEngine);
+        svc.engine = newEngine;
         expect(svc.resolve('engine')).toBe(newEngine);
     });
 });

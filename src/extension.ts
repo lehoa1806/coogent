@@ -42,6 +42,15 @@ import { getCoogentDir, getSessionDir } from './constants/paths.js';
 //  Shared Services
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/**
+ * Module-level singleton — services are assigned directly during `activate()`.
+ *
+ * **Reactivation risk (hidden coupling #1)**:  Because this lives at module
+ * scope, `svc` survives `deactivate()` → `activate()` cycles if VS Code
+ * reloads the extension host without fully evicting the cached module.
+ * `releaseAll()` clears all service fields, but any external references
+ * captured during the previous activation will become stale.
+ */
 const svc = new ServiceContainer();
 
 // Re-export preFlightGitCheck for backward compatibility

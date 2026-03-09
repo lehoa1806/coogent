@@ -5,12 +5,9 @@
 // Handles dispatchReadyPhases, advanceSchedule, stall watchdog, resumePending.
 
 import log from '../logger/log.js';
-import { EngineState, EngineEvent, asTimestamp } from '../types/index.js';
-import type { Phase } from '../types/index.js';
-import type { Engine } from './Engine.js';
-import { SelectionPipeline } from '../agent-selection/index.js';
-import { SubtaskSpecBuilder } from '../agent-selection/index.js';
-import type { SubtaskDraft } from '../agent-selection/index.js';
+import { EngineState, EngineEvent, asTimestamp, type Phase } from '../types/index.js';
+import type { EngineInternals } from './EngineInternals.js';
+import { SelectionPipeline, SubtaskSpecBuilder, type SubtaskDraft } from '../agent-selection/index.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import type { TelemetryLogger } from '../logger/TelemetryLogger.js';
 
@@ -53,7 +50,7 @@ export class DispatchController {
     private readonly enableShadowMode: boolean;
 
     constructor(
-        private readonly engine: Engine,
+        private readonly engine: EngineInternals,
         options?: DispatchControllerOptions,
     ) {
         this.useAgentSelection = options?.useAgentSelection ?? false;

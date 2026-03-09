@@ -5,12 +5,12 @@
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import type { Phase, ConversationSettings } from '../types/index.js';
-import { DEFAULT_CONVERSATION_SETTINGS } from '../types/index.js';
+import { DEFAULT_CONVERSATION_SETTINGS, type Phase, type ConversationSettings } from '../types/index.js';
 import { getPidDir } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 import type { AgentBackendProvider } from './AgentBackendProvider.js';
+import { INJECTION_PATTERNS } from './injection-patterns.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  S1-2 (EDGE-2): Worker output size cap
@@ -18,17 +18,6 @@ import type { AgentBackendProvider } from './AgentBackendProvider.js';
 
 /** Maximum worker output size in bytes (default 10 MB). Configurable via setting. */
 const MAX_WORKER_OUTPUT_BYTES = 10 * 1024 * 1024;
-
-/** S1-4 (SEC-3): Prompt injection phrases to detect in buildInjectionPrompt. */
-const INJECTION_PATTERNS: RegExp[] = [
-    /ignore\s+(all\s+)?previous\s+instructions/i,
-    /ignore\s+(all\s+)?prior\s+instructions/i,
-    /disregard\s+(all\s+)?previous/i,
-    /^system:\s/im,
-    /you\s+are\s+now\s+(?:a|an|in)\s+/i,
-    /\[SYSTEM\]/i,
-    /\<\|im_start\|\>/i,
-];
 
 export interface ADKSessionOptions {
     /** Start with zero context (no history, no files). */
@@ -94,6 +83,7 @@ export interface ADKControllerEvents {
     'worker:crash': (phaseId: number, error: Error) => void;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export declare interface ADKController {
     on<K extends keyof ADKControllerEvents>(event: K, listener: ADKControllerEvents[K]): this;
     emit<K extends keyof ADKControllerEvents>(event: K, ...args: Parameters<ADKControllerEvents[K]>): boolean;
@@ -114,6 +104,7 @@ export declare interface ADKController {
  *
  * See TDD §4 for the full specification.
  */
+// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
 export class ADKController extends EventEmitter {
     private readonly activeWorkers = new Map<number, WorkerHandle>();
     private readonly activePids = new Set<number>();

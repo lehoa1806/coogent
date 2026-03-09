@@ -46,13 +46,13 @@ The Webview is the Mission Control dashboard — a sandboxed iframe with its own
 
 ```bash
 # One-time build
-npm run compile:webview
+npm run build:webview
 
 # Watch mode (recommended for development)
-npm run watch:webview
+npm run dev:webview
 ```
 
-This bundles `webview-ui/main.js` and its 11 module files into `webview-ui/dist/` using `esbuild-webview.js`.
+This bundles the Svelte 5 webview application into `webview-ui/dist/` using Vite.
 
 ### 3. Full Build
 
@@ -68,7 +68,7 @@ npm run build
 3. In the new window, open a test workspace
 4. `Cmd+Shift+P` → **Coogent: Open Mission Control**
 
-> **Tip**: Run `npm run watch` and `npm run watch:webview` in separate terminals alongside F5 for hot reloading.
+> **Tip**: Run `npm run watch` and `npm run dev:webview` in separate terminals alongside F5 for hot reloading.
 
 ---
 
@@ -133,7 +133,7 @@ If MCP resources or tools return unexpected results:
 ## Running Tests
 
 ```bash
-npm test                           # All 14 suites, 100+ tests
+npm test                           # All 57 suites, 692 tests
 npx jest --verbose                 # With detailed output
 npx jest src/state                 # Run specific module tests
 npx jest --watch                   # Watch mode
@@ -145,18 +145,30 @@ Tests live in `__tests__/` directories alongside their source modules:
 
 | Suite | Location | Covers |
 |---|---|---|
-| StateManager | `src/state/__tests__/` | Persistence, WAL, crash recovery |
+| StateManager | `src/state/__tests__/` | Persistence, WAL, crash recovery, encryption |
 | StateManager.race | `src/state/__tests__/` | Concurrent writes, stale locks |
+| SchemaSync | `src/state/__tests__/` | Schema migration |
 | Engine | `src/engine/__tests__/` | FSM transitions, parallel DAG |
 | Scheduler | `src/engine/__tests__/` | DAG scheduling, cycle detection |
 | SelfHealing | `src/engine/__tests__/` | Retry counting, prompt augmentation |
+| DispatchController | `src/engine/__tests__/` | Phase dispatch integration |
+| EvaluationOrchestrator | `src/engine/__tests__/` | Evaluator orchestration |
 | ADKController | `src/adk/__tests__/` | Spawn/terminate, timeout race |
+| OutputBuffer | `src/adk/__tests__/` | Batched output buffering |
 | ContextScoper | `src/context/__tests__/` | Assembly, budget enforcement |
 | ASTFileResolver | `src/context/__tests__/` | Import crawling, cycle detection |
 | TokenPruner | `src/context/__tests__/` | 3-tier pruning |
+| SecretsGuard | `src/context/__tests__/` | Secret detection, redaction, allowlist |
+| RepoMap | `src/context/__tests__/` | Repository structure mapping |
+| HandoffExtractor | `src/context/__tests__/` | Phase handoff extraction |
 | GitManager | `src/git/__tests__/` | Commit/rollback (mocked) |
+| GitSandboxManager | `src/git/__tests__/` | Sandbox branch, multi-repo |
 | TelemetryLogger | `src/logger/__tests__/` | JSONL logging |
-| MissionControlPanel | `src/webview/__tests__/` | IPC validation (17 cases) |
+| MissionControlPanel | `src/webview/__tests__/` | IPC validation |
+| AgentRegistry | `src/agent-selection/__tests__/` | Profile loading, cascading config |
+| AgentSelector | `src/agent-selection/__tests__/` | Scoring, hard filter, fallback |
+| PromptCompiler | `src/prompt-compiler/__tests__/` | Full pipeline compilation (6 suites) |
+| CoogentMCPServer | `src/mcp/__tests__/` | MCP resources, tools, ArtifactDB |
 | Integration | `src/__tests__/` | End-to-end flow |
 | Pillar 2+3 | `src/__tests__/` | Scheduler + SelfHealing + Evaluator |
 
@@ -173,18 +185,27 @@ Tests live in `__tests__/` directories alongside their source modules:
 
 ```
 src/
-├── extension.ts          ← Activation entry point (874 lines)
-├── types/index.ts        ← Full type system: FSM, IPC, ADK contracts (796 lines)
-├── state/                ← StateManager (WAL, mutex, crash recovery)
-├── engine/               ← Engine, Scheduler, SelfHealing
+├── extension.ts          ← Activation entry point (~300 lines)
+├── ServiceContainer.ts   ← Typed registry for all service instances
+├── CommandRegistry.ts    ← VS Code command registrations
+├── EngineWiring.ts       ← Engine ↔ ADK ↔ MCP event connections
+├── PlannerWiring.ts      ← PlannerAgent ↔ Engine event connections
+├── types/                ← Full type system: FSM, IPC, ADK contracts
+├── constants/            ← Storage paths, file names, boundary definitions
+├── state/                ← StateManager (WAL, mutex, crash recovery, encryption)
+├── engine/               ← Engine, Scheduler, SelfHealing, DispatchController, EvaluationOrchestrator
 ├── adk/                  ← ADKController, AntigravityADKAdapter, OutputBuffer, OutputBufferRegistry
-├── context/              ← ContextScoper, FileResolver, TokenPruner
-├── evaluators/           ← CompilerEvaluator (exit_code, regex, toolchain, test_suite)
+├── context/              ← ContextScoper, FileResolver, TokenPruner, PromptTemplateManager, SecretsGuard, RepoMap
+├── evaluators/           ← EvaluatorRegistryV2 (exit_code, regex, toolchain, test_suite)
+├── prompt-compiler/      ← PlannerPromptCompiler, PolicyEngine, TaskClassifier, RepoFingerprinter, RequirementNormalizer, TemplateLoader
+├── agent-selection/      ← AgentRegistry, AgentSelector, SelectionPipeline, WorkerPromptCompiler, PromptValidator
+├── mcp/                  ← CoogentMCPServer, ArtifactDB, MCPResourceHandler, PluginLoader
 ├── git/                  ← GitManager (execFile), GitSandboxManager (VS Code Git API)
 ├── consolidation/        ← ConsolidationAgent (post-execution reports)
 ├── session/              ← SessionManager (history, search, pruning)
 ├── planner/              ← PlannerAgent (objective → runbook decomposition)
 ├── logger/               ← TelemetryLogger (JSONL), log.ts, LogStream.ts
+├── utils/                ← Shared utility functions
 └── webview/              ← MissionControlPanel, ipcValidator
 ```
 
@@ -224,11 +245,17 @@ src/
 ## Building for Production
 
 ```bash
+# Lint + type-check
+npm run lint
+
 # Production builds (minified)
 npm run prepackage
 
 # Create .vsix extension package
 npm run package
+
+# Full CI pipeline (lint + test + webview test + audit)
+npm run ci
 ```
 
 The `.vsix` file can be installed in any Antigravity IDE instance via:

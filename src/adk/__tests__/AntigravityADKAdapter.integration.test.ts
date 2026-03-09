@@ -140,7 +140,7 @@ describe('AntigravityADKAdapter — File IPC Integration', () => {
             }
 
             const stat = await fs.stat(responseFile);
-            expect(stat.size).toBe(accumulated.length);
+            expect(stat.size).toBe(Buffer.byteLength(accumulated, 'utf-8'));
 
             const content = await fs.readFile(responseFile, 'utf-8');
             expect(content).toContain('Chunk 3 — final');

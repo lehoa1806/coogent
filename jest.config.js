@@ -6,6 +6,7 @@ module.exports = {
     testPathIgnorePatterns: ['/node_modules/', '/webview-ui/'],
     moduleNameMapper: {
         '^(\\.{1,2}/.*)\\.js$': '$1',
+        '^vscode$': '<rootDir>/src/__mocks__/vscode.js',
     },
     transform: {
         '^.+\\.ts$': 'ts-jest',

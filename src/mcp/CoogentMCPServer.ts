@@ -8,14 +8,12 @@
 import * as path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
-import type {
-    TaskState,
-    PhaseHandoff,
-    ParsedResourceURI,
-} from './types.js';
 import {
     URI_MASTER_TASK_REGEX,
     URI_PHASE_ID_REGEX,
+    type TaskState,
+    type PhaseHandoff,
+    type ParsedResourceURI,
 } from './types.js';
 import { ArtifactDB } from './ArtifactDB.js';
 import { MCPResourceHandler } from './MCPResourceHandler.js';
@@ -280,6 +278,14 @@ export class CoogentMCPServer {
      */
     upsertWorkerOutput(masterTaskId: string, phaseId: string, output: string, stderr: string = ''): void {
         this.db.phases.upsertOutput(masterTaskId, phaseId, output, stderr);
+    }
+
+    /**
+     * Mark whether an implementation plan is required for a phase.
+     * Called by EngineWiring after agent selection resolves the profile.
+     */
+    setPhasePlanRequired(masterTaskId: string, phaseId: string, required: boolean): void {
+        this.db.phases.upsertPlanRequired(masterTaskId, phaseId, required);
     }
 
     /**

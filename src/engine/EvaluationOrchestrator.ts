@@ -5,9 +5,8 @@
 // Handles onWorkerExited, evaluatePhaseResult, applyVerdict, applyVerdictInPlace.
 
 import log from '../logger/log.js';
-import { EngineEvent, asTimestamp } from '../types/index.js';
-import type { Phase, EvaluationResult } from '../types/index.js';
-import type { Engine } from './Engine.js';
+import { EngineEvent, asTimestamp, type Phase, type EvaluationResult } from '../types/index.js';
+import type { EngineInternals } from './EngineInternals.js';
 import type { SelfHealingController } from './SelfHealing.js';
 import type { EvaluatorRegistryV2 } from '../evaluators/EvaluatorRegistry.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
@@ -23,7 +22,7 @@ export class EvaluationOrchestrator {
     private masterTaskId: string = '';
 
     constructor(
-        private readonly engine: Engine,
+        private readonly engine: EngineInternals,
         private readonly healer: SelfHealingController,
         private readonly evaluatorRegistry: EvaluatorRegistryV2 | null,
     ) { }
@@ -318,7 +317,7 @@ export class EvaluationOrchestrator {
 
     /**
      * Called when a worker times out or crashes (not a normal exit).
-     * Marks the phase as failed and transitions FSM if this is the last worker.
+     * Attempts self-healing retries before falling back to ERROR_PAUSED.
      *
      * B-1 fix: Serialization is handled by the Engine's workerExitLock.
      * This method is called from within that lock.
@@ -331,6 +330,47 @@ export class EvaluationOrchestrator {
         const runbook = this.engine.getRunbook();
         if (!runbook) return;
 
+        const reasonLabel = reason === 'timeout' ? 'timed out' : 'crashed';
+        const syntheticStderr = `Worker ${reasonLabel} (phase ${phase.id}).`;
+
+        // Record the failure for self-healing context
+        this.healer.recordFailure(phase.id, -1, syntheticStderr, phase.mcpPhaseId);
+
+        // ── Self-healing retry path ──────────────────────────────────────
+        if (this.healer.canRetryWithPhase(phase)) {
+            const augmentedPrompt = this.healer.buildHealingPrompt(phase);
+            const delay = this.healer.getRetryDelay(phase.id);
+            const attempt = this.healer.getAttemptCount(phase.id);
+
+            this.engine.emitUIMessage({
+                type: 'LOG_ENTRY',
+                payload: {
+                    timestamp: asTimestamp(),
+                    level: 'warn',
+                    message: `Phase ${phase.id} ${reasonLabel} — auto-retrying (attempt ${attempt}, delay ${delay}ms)…`,
+                },
+            });
+
+            if (isLastWorker) {
+                const event = reason === 'timeout'
+                    ? EngineEvent.WORKER_TIMEOUT
+                    : EngineEvent.WORKER_CRASH;
+                this.engine.transition(event);
+                this.engine.stopStallWatchdog();
+            }
+
+            phase.status = 'pending';
+            await this.engine.persist();
+
+            const timer = setTimeout(() => {
+                this.engine.removeHealingTimer(timer);
+                this.engine.emit('phase:heal', phase, augmentedPrompt);
+            }, delay);
+            this.engine.addHealingTimer(timer);
+            return;
+        }
+
+        // ── Max retries exhausted — surface to user ──────────────────────
         phase.status = 'failed';
 
         this.engine.emitUIMessage({
@@ -355,7 +395,7 @@ export class EvaluationOrchestrator {
             type: 'ERROR',
             payload: {
                 code: reason === 'timeout' ? 'WORKER_TIMEOUT' : 'WORKER_CRASH',
-                message: `Worker for phase ${phase.id} ${reason === 'timeout' ? 'timed out' : 'crashed'}.`,
+                message: `Worker for phase ${phase.id} ${reasonLabel} after ${this.healer.getAttemptCount(phase.id)} attempts.`,
                 phaseId: phase.id,
             },
         });

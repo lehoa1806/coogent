@@ -10,17 +10,17 @@ import {
     RUNBOOK_FILENAME,
     asTimestamp,
 } from '../types/index.js';
-import type { Engine } from './Engine.js';
+import type { EngineInternals } from './EngineInternals.js';
 import type { StateManager } from '../state/StateManager.js';
 
 /**
  * Extracted session lifecycle logic from Engine.
  *
  * Manages runbook loading/validation, session reset, and session switching.
- * All FSM transitions are delegated back to the owning Engine.
+ * All FSM transitions are delegated back via the EngineInternals contract.
  */
 export class SessionController {
-    constructor(private readonly engine: Engine) { }
+    constructor(private readonly engine: EngineInternals) { }
 
     /**
      * Load and validate a runbook from disk.

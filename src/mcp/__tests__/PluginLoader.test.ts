@@ -2,6 +2,21 @@
 // PluginLoader.test.ts — Tests for MCP plugin discovery and lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
+jest.mock('vscode', () => ({
+    workspace: {
+        getConfiguration: () => ({
+            get: (_key: string, defaultValue: unknown) => {
+                // requirePluginApproval → false (auto-approve in tests)
+                if (_key === 'requirePluginApproval') return false;
+                return defaultValue;
+            },
+        }),
+    },
+    window: {
+        showWarningMessage: jest.fn().mockResolvedValue('Allow'),
+    },
+}), { virtual: true });
+
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';

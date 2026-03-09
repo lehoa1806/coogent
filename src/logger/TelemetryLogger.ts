@@ -6,6 +6,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { EngineState } from '../types/index.js';
 import { getTelemetryLogDir, ENGINE_LOG_FILE } from '../constants/paths.js';
+import { SecretsGuard } from '../context/SecretsGuard.js';
 import log from './log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -159,12 +160,17 @@ export class TelemetryLogger {
         stream: 'stdout' | 'stderr',
         chunk: string
     ): Promise<void> {
+        // SEC: Redact detected secrets before persisting to telemetry logs.
+        // SecretsGuard.scan() may warn without blocking — redaction ensures
+        // leaked secrets are never written to disk in plain text.
+        const sanitizedChunk = SecretsGuard.redact(chunk);
+
         await this.appendPhaseEntry(phaseId, {
             timestamp: new Date().toISOString(),
             level: stream === 'stderr' ? 'warn' : 'debug',
             category: 'worker',
-            message: `[${stream}] ${chunk.slice(0, 200)}${chunk.length > 200 ? '...' : ''}`,
-            data: { stream, chunk },
+            message: `[${stream}] ${sanitizedChunk.slice(0, 200)}${sanitizedChunk.length > 200 ? '...' : ''}`,
+            data: { stream, chunk: sanitizedChunk },
         });
     }
 

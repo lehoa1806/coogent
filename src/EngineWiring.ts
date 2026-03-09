@@ -4,8 +4,7 @@
 // R1 refactor: Extracted from extension.ts activate() (lines 487–666, 741–786).
 
 import { randomUUID } from 'node:crypto';
-import { asTimestamp, EngineState } from './types/index.js';
-import type { Phase, HostToWebviewMessage } from './types/index.js';
+import { asTimestamp, EngineState, EngineEvent, type Phase, type HostToWebviewMessage } from './types/index.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
 import { RESOURCE_URIS } from './mcp/types.js';
 import log from './logger/log.js';
@@ -426,9 +425,18 @@ async function executePhase(
 ): Promise<void> {
     const { engine, contextScoper, adkController, logger, handoffExtractor, currentSessionDir } = svc;
 
-    // Guard against stale healing timer fires after abort/reset
-    if (engine?.getState() !== EngineState.EXECUTING_WORKER) {
-        log.warn(`[Coogent] Skipping phase ${phase.id} execution — engine not in EXECUTING_WORKER (state: ${engine?.getState()})`);
+    // Guard against stale healing timer fires after abort/reset.
+    // Allow ERROR_PAUSED → RETRY transition for self-healing retries
+    // (e.g. timeout/crash auto-retry fires after FSM reached ERROR_PAUSED).
+    const engineState = engine?.getState();
+    if (engineState === EngineState.ERROR_PAUSED) {
+        const retryResult = engine?.transition(EngineEvent.RETRY);
+        if (retryResult === null) {
+            log.warn(`[Coogent] Skipping phase ${phase.id} execution — RETRY transition from ERROR_PAUSED rejected`);
+            return;
+        }
+    } else if (engineState !== EngineState.EXECUTING_WORKER) {
+        log.warn(`[Coogent] Skipping phase ${phase.id} execution — engine not in EXECUTING_WORKER (state: ${engineState})`);
         return;
     }
 
@@ -544,6 +552,13 @@ async function executePhase(
             const agentProfile = await svc.agentRegistry.getBestAgent(phase.required_skills ?? []);
             log.info(`[EngineWiring] Phase ${phase.id}: routed to agent '${agentProfile.id}' (${agentProfile.name})`);
             workerSystemContext = `## Worker Role: ${agentProfile.name}\n${agentProfile.system_prompt}\n\n`;
+
+            // Derive plan requirement from agent's default_output
+            const NON_PLAN_OUTPUTS = new Set(['review_report', 'research_summary', 'debug_report', 'task_graph']);
+            const planRequired = !NON_PLAN_OUTPUTS.has(agentProfile.default_output);
+            if (svc.mcpServer && phase.mcpPhaseId) {
+                svc.mcpServer.setPhasePlanRequired(masterTaskId, phase.mcpPhaseId, planRequired);
+            }
         } catch (err) {
             log.warn(`[EngineWiring] Phase ${phase.id}: AgentRegistry lookup failed, using default prompt`, err);
         }
