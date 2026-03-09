@@ -40,6 +40,7 @@ const PROJECT_MANIFEST_FILES: readonly string[] = [
     'go.mod',
     'pyproject.toml',
     'requirements.txt',
+    'README.md',
 ];
 
 export class RepoFingerprinter {
@@ -60,6 +61,20 @@ export class RepoFingerprinter {
 
     // ═════════════════════════════════════════════════════════════════════════
     //  Public API
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Return the resolved effective project root path.
+     * Must be called after {@link fingerprint} has been invoked at least once.
+     * Falls back to the raw workspace root if resolution has not yet run.
+     */
+    async getEffectiveRoot(): Promise<string> {
+        await this.resolveEffectiveRoot();
+        return (this.effectiveRoot ?? this.rootUri).fsPath;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    //  Fingerprint Generation
     // ═════════════════════════════════════════════════════════════════════════
 
     /**
@@ -95,7 +110,7 @@ export class RepoFingerprinter {
             const highRiskSurfaces = await this.detectHighRiskSurfaces();
 
             // ── Multi-repo: profile each discovered subproject ───────────
-            if (this.discoveredSubprojects.length > 1) {
+            if (this.discoveredSubprojects.length >= 1) {
                 const subprojects = await this.profileAllSubprojects();
 
                 // Union top-level arrays across all subprojects for
@@ -211,19 +226,12 @@ export class RepoFingerprinter {
             // readDirectory failed — fall through to default.
         }
 
-        if (candidates.length === 1) {
-            // Single subproject — use existing single-project behavior.
-            this.effectiveRoot = candidates[0].uri;
-            this.detectedSubdirectory = candidates[0].name;
-            this.templateManager = new PromptTemplateManager(
-                candidates[0].uri.fsPath,
-            );
-        } else if (candidates.length > 1) {
-            // Multiple subprojects — store them all.
-            // Use the first as the effective root for base detection,
-            // but subprojects will each be profiled independently.
+        if (candidates.length >= 1) {
+            // One or more child projects found while root has no manifest.
+            // Always treat as multi-repo so each subproject gets its own profile.
             this.effectiveRoot = candidates[0].uri;
             this.discoveredSubprojects = candidates;
+            this.detectedSubdirectory = candidates.length === 1 ? candidates[0].name : undefined;
             this.templateManager = new PromptTemplateManager(
                 candidates[0].uri.fsPath,
             );

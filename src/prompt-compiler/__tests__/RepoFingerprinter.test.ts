@@ -307,12 +307,14 @@ describe('RepoFingerprinter', () => {
 
         const result = await fingerprinter.fingerprint();
 
-        expect(result.detectedSubdirectory).toBe('coogent');
-        expect(result.primaryLanguages).toContain('typescript');
-        expect(result.testStack).toContain('vitest');
-        expect(result.lintStack).toContain('eslint');
-        expect(result.buildStack).toContain('esbuild');
-        expect(result.packageManager).not.toBe('unknown');
+        // Single subproject in wrapper dir → multi-repo with 1 subproject
+        expect(result.workspaceType).toBe('multi-repo');
+        expect(result.subprojects).toBeDefined();
+        expect(result.subprojects).toHaveLength(1);
+        expect(result.subprojects![0].name).toBe('coogent');
+        expect(result.subprojects![0].testStack).toContain('vitest');
+        expect(result.subprojects![0].lintStack).toContain('eslint');
+        expect(result.subprojects![0].buildStack).toContain('esbuild');
     });
 
     it('should NOT set detectedSubdirectory when root has a manifest', async () => {
@@ -437,8 +439,8 @@ describe('RepoFingerprinter', () => {
         expect(result.packageManager).toBe('mixed');
     });
 
-    it('should NOT produce subprojects when only one child dir has a manifest', async () => {
-        // This should fall back to single-subproject behavior
+    it('should produce subprojects even when only one child dir has a manifest', async () => {
+        // Single subproject in a wrapper dir → still multi-repo with 1 entry
         setupSubdirProject('coogent', {
             'package.json': JSON.stringify({
                 devDependencies: { typescript: '^5.0.0' },
@@ -447,9 +449,22 @@ describe('RepoFingerprinter', () => {
 
         const result = await fingerprinter.fingerprint();
 
-        expect(result.detectedSubdirectory).toBe('coogent');
-        expect(result.subprojects).toBeUndefined();
-        expect(result.workspaceType).not.toBe('multi-repo');
+        expect(result.workspaceType).toBe('multi-repo');
+        expect(result.subprojects).toBeDefined();
+        expect(result.subprojects).toHaveLength(1);
+        expect(result.subprojects![0].name).toBe('coogent');
+    });
+
+    it('should expose the effective root via getEffectiveRoot()', async () => {
+        setupSubdirProject('my-app', {
+            'package.json': JSON.stringify({
+                dependencies: { express: '^4.0.0' },
+            }),
+        });
+
+        const effectiveRoot = await fingerprinter.getEffectiveRoot();
+
+        expect(effectiveRoot).toBe('/tmp/test-workspace/my-app');
     });
 });
 
