@@ -8,6 +8,7 @@ export type {
     AutonomyPreferences,
     NormalizedTaskSpec,
     RepoFingerprint,
+    SubprojectProfile,
     PolicyModule,
     CompilationManifest,
     CompiledPrompt,

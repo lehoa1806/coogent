@@ -345,4 +345,168 @@ describe('RepoFingerprinter', () => {
         expect(result.detectedSubdirectory).toBeUndefined();
         expect(result.primaryLanguages).toEqual([]);
     });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Multi-repo detection
+    // ─────────────────────────────────────────────────────────────────────────
+
+    it('should detect multi-repo when multiple child dirs have manifests', async () => {
+        setupMultiRepoProject({
+            noir: {
+                'package.json': JSON.stringify({
+                    devDependencies: {
+                        typescript: '^5.0.0',
+                        jest: '^29.0.0',
+                        eslint: '^8.0.0',
+                        esbuild: '^0.18.0',
+                    },
+                }),
+            },
+            pyoir: {
+                'package.json': JSON.stringify({
+                    devDependencies: {
+                        typescript: '^5.0.0',
+                        vitest: '^1.0.0',
+                        prettier: '^3.0.0',
+                    },
+                }),
+            },
+        });
+
+        const result = await fingerprinter.fingerprint();
+
+        expect(result.workspaceType).toBe('multi-repo');
+        expect(result.subprojects).toBeDefined();
+        expect(result.subprojects).toHaveLength(2);
+        expect(result.workspaceFolders).toEqual(expect.arrayContaining(['noir', 'pyoir']));
+    });
+
+    it('should populate per-subproject profiles with independent tech stacks', async () => {
+        setupMultiRepoProject({
+            noir: {
+                'package.json': JSON.stringify({
+                    devDependencies: {
+                        typescript: '^5.0.0',
+                        jest: '^29.0.0',
+                        eslint: '^8.0.0',
+                    },
+                }),
+            },
+            pyoir: {
+                'package.json': JSON.stringify({
+                    devDependencies: {
+                        typescript: '^5.0.0',
+                        vitest: '^1.0.0',
+                        prettier: '^3.0.0',
+                    },
+                }),
+            },
+        });
+
+        const result = await fingerprinter.fingerprint();
+        const noir = result.subprojects!.find(s => s.name === 'noir')!;
+        const pyoir = result.subprojects!.find(s => s.name === 'pyoir')!;
+
+        expect(noir.testStack).toContain('jest');
+        expect(noir.lintStack).toContain('eslint');
+        expect(pyoir.testStack).toContain('vitest');
+        expect(pyoir.lintStack).toContain('prettier');
+    });
+
+    it('should union top-level arrays across all subprojects', async () => {
+        setupMultiRepoProject({
+            alpha: {
+                'package.json': JSON.stringify({
+                    devDependencies: { jest: '^29.0.0', eslint: '^8.0.0' },
+                }),
+            },
+            beta: {
+                'package.json': JSON.stringify({
+                    devDependencies: { vitest: '^1.0.0', prettier: '^3.0.0' },
+                }),
+            },
+        });
+
+        const result = await fingerprinter.fingerprint();
+
+        // Top-level should be union of all subprojects
+        expect(result.testStack).toContain('jest');
+        expect(result.testStack).toContain('vitest');
+        expect(result.lintStack).toContain('eslint');
+        expect(result.lintStack).toContain('prettier');
+        expect(result.packageManager).toBe('mixed');
+    });
+
+    it('should NOT produce subprojects when only one child dir has a manifest', async () => {
+        // This should fall back to single-subproject behavior
+        setupSubdirProject('coogent', {
+            'package.json': JSON.stringify({
+                devDependencies: { typescript: '^5.0.0' },
+            }),
+        });
+
+        const result = await fingerprinter.fingerprint();
+
+        expect(result.detectedSubdirectory).toBe('coogent');
+        expect(result.subprojects).toBeUndefined();
+        expect(result.workspaceType).not.toBe('multi-repo');
+    });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Multi-repo Test Helper
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Register a mock file system with multiple projects in separate subdirectories.
+ *
+ * @param repos — Map from directory name to its files (relative paths to content).
+ */
+function setupMultiRepoProject(repos: Record<string, Record<string, string>>): void {
+    const repoNames = Object.keys(repos);
+
+    mockFs.readFile.mockImplementation(async (uri: { fsPath: string }) => {
+        for (const [repoName, files] of Object.entries(repos)) {
+            for (const [key, content] of Object.entries(files)) {
+                if (uri.fsPath.endsWith(`${repoName}/${key}`)) {
+                    return encode(content);
+                }
+            }
+        }
+        throw new Error(`File not found: ${uri.fsPath}`);
+    });
+
+    mockFs.stat.mockImplementation(async (uri: { fsPath: string }) => {
+        // Check if it's a file inside a repo
+        for (const [repoName, files] of Object.entries(repos)) {
+            for (const key of Object.keys(files)) {
+                if (uri.fsPath.endsWith(`${repoName}/${key}`)) {
+                    return { type: 1 /* FileType.File */ };
+                }
+            }
+            // Check if it's the repo directory itself
+            if (uri.fsPath.endsWith(repoName)) {
+                return { type: 2 /* FileType.Directory */ };
+            }
+        }
+        throw new Error(`File not found: ${uri.fsPath}`);
+    });
+
+    mockFs.readDirectory.mockImplementation(async (uri: { fsPath: string }) => {
+        // Root listing: return all repo directories
+        if (uri.fsPath.endsWith('test-workspace')) {
+            return repoNames.map(name => [name, 2 /* FileType.Directory */]);
+        }
+        // Repo listing: return file entries for that repo
+        for (const [repoName, files] of Object.entries(repos)) {
+            if (uri.fsPath.endsWith(repoName)) {
+                return Object.keys(files).map(f => {
+                    const basename = f.split('/').pop()!;
+                    return [basename, 1 /* FileType.File */];
+                });
+            }
+        }
+        return [];
+    });
+}
+
