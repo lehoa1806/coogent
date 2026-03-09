@@ -3,15 +3,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { EventEmitter } from 'node:events';
-import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
-import { asPhaseId, type Runbook } from '../types/index.js';
+import type { Runbook } from '../types/index.js';
 import { PromptTemplateManager, type TechStackInfo } from '../context/PromptTemplateManager.js';
 import type { AgentBackendProvider } from '../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle } from '../adk/ADKController.js';
 import log from '../logger/log.js';
-import { COOGENT_DIR, IPC_DIR, IPC_RESPONSE_FILE } from '../constants/paths.js';
 import { PlannerPromptCompiler, RepoFingerprinter, type CompilationManifest } from '../prompt-compiler/index.js';
+import { WorkspaceScanner } from './WorkspaceScanner.js';
+import { RunbookParser } from './RunbookParser.js';
+import { PlannerRetryManager } from './PlannerRetryManager.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Configuration
@@ -55,6 +55,16 @@ export declare interface PlannerAgent {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  Collaborator options for dependency injection
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface PlannerCollaborators {
+    scanner?: WorkspaceScanner;
+    parser?: RunbookParser;
+    retryManager?: PlannerRetryManager;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  Planner Agent
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -79,12 +89,8 @@ export class PlannerAgent extends EventEmitter {
     private accumulatedStderr = '';
     private planRetryCount = 0;
     private userPrompt = '';
-    /** Cached accumulated output from the last timeout/error, available for retryParse(). */
-    private lastTimeoutOutput: string | null = null;
     /** Set when timeout fires — suppresses duplicate error from the exit handler race. */
     private timedOut = false;
-    /** Last IPC session directory — used by retryParse() to read response.md from disk. */
-    private lastIpcSessionDir: string | null = null;
     /** Master task ID (session dir name) for nesting IPC files under YYYYMMDD-HHMMSS-<uuid>. */
     private masterTaskId: string | undefined;
     /** Last system prompt sent to the planner worker (S2 audit: enables prompt lineage). */
@@ -96,12 +102,21 @@ export class PlannerAgent extends EventEmitter {
     /** BL-5 audit fix: Last raw LLM output before JSON parsing (for audit trail). */
     private lastRawOutput: string | undefined;
 
+    // ── Collaborators ────────────────────────────────────────────────────
+    private readonly scanner: WorkspaceScanner;
+    private readonly parser: RunbookParser;
+    private readonly retryManager: PlannerRetryManager;
+
     constructor(
         private readonly adapter: AgentBackendProvider,
-        config: Partial<PlannerConfig> & Pick<PlannerConfig, 'workspaceRoot'>
+        config: Partial<PlannerConfig> & Pick<PlannerConfig, 'workspaceRoot'>,
+        collaborators?: PlannerCollaborators,
     ) {
         super();
         this.config = { ...DEFAULT_CONFIG, ...config };
+        this.scanner = collaborators?.scanner ?? new WorkspaceScanner();
+        this.parser = collaborators?.parser ?? new RunbookParser();
+        this.retryManager = collaborators?.retryManager ?? new PlannerRetryManager(this.parser);
     }
 
     /** Set the master task ID so planner IPC files nest under the session directory. */
@@ -141,7 +156,7 @@ export class PlannerAgent extends EventEmitter {
         this.accumulatedStderr = '';
         this.draft = null;
         this.timedOut = false;
-        this.lastIpcSessionDir = null;
+        this.retryManager.setSessionDir(null);
 
         log.info(`[PlannerAgent] Starting plan generation (prompt=${prompt.slice(0, 80)}..., hasFeedback=${!!feedback})`);
 
@@ -152,10 +167,11 @@ export class PlannerAgent extends EventEmitter {
             const effectiveRoot = await fingerprinter.getEffectiveRoot();
             log.info(`[PlannerAgent] Effective project root: ${effectiveRoot}`);
 
-            // Step 1b: Scan file tree from the effective root
-            this.fileTree = await this.collectFileTree(
+            // Step 1b: Scan file tree from the effective root (delegated to WorkspaceScanner)
+            this.fileTree = await this.scanner.scan(
                 effectiveRoot,
-                this.config.maxTreeDepth
+                this.config.maxTreeDepth,
+                this.config.maxTreeChars,
             );
             log.info(`[PlannerAgent] File tree collected: ${this.fileTree.length} entries`);
 
@@ -205,7 +221,7 @@ export class PlannerAgent extends EventEmitter {
             log.info(`[PlannerAgent] ADK session created: ${this.activeSession.sessionId}`);
 
             // Store session ID for file-based retry
-            this.lastIpcSessionDir = this.activeSession.sessionId;
+            this.retryManager.setSessionDir(this.activeSession.sessionId);
 
             // Timeout must exceed the adapter's RESPONSE_TIMEOUT_MS (900s) to avoid
             // cancelling the file watcher's CancellationToken before it resolves.
@@ -213,7 +229,7 @@ export class PlannerAgent extends EventEmitter {
             const timeoutHandle = setTimeout(() => {
                 // Preserve accumulated output for potential retry before aborting
                 const hasOutput = this.accumulatedOutput.length > 0;
-                this.lastTimeoutOutput = hasOutput ? this.accumulatedOutput : null;
+                this.retryManager.cacheOutput(this.accumulatedOutput);
                 this.timedOut = true; // Suppress duplicate error from exit handler
                 log.error(
                     `[PlannerAgent] Timeout after ${timeoutMs}ms — ` +
@@ -226,7 +242,7 @@ export class PlannerAgent extends EventEmitter {
                 // Auto-retryParse: if an IPC session exists, the agent may have
                 // written response.md after the adapter's watcher timed out.
                 // Try reading it once automatically before requiring manual retry.
-                if (this.lastIpcSessionDir || hasOutput) {
+                if (this.retryManager.hasRetryData()) {
                     log.info('[PlannerAgent] Auto-retrying parse from timeout...');
                     // Delay slightly to let abort() finish cleaning up
                     setTimeout(() => {
@@ -304,90 +320,38 @@ export class PlannerAgent extends EventEmitter {
      * Called when the user chooses "Retry Parse" after a timeout,
      * avoiding the need to retrigger the full plan generation.
      *
-     * Strategy:
-     *  1. If `lastTimeoutOutput` has content, parse that (vscode.lm streaming path).
-     *  2. Otherwise, try reading response.md from the last IPC session directory
-     *     (file-based IPC path — the chat agent may have written it after timeout).
+     * Delegates to PlannerRetryManager and translates result into events.
      */
     async retryParse(): Promise<void> {
-        // Strategy 1: Use cached streaming output (vscode.lm path)
-        if (this.lastTimeoutOutput && this.lastTimeoutOutput.trim().length > 0) {
-            log.info(`[PlannerAgent] retryParse() — parsing ${this.lastTimeoutOutput.length} cached chars`);
-            this.emit('plan:status', 'parsing', 'Re-parsing cached output...');
-            const parsed = this.extractRunbook(this.lastTimeoutOutput);
-            if (parsed) {
-                this.lastTimeoutOutput = null;
-                this.planRetryCount = 0;
-                this.draft = parsed;
-                this.emit('plan:status', 'ready', 'Plan parsed from cached output');
-                this.emit('plan:generated', parsed, this.fileTree);
-                return;
-            }
-            // Fall through to Strategy 2 if cached output doesn't parse
+        this.emit('plan:status', 'parsing', 'Re-parsing cached output...');
+        const result = await this.retryManager.retryParse(
+            this.config.workspaceRoot,
+            this.masterTaskId,
+        );
+
+        if (result.success && result.runbook) {
+            this.planRetryCount = 0;
+            this.draft = result.runbook;
+            this.emit('plan:status', result.statusKey, result.statusMessage);
+            this.emit('plan:generated', result.runbook, this.fileTree);
+        } else {
+            this.emit('plan:status', result.statusKey, result.statusMessage);
+            this.emit('plan:error', result.error ?? new Error(result.statusMessage));
         }
-
-        // Strategy 2: Read response.md from disk (file-based IPC path)
-        if (this.lastIpcSessionDir) {
-            const ipcBase = path.join(this.config.workspaceRoot, COOGENT_DIR, IPC_DIR);
-            const candidates: string[] = [];
-
-            // Primary: use masterTaskId-nested path (YYYYMMDD-HHMMSS-<uuid>/phase-000-<sessionId>)
-            if (this.masterTaskId) {
-                candidates.push(
-                    path.join(ipcBase, this.masterTaskId, `phase-000-${this.lastIpcSessionDir}`, IPC_RESPONSE_FILE)
-                );
-            }
-
-            // Fallback: direct session dir (legacy or no masterTaskId)
-            candidates.push(
-                path.join(ipcBase, this.lastIpcSessionDir, IPC_RESPONSE_FILE),
-            );
-
-            for (const responseFile of candidates) {
-                try {
-                    const content = await fs.readFile(responseFile, 'utf-8');
-                    if (content.trim().length > 0) {
-                        log.info(`[PlannerAgent] retryParse() — read ${content.length} chars from ${responseFile}`);
-                        this.emit('plan:status', 'parsing', 'Parsing response file from disk...');
-                        const parsed = this.extractRunbook(content);
-                        if (parsed) {
-                            this.lastTimeoutOutput = null;
-                            this.lastIpcSessionDir = null;
-                            this.planRetryCount = 0;
-                            this.draft = parsed;
-                            this.emit('plan:status', 'ready', 'Plan loaded from response file');
-                            this.emit('plan:generated', parsed, this.fileTree);
-                            return;
-                        }
-                        // Content exists but didn't parse — report what we found
-                        const errorMsg = 'Response file exists but does not contain a valid JSON runbook.\n' +
-                            `File: ${responseFile}\nFirst 500 chars:\n${content.slice(0, 500)}`;
-                        log.error(`[PlannerAgent] retryParse() FAILED: ${errorMsg}`);
-                        this.emit('plan:status', 'error', 'Response file found but failed to parse');
-                        this.emit('plan:error', new Error(errorMsg));
-                        return;
-                    }
-                } catch {
-                    // File doesn't exist at this path — try next candidate
-                }
-            }
-        }
-
-        // Nothing found
-        const msg = this.lastIpcSessionDir
-            ? 'No response file found on disk yet. The chat agent may still be writing. Try again in a moment.'
-            : 'No cached output or response file to parse — please regenerate the plan.';
-        log.warn(`[PlannerAgent] retryParse() — ${msg}`);
-        this.emit('plan:status', 'error', msg);
-        this.emit('plan:error', new Error(msg));
     }
 
     /** Check if retry parse is available (either cached output or an IPC session to check). */
     hasTimeoutOutput(): boolean {
-        return (
-            (this.lastTimeoutOutput !== null && this.lastTimeoutOutput.trim().length > 0) ||
-            this.lastIpcSessionDir !== null
-        );
+        return this.retryManager.hasRetryData();
+    }
+
+    /**
+     * Extract a JSON runbook from the agent's raw output.
+     * Delegates to RunbookParser.
+     * @deprecated Use RunbookParser.parse() directly for new code.
+     */
+    extractRunbook(output: string): Runbook | null {
+        return this.parser.parse(output);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -417,8 +381,7 @@ export class PlannerAgent extends EventEmitter {
 
         if (exitCode !== 0) {
             // Cache any accumulated output so the user can retry parsing
-            const hasOutput = this.accumulatedOutput.length > 0;
-            this.lastTimeoutOutput = hasOutput ? this.accumulatedOutput : null;
+            this.retryManager.cacheOutput(this.accumulatedOutput);
 
             const detail = this.accumulatedStderr || this.accumulatedOutput || '(no output captured)';
             const errorMsg = `Planner agent exited with code ${exitCode}. Detail: ${detail.slice(0, 500)}`;
@@ -426,7 +389,7 @@ export class PlannerAgent extends EventEmitter {
 
             // Emit timeout-style event so the user can attempt retry parse
             this.emit('plan:status', 'timeout', errorMsg);
-            this.emit('plan:timeout', hasOutput);
+            this.emit('plan:timeout', this.accumulatedOutput.length > 0);
             return;
         }
 
@@ -438,7 +401,7 @@ export class PlannerAgent extends EventEmitter {
         // BL-5 audit fix: Capture raw LLM output before parsing
         this.lastRawOutput = this.accumulatedOutput;
 
-        const parsed = this.extractRunbook(this.accumulatedOutput);
+        const parsed = this.parser.parse(this.accumulatedOutput);
 
         if (!parsed) {
             // #42: Retry on malformed JSON (exit code 0 but no valid runbook)
@@ -470,147 +433,12 @@ export class PlannerAgent extends EventEmitter {
     }
 
     /**
-     * Extract a JSON runbook from the agent's raw output.
-     * Looks for ```json fenced blocks first, then tries raw JSON parse.
-     */
-    extractRunbook(output: string): Runbook | null {
-        // Strategy 1: Look for ```json ... ``` fenced code block
-        // #44: Use non-greedy pattern to avoid over-capturing
-        const fencedMatch = output.match(/```json\s*\n([\s\S]*?)\n```/);
-        if (fencedMatch) {
-            try {
-                return this.validateRunbook(JSON.parse(fencedMatch[1]));
-            } catch { /* fall through */ }
-        }
-
-        // Strategy 2: Look for raw JSON object { ... } — non-greedy (#44)
-        const jsonMatch = output.match(/\{[\s\S]*?"phases"\s*:\s*\[[\s\S]*?\]\s*[\s\S]*?\}/);
-        if (jsonMatch) {
-            try {
-                return this.validateRunbook(JSON.parse(jsonMatch[0]));
-            } catch { /* fall through */ }
-        }
-
-        return null;
-    }
-
-    /**
-     * Validate that parsed JSON has the minimum required Runbook shape.
-     * #43: Also validates depends_on refs and checks for duplicate phase IDs.
-     */
-    private validateRunbook(obj: unknown): Runbook | null {
-        if (!obj || typeof obj !== 'object') return null;
-        const r = obj as Record<string, unknown>;
-
-        if (typeof r.project_id !== 'string') return null;
-        if (!Array.isArray(r.phases) || r.phases.length === 0) return null;
-
-        // Validate each phase has required fields
-        const seenIds = new Set<number>();
-        for (const p of r.phases) {
-            if (typeof p !== 'object' || p === null) return null;
-            const phase = p as Record<string, unknown>;
-            if (typeof phase.id !== 'number') return null;
-            if (typeof phase.prompt !== 'string') return null;
-            if (!Array.isArray(phase.context_files)) return null;
-            if (typeof phase.success_criteria !== 'string') return null;
-
-            // #43: Check for duplicate phase IDs
-            if (seenIds.has(phase.id as number)) {
-                log.warn(`[PlannerAgent] Duplicate phase ID: ${phase.id}`);
-                return null;
-            }
-            seenIds.add(phase.id as number);
-        }
-
-        // #43: Validate depends_on references
-        for (const p of r.phases) {
-            const phase = p as Record<string, unknown>;
-            if (Array.isArray(phase.depends_on)) {
-                for (const dep of phase.depends_on) {
-                    if (typeof dep !== 'number' || !seenIds.has(dep)) {
-                        log.warn(`[PlannerAgent] Invalid depends_on reference: phase ${phase.id} depends on non-existent phase ${dep}`);
-                        return null;
-                    }
-                }
-            }
-        }
-
-        // Ensure default fields
-        return {
-            project_id: r.project_id as string,
-            status: 'idle',
-            current_phase: (r.phases as Array<Record<string, unknown>>).length > 0
-                ? ((r.phases as Array<Record<string, unknown>>)[0] as Record<string, unknown>).id as number
-                : 1,
-            ...(typeof r.summary === 'string' ? { summary: r.summary } : {}),
-            ...(typeof r.implementation_plan === 'string' ? { implementation_plan: r.implementation_plan } : {}),
-            phases: (r.phases as Array<Record<string, unknown>>).map((p, i) => ({
-                id: asPhaseId(typeof p.id === 'number' ? p.id : i),
-                status: 'pending' as const,
-                prompt: p.prompt as string,
-                context_files: p.context_files as string[],
-                success_criteria: (p.success_criteria as string) || 'exit_code:0',
-                ...(Array.isArray(p.depends_on) ? { depends_on: (p.depends_on as number[]).map(asPhaseId) } : {}),
-                ...(typeof p.context_summary === 'string' ? { context_summary: p.context_summary } : {}),
-            })),
-        };
-    }
-
-    /**
      * Collect the workspace file tree up to the specified depth.
-     * Respects common ignore patterns (.git, node_modules, etc.).
+     * Delegates to WorkspaceScanner.
+     * @deprecated Use WorkspaceScanner.scan() directly for new code.
      */
     async collectFileTree(rootDir: string, maxDepth: number): Promise<string[]> {
-        const IGNORE = new Set([
-            '.git', 'node_modules', '.next', 'dist', 'out', 'build',
-            '.cache', '.vscode', '__pycache__', '.DS_Store', 'coverage',
-            COOGENT_DIR,
-        ]);
-
-        const result: string[] = [];
-        let charCount = 0;
-
-        const walk = async (dir: string, depth: number, prefix: string): Promise<void> => {
-            if (depth > maxDepth || charCount > this.config.maxTreeChars) return;
-
-            let entries: import('node:fs').Dirent[];
-            try {
-                entries = await fs.readdir(dir, { withFileTypes: true }) as import('node:fs').Dirent[];
-            } catch {
-                return;
-            }
-
-            // Sort: directories first, then files
-            const sorted = [...entries].sort((a, b) => {
-                if (a.isDirectory() && !b.isDirectory()) return -1;
-                if (!a.isDirectory() && b.isDirectory()) return 1;
-                return String(a.name).localeCompare(String(b.name));
-            });
-
-            for (const entry of sorted) {
-                const name = String(entry.name);
-                if (IGNORE.has(name)) continue;
-                // Skip dot-prefixed entries (except .gitignore) — matches RepoMap behaviour
-                if (name.startsWith('.') && name !== '.gitignore') continue;
-                if (charCount > this.config.maxTreeChars) break;
-
-                const relativePath = path.join(prefix, name);
-
-                if (entry.isDirectory()) {
-                    const line = `${relativePath}/`;
-                    result.push(line);
-                    charCount += line.length;
-                    await walk(path.join(dir, name), depth + 1, relativePath);
-                } else {
-                    result.push(relativePath);
-                    charCount += relativePath.length;
-                }
-            }
-        };
-
-        await walk(rootDir, 0, '');
-        return result;
+        return this.scanner.scan(rootDir, maxDepth, this.config.maxTreeChars);
     }
 
     /**

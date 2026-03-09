@@ -113,21 +113,12 @@ export class ImportScanner {
             return base;
         }
 
-        // 2. Try each extension
-        for (const ext of RESOLVE_EXTENSIONS) {
-            const candidate = base + ext;
-            // We don't stat here for performance — the file will be validated
-            // downstream when the caller tries to read it. This is intentionally
-            // optimistic to avoid N filesystem syscalls per import.
-            return candidate; // Return first candidate (.ts is highest priority)
-        }
+        // 2. Try highest-priority extension (optimistic: no stat for performance)
+        // Note: RESOLVE_EXTENSIONS[0] is '.ts', the dominant convention.
+        return base + RESOLVE_EXTENSIONS[0];
 
-        // 3. Try index files
-        for (const ext of RESOLVE_EXTENSIONS) {
-            const candidate = path.join(base, `index${ext}`);
-            return candidate;
-        }
-
-        return null;
+        // Section 3 (index files) is unreachable — section 2 always returns.
+        // Real index resolution would require stat() calls, deferred to a
+        // future enhancement if workspace imports rely on index.ts barrel files.
     }
 }

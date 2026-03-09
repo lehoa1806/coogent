@@ -65,7 +65,7 @@ coogent/
 ├── src/
 │   ├── extension.ts              ← Activation entry point (~270 lines, delegates to modules below)
 │   ├── ServiceContainer.ts       ← Typed service registry (replaces module-level vars)
-│   ├── CommandRegistry.ts        ← VS Code command registrations (14 commands)
+│   ├── CommandRegistry.ts        ← VS Code command registrations (15 commands)
 │   ├── EngineWiring.ts           ← Engine ↔ ADK ↔ UI event subscriptions
 │   ├── PlannerWiring.ts          ← PlannerAgent ↔ Engine event wiring
 │   ├── types/                    ← Domain-scoped type system (engine, phase, ipc, evaluators)
@@ -75,20 +75,57 @@ coogent/
 │   │   ├── evaluators.ts         ← Evaluator types and results
 │   │   └── index.ts              ← Barrel re-export
 │   │
+│   ├── constants/                ← Storage paths, error codes, boundary definitions
+│   │   ├── paths.ts              ← Path constants and file name definitions
+│   │   ├── StorageBase.ts        ← Unified storage-path abstraction
+│   │   ├── storage.ts            ← Storage configuration
+│   │   └── index.ts              ← Barrel re-export
+│   │
 │   ├── engine/                   ← Engine (FSM), Scheduler (DAG), SelfHealingController
+│   │   ├── Engine.ts             ← 9-state FSM controller
+│   │   ├── EngineInternals.ts    ← Internal engine state accessors
+│   │   ├── Scheduler.ts          ← DAG-aware phase scheduling
+│   │   ├── DispatchController.ts ← Phase dispatch orchestration
+│   │   ├── EvaluationOrchestrator.ts ← Pluggable evaluator orchestration
+│   │   ├── PlanningController.ts ← Plan request handling
+│   │   ├── PhaseController.ts    ← Phase lifecycle management
+│   │   ├── SessionController.ts  ← Session lifecycle management
+│   │   ├── SelfHealing.ts        ← Retry + healing prompt generation
+│   │   ├── WorkerOutputValidator.ts ← Zod-based output validation boundary
+│   │   ├── ContextAssemblyAdapter.ts ← Context assembly delegation (from EngineWiring)
+│   │   ├── WorkerLauncher.ts     ← Worker spawning logic (from EngineWiring)
+│   │   └── WorkerResultProcessor.ts ← Result handling (from EngineWiring)
+│   │
 │   ├── state/                    ← StateManager (WAL + mutex + AJV validation)
-│   ├── mcp/                      ← CoogentMCPServer, MCPClientBridge, ArtifactDB (SQLite)
+│   ├── mcp/                      ← MCP server, persistence, plugins
+│   │   ├── CoogentMCPServer.ts   ← In-process MCP server
+│   │   ├── ArtifactDB.ts         ← SQLite persistence (sql.js WASM)
+│   │   ├── ArtifactDBBackup.ts   ← Snapshot/restore with rotation
+│   │   ├── MCPClientBridge.ts    ← Typed client-side MCP bridge
+│   │   ├── MCPResourceHandler.ts ← coogent:// URI resource handler
+│   │   ├── MCPToolHandler.ts     ← MCP tool implementations
+│   │   ├── MCPPromptHandler.ts   ← 5 discoverable prompt templates
+│   │   ├── MCPValidator.ts       ← Input validation boundary
+│   │   ├── SamplingProvider.ts   ← Feature-gated LLM sampling
+│   │   ├── PluginLoader.ts       ← MCP plugin discovery and loading
+│   │   ├── MCPPlugin.ts          ← Plugin interface definition
+│   │   ├── repositories/         ← 7 typed repository classes (Task, Phase, Handoff, etc.)
+│   │   └── types.ts              ← MCP type definitions and URI builders
+│   │
 │   ├── adk/                      ← ADKController, ADKAdapter, OutputBuffer, OutputBufferRegistry
-│   ├── context/                  ← ContextScoper, ASTFileResolver, TokenPruner, TiktokenEncoder, SecretsGuard, RepoMap
-│   ├── evaluators/               ← EvaluatorRegistryV2 (exit_code, regex, toolchain, test_suite) + constants
+│   ├── context/                  ← ContextScoper, ContextPackBuilder, FileContextModeSelector,
+│   │                               ASTFileResolver, TokenPruner, TiktokenEncoder, SecretsGuard, RepoMap
+│   ├── evaluators/               ← EvaluatorRegistryV2 (exit_code, regex, toolchain, test_suite)
 │   ├── git/                      ← GitManager (execFile), GitSandboxManager (VS Code Git API)
-│   ├── agent-selection/           ← AgentRegistry, AgentSelector, SelectionPipeline, templates
+│   ├── agent-selection/          ← AgentRegistry, AgentSelector, SelectionPipeline, templates
+│   ├── prompt-compiler/          ← PlannerPromptCompiler, PolicyEngine, TaskClassifier,
+│   │                               RepoFingerprinter, RequirementNormalizer, TemplateLoader
 │   ├── consolidation/            ← ConsolidationAgent (phase aggregation → report)
 │   ├── session/                  ← SessionManager (history, search, pruning)
-│   ├── planner/                  ← PlannerAgent (prompt → runbook decomposition)
+│   ├── planner/                  ← PlannerAgent, WorkspaceScanner, RunbookParser, PlannerRetryManager
 │   ├── logger/                   ← TelemetryLogger (JSONL), log.ts, LogStream.ts
 │   ├── webview/                  ← MissionControlPanel (IPC proxy), ipcValidator
-│   ├── utils/                    ← Shared utilities
+│   ├── utils/                    ← WorkspaceHelper, shared utilities
 │   └── __tests__/                ← Integration and end-to-end test suites
 │
 ├── webview-ui/                   ← Svelte 5 + Vite webview source
@@ -98,8 +135,13 @@ coogent/
 │   │   └── types.ts              ← Frontend type definitions
 │   └── vite.config.ts            ← Deterministic filename build config
 │
-├── schemas/runbook.schema.json   ← JSON Schema for .task-runbook.json
-├── package.json                  ← Extension manifest, commands, settings
+├── schemas/                      ← JSON Schemas
+│   ├── runbook.schema.json       ← .task-runbook.json validation schema
+│   ├── worker.schema.json        ← .coogent/workers.json validation schema
+│   └── secrets-allowlist.schema.json ← Secrets allowlist configuration schema
+│
+├── examples/prompts/             ← Example prompt files for reference
+├── package.json                  ← Extension manifest (15 commands, 18 settings)
 ├── esbuild.js                    ← Extension Host bundler config
 ├── jest.config.js                ← Test runner config (ts-jest + ESM)
 ├── tsconfig.json                 ← TypeScript configuration (strict)
@@ -214,33 +256,102 @@ The most common source of bugs. To trace:
 ### Run Tests
 
 ```bash
-npm test                           # All tests (serial, leak detection) — run for current count
+npm test                           # All 75 test files (serial, leak detection)
 npx jest --verbose                 # With detailed output
 npx jest src/engine                # Run specific module
 npx jest --watch                   # Watch mode
+npx jest --listTests               # List all test files
 ```
 
-### Test Suites
+### Test Suites (75 files)
 
-| Suite | Location | Covers |
-|---|---|---|
-| StateManager | `src/state/__tests__/` | Persistence, WAL, crash recovery |
-| StateManager.race | `src/state/__tests__/` | Concurrent writes, stale locks |
-| Engine | `src/engine/__tests__/` | FSM transitions, parallel DAG |
-| Scheduler | `src/engine/__tests__/` | DAG scheduling, cycle detection |
-| SelfHealing | `src/engine/__tests__/` | Retry counting, prompt augmentation |
-| ADKController | `src/adk/__tests__/` | Spawn/terminate, timeout race |
-| OutputBuffer | `src/adk/__tests__/` | Timer-based flush, buffer-size flush, dispose |
-| ContextScoper | `src/context/__tests__/` | Assembly, budget enforcement |
-| ASTFileResolver | `src/context/__tests__/` | Import crawling, cycle detection |
-| TokenPruner | `src/context/__tests__/` | 3-tier pruning |
-| TiktokenEncoder | `src/context/__tests__/` | Lazy init, fallback, cl100k_base encoding |
-| SecretsGuard | `src/context/__tests__/` | Secret patterns, entropy, false-positive resistance |
-| GitManager | `src/git/__tests__/` | Commit/rollback (mocked) |
-| TelemetryLogger | `src/logger/__tests__/` | JSONL logging |
-| MissionControlPanel | `src/webview/__tests__/` | IPC validation (17 cases) |
-| Integration | `src/__tests__/` | End-to-end flow |
-| Pillar 2+3 | `src/__tests__/` | Scheduler + SelfHealing + Evaluator |
+#### Core Engine (`src/engine/__tests__/`)
+
+| File | Covers |
+|---|---|
+| `Engine.test.ts` | FSM transitions, parallel DAG |
+| `Scheduler.test.ts` | DAG scheduling, cycle detection |
+| `SelfHealing.test.ts` | Retry counting, prompt augmentation |
+| `DispatchController.integration.test.ts` | Phase dispatch integration |
+| `EvaluationOrchestrator.test.ts` | Evaluator orchestration |
+| `PhaseController.test.ts` | Phase lifecycle management |
+| `PlanningController.test.ts` | Plan request handling |
+| `SessionController.test.ts` | Session lifecycle |
+| `WorkerOutputValidator.test.ts` | Zod-based output validation |
+
+#### State (`src/state/__tests__/`)
+
+| File | Covers |
+|---|---|
+| `StateManager.test.ts` | Persistence, WAL, crash recovery |
+| `StateManager.race.test.ts` | Concurrent writes, stale locks |
+
+#### ADK (`src/adk/__tests__/`)
+
+| File | Covers |
+|---|---|
+| `ADKController.test.ts` | Spawn/terminate, timeout race |
+| `AntigravityADKAdapter.integration.test.ts` | ADK adapter integration |
+| `OutputBuffer.test.ts` | Timer-based flush, buffer-size flush, dispose |
+
+#### Context (`src/context/__tests__/`)
+
+| File | Covers |
+|---|---|
+| `ContextScoper.test.ts` | Assembly, budget enforcement |
+| `ContextPackBuilder.test.ts` | 6-step pipeline, manifest generation |
+| `FileContextModeSelector.test.ts` | Mode selection heuristics |
+| `ASTFileResolver.test.ts` | Import crawling, cycle detection |
+| `MultiRootFileResolver.test.ts` | Cross-root path resolution |
+| `ImportScanner.test.ts` | Import statement parsing |
+| `TokenPruner.test.ts` | 3-tier pruning, budget enforcement |
+| `TiktokenEncoder.test.ts` | Lazy init, fallback, cl100k_base |
+| `SecretsGuard.test.ts` | Pattern detection, entropy, redaction |
+| `SecretsGuardAllowlist.test.ts` | Allowlist configuration |
+| `RepoMap.test.ts` | Repository structure mapping |
+| `HandoffExtractor.test.ts` | Phase handoff extraction |
+
+#### Agent Selection (`src/agent-selection/__tests__/`)
+
+| File | Covers |
+|---|---|
+| `AgentRegistry.test.ts` | Profile loading, cascading config |
+| `AgentSelector.test.ts` | Scoring, hard filter, fallback |
+| `WorkerPromptCompiler.test.ts` | Template interpolation |
+| `PromptValidator.test.ts` | Structural validation |
+| `SubtaskSpecBuilder.test.ts` | Spec construction |
+| `WorkerResultHandler.test.ts` | Result parsing |
+
+#### Prompt Compiler (`src/prompt-compiler/__tests__/`)
+
+6 test files covering the full pipeline: `PlannerPromptCompiler`, `RequirementNormalizer`, `TaskClassifier`, `TemplateLoader`, `RepoFingerprinter`, `PolicyEngine`.
+
+#### MCP (`src/mcp/__tests__/`)
+
+11 test files covering: `CoogentMCPServer`, `ArtifactDB`, `ArtifactDBBackup`, `MCPPromptHandler`, `MCPToolHandler`, `MCPResourceHandler`, `MCPValidator`, `SamplingProvider`, `HandoffRepository`, `ContextManifestRepository`, and repository integration.
+
+#### Other Modules
+
+| File | Covers |
+|---|---|
+| `src/git/__tests__/GitManager.test.ts` | Commit/rollback (mocked) |
+| `src/git/__tests__/GitSandboxManager.test.ts` | Sandbox branch lifecycle |
+| `src/git/__tests__/GitSandboxMultiRepo.test.ts` | Multi-repo branch ops |
+| `src/logger/__tests__/TelemetryLogger.test.ts` | JSONL structured logging |
+| `src/logger/__tests__/LogStream.test.ts` | Log stream rotation |
+| `src/webview/__tests__/MissionControlPanel.test.ts` | IPC validation |
+| `src/evaluators/__tests__/EvaluatorV2.test.ts` | Evaluator registry |
+| `src/consolidation/__tests__/ConsolidationAgent.test.ts` | Report aggregation |
+| `src/constants/__tests__/StorageBase.test.ts` | Storage path resolution |
+| `src/planner/__tests__/` | PlannerAgent + 3 collaborators |
+| `src/__tests__/integration.test.ts` | End-to-end multi-phase flow |
+| `src/__tests__/integration-expanded.test.ts` | Expanded integration scenarios |
+| `src/__tests__/scheduling-evaluators-healing.test.ts` | Cross-module integration |
+| `src/__tests__/CommandRegistry.test.ts` | Command registration |
+| `src/__tests__/EngineWiring.test.ts` | Event wiring |
+| `src/__tests__/PlannerWiring.test.ts` | Planner event wiring |
+| `src/__tests__/ServiceContainer.test.ts` | Service registry |
+| `src/__tests__/WorkspaceHelper.test.ts` | Workspace path utilities |
 
 ### Writing Tests
 
@@ -285,6 +396,30 @@ function makeMockBridge() {
 | `npm run prepackage` | Minified production build |
 | `npm run package` | Create `.vsix` package |
 | `npm run clean` | Remove `out/` directory |
+
+### Build Pipeline Details
+
+#### Extension Host Build (`esbuild.js`)
+
+The Extension Host is bundled via [esbuild](https://esbuild.github.io) with several custom behaviors:
+
+| Feature | Implementation |
+|---|---|
+| **Template inlining** | `.md` files in `src/agent-selection/templates/` and `src/prompt-compiler/templates/` are loaded as text strings via esbuild's text loader. This ensures prompt templates survive single-file bundling. |
+| **WASM bundling** | `sql-wasm.wasm` (sql.js) is copied alongside the output bundle. The `sql.js` library loads it at runtime from the same directory. |
+| **External exclusions** | `vscode` is marked as an external — it's provided by the Extension Host at runtime. |
+| **Single-file output** | The entire Extension Host compiles to `out/extension.js` (CommonJS, Node.js platform). |
+| **Source maps** | Enabled in dev mode, disabled in production (`--minify` flag via `npm run prepackage`). |
+
+The JSON runbook schema is **not** loaded from `schemas/runbook.schema.json` at runtime. It is inlined as a TypeScript constant in `StateManager.ts` to prevent `ENOENT` errors in the bundled VSIX.
+
+#### Webview Build (`webview-ui/vite.config.ts`)
+
+The Svelte 5 webview is built via Vite with:
+
+- **Deterministic filenames** — output files use content-hash naming for cache busting
+- **CSP compatibility** — all script/style tags include `nonce` attributes for Content Security Policy compliance
+- **Single-page output** — builds to `webview-ui/dist/` as static HTML/JS/CSS
 
 ---
 

@@ -260,6 +260,16 @@ export class ContextPackBuilder {
         }
 
         const totalTokens = handoffTokens + fileTokens + dependencyTokens;
+        const overBudget = totalTokens > maxTokens;
+
+        if (overBudget) {
+            log.warn(
+                `[ContextPackBuilder] Pack still over budget after pruning: ` +
+                `${totalTokens}/${maxTokens} tokens. ` +
+                `Handoffs: ${handoffTokens}, Files: ${fileTokens} (${fileContexts.length} entries), ` +
+                `Dependencies: ${dependencyTokens}. Proceeding with best-effort context.`,
+            );
+        }
 
         // ── Step 6: Build manifest ──────────────────────────────────────────
         const manifestId = crypto.randomUUID();

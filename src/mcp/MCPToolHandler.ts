@@ -20,8 +20,14 @@ import {
 } from './types.js';
 import { safeTruncate } from './CoogentMCPServer.js';
 import { MCPValidator } from './MCPValidator.js';
+import { validateWorkerOutput } from '../engine/WorkerOutputValidator.js';
 import type { ArtifactDB } from './ArtifactDB.js';
 import log from '../logger/log.js';
+import {
+    ERR_MCP_PATH_TRAVERSAL_BLOCKED,
+    ERR_WORKER_OUTPUT_VALIDATION_FAILED,
+} from '../logger/ErrorCodes.js';
+import type { TelemetryLogger } from '../logger/TelemetryLogger.js';
 
 /**
  * Registers MCP Tool handlers (mutating) on a given MCP Server instance.
@@ -36,12 +42,42 @@ import log from '../logger/log.js';
  *   - get_symbol_context
  */
 export class MCPToolHandler {
+    /** Normalised allowed workspace roots for workspaceFolder validation. */
+    private readonly allowedRoots: string[];
+    /** Optional telemetry logger for structured boundary events (P2.2). */
+    private telemetryLogger?: TelemetryLogger;
+
     constructor(
         private readonly server: Server,
         private readonly db: ArtifactDB,
         private readonly workspaceRoot: string,
-        private readonly emitter: EventEmitter
-    ) { }
+        private readonly emitter: EventEmitter,
+        allowedWorkspaceRoots: string[] = [workspaceRoot],
+    ) {
+        this.allowedRoots = allowedWorkspaceRoots.map(r => path.resolve(r));
+    }
+
+    /** Attach a TelemetryLogger for structured boundary event logging. */
+    setTelemetryLogger(logger: TelemetryLogger): void {
+        this.telemetryLogger = logger;
+    }
+
+    /**
+     * Validate that a candidate workspace root is within the allowed set.
+     * Prevents path traversal via the optional `workspaceFolder` MCP argument.
+     */
+    private resolveWorkspaceRoot(candidate: string): string {
+        const normalised = path.resolve(candidate);
+        const isAllowed = this.allowedRoots.some(
+            r => normalised === r || normalised.startsWith(r + path.sep)
+        );
+        if (!isAllowed) {
+            throw new Error(
+                'Access denied: workspaceFolder is not within the allowed workspace roots.'
+            );
+        }
+        return normalised;
+    }
 
     /**
      * Register all tool-related protocol handlers on the MCP server.
@@ -364,10 +400,28 @@ export class MCPToolHandler {
         args: Record<string, unknown>
     ): { content: Array<{ type: 'text'; text: string }> } {
         const masterTaskId = MCPValidator.validateMasterTaskId(args['masterTaskId']);
-        const markdownContent = MCPValidator.validateString(args['markdown_content'], 'markdown_content');
+        const markdownContent = MCPValidator.validateString(args['markdown_content'], 'markdown_content', 500_000);
         const phaseId = args['phaseId'] != null
             ? MCPValidator.validatePhaseId(args['phaseId'])
             : undefined;
+
+        // P0.1: Validate implementation plan content before persistence
+        const planValidation = validateWorkerOutput('implementation_plan', {
+            markdown_content: markdownContent,
+        });
+        if (!planValidation.success) {
+            log.warn(
+                `[MCPToolHandler] ${planValidation.error.code}: ${planValidation.error.message}`,
+            );
+            this.telemetryLogger?.logBoundaryEvent(ERR_WORKER_OUTPUT_VALIDATION_FAILED, {
+                contractType: 'implementation_plan',
+                validationCode: planValidation.error.code,
+                message: planValidation.error.message,
+            });
+            throw new Error(
+                `Implementation plan validation failed: ${planValidation.error.message}`
+            );
+        }
 
         if (phaseId) {
             // Phase-level plan → persist via DB
@@ -440,6 +494,35 @@ export class MCPToolHandler {
         const changedFilesJson = typeof args['changedFilesJson'] === 'string'
             ? args['changedFilesJson'].slice(0, 65536) : undefined;
 
+        // P0.1: Validate handoff payload before persistence
+        const handoffValidation = validateWorkerOutput('phase_handoff', {
+            decisions,
+            modified_files: modifiedFiles,
+            blockers,
+            next_steps_context: nextStepsContext,
+            summary,
+            rationale,
+            constraints,
+            remainingWork,
+            symbolsTouched,
+            warnings,
+            workspaceFolder,
+            changedFilesJson,
+        });
+        if (!handoffValidation.success) {
+            log.warn(
+                `[MCPToolHandler] ${handoffValidation.error.code}: ${handoffValidation.error.message}`,
+            );
+            this.telemetryLogger?.logBoundaryEvent(ERR_WORKER_OUTPUT_VALIDATION_FAILED, {
+                contractType: 'phase_handoff',
+                validationCode: handoffValidation.error.code,
+                message: handoffValidation.error.message,
+            });
+            throw new Error(
+                `Phase handoff validation failed: ${handoffValidation.error.message}`
+            );
+        }
+
         const handoff: PhaseHandoff = {
             phaseId,
             masterTaskId,
@@ -483,7 +566,25 @@ export class MCPToolHandler {
         args: Record<string, unknown>
     ): { content: Array<{ type: 'text'; text: string }> } {
         const masterTaskId = MCPValidator.validateMasterTaskId(args['masterTaskId']);
-        const markdownContent = MCPValidator.validateString(args['markdown_content'], 'markdown_content');
+        const markdownContent = MCPValidator.validateString(args['markdown_content'], 'markdown_content', 500_000);
+
+        // P0.1: Validate consolidation report content before persistence
+        const reportValidation = validateWorkerOutput('consolidation_report', {
+            markdown_content: markdownContent,
+        });
+        if (!reportValidation.success) {
+            log.warn(
+                `[MCPToolHandler] ${reportValidation.error.code}: ${reportValidation.error.message}`,
+            );
+            this.telemetryLogger?.logBoundaryEvent(ERR_WORKER_OUTPUT_VALIDATION_FAILED, {
+                contractType: 'consolidation_report',
+                validationCode: reportValidation.error.code,
+                message: reportValidation.error.message,
+            });
+            throw new Error(
+                `Consolidation report validation failed: ${reportValidation.error.message}`
+            );
+        }
 
         // Persist consolidation report to DB
         this.db.tasks.upsert(masterTaskId, { consolidationReport: markdownContent });
@@ -544,6 +645,11 @@ export class MCPToolHandler {
         }
         if (!resolved.startsWith(realWorkspaceRoot + path.sep) && resolved !== realWorkspaceRoot) {
             log.warn(`[MCPToolHandler] Path traversal blocked: ${filePath}`);
+            this.telemetryLogger?.logBoundaryEvent(ERR_MCP_PATH_TRAVERSAL_BLOCKED, {
+                filePath,
+                resolved,
+                workspaceRoot: this.workspaceRoot,
+            });
             throw new Error('Access denied');
         }
 
@@ -597,8 +703,9 @@ export class MCPToolHandler {
             throw new Error('Invalid path: contains disallowed characters or exceeds maximum length.');
         }
 
-        const root = typeof args['workspaceFolder'] === 'string'
+        const rawRoot = typeof args['workspaceFolder'] === 'string'
             ? args['workspaceFolder'] : this.workspaceRoot;
+        const root = this.resolveWorkspaceRoot(rawRoot);
 
         let resolved: string;
         let realRoot: string;
@@ -663,8 +770,9 @@ export class MCPToolHandler {
             throw new Error('Invalid symbol: exceeds maximum length (200).');
         }
 
-        const root = typeof args['workspaceFolder'] === 'string'
+        const rawRoot = typeof args['workspaceFolder'] === 'string'
             ? args['workspaceFolder'] : this.workspaceRoot;
+        const root = this.resolveWorkspaceRoot(rawRoot);
 
         let resolved: string;
         let realRoot: string;

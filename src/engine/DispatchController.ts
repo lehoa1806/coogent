@@ -11,6 +11,7 @@ import { SelectionPipeline, SubtaskSpecBuilder, type SubtaskDraft } from '../age
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import type { TelemetryLogger } from '../logger/TelemetryLogger.js';
 import type { ContextPackBuilder } from '../context/ContextPackBuilder.js';
+import { ERR_DISPATCH_ASYNC_FAILURE } from '../logger/ErrorCodes.js';
 
 /** Options for DispatchController construction. */
 export interface DispatchControllerOptions {
@@ -179,6 +180,10 @@ export class DispatchController {
             await this.engine.persist();
         } catch (err) {
             log.error('[DispatchController] dispatchReadyPhases persist failed:', err);
+            this.telemetryLogger?.logBoundaryEvent(ERR_DISPATCH_ASYNC_FAILURE, {
+                operation: 'dispatchReadyPhases.persist',
+                message: err instanceof Error ? err.message : String(err),
+            });
         }
 
         this.engine.emitUIMessage({
@@ -212,7 +217,13 @@ export class DispatchController {
             });
             return;
         }
-        this.dispatchReadyPhases();
+        this.dispatchReadyPhases().catch(err => {
+            log.error('[DispatchController] advanceSchedule dispatch failed:', err);
+            this.telemetryLogger?.logBoundaryEvent(ERR_DISPATCH_ASYNC_FAILURE, {
+                operation: 'advanceSchedule',
+                message: err instanceof Error ? err.message : String(err),
+            });
+        });
     }
 
     /**
@@ -247,7 +258,13 @@ export class DispatchController {
                         message: `Stall detected — auto-dispatching ${readyPhases.length} ready phase(s).`,
                     },
                 });
-                this.dispatchReadyPhases();
+                this.dispatchReadyPhases().catch(err => {
+                    log.error('[DispatchController] stallWatchdog dispatch failed:', err);
+                    this.telemetryLogger?.logBoundaryEvent(ERR_DISPATCH_ASYNC_FAILURE, {
+                        operation: 'stallWatchdog',
+                        message: err instanceof Error ? err.message : String(err),
+                    });
+                });
                 return;
             }
 

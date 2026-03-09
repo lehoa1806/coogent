@@ -4,6 +4,7 @@
 
 import type { TokenEncoder } from './ContextScoper.js';
 import type { FileTokenEntry } from '../types/index.js';
+import type { FileContextMode } from '../types/context.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Token Pruner
@@ -18,6 +19,10 @@ export interface PrunableEntry {
     tokenCount: number;
     /** Whether this file was explicitly listed (vs. discovered). */
     readonly isExplicit: boolean;
+    /** The context mode this entry was materialized with. */
+    mode?: FileContextMode;
+    /** Priority weight (lower = drop first). Defaults to 0 if unset. */
+    priority?: number;
 }
 
 /**
@@ -36,6 +41,10 @@ export interface PruneResult {
     readonly breakdown: readonly FileTokenEntry[];
     /** Number of files that were pruned. */
     readonly prunedCount: number;
+    /** True when the pack exceeds the budget even after full degradation. */
+    readonly overBudget: boolean;
+    /** Reason for irreducibility when overBudget is true. */
+    readonly reason?: string;
 }
 
 /**
@@ -125,7 +134,12 @@ export class TokenPruner {
             totalTokens += entry.tokenCount;
         }
 
-        return this.buildResult(remaining, totalTokens, prunedCount);
+        if (totalTokens <= this.tokenLimit) {
+            return this.buildResult(remaining, totalTokens, prunedCount);
+        }
+
+        // ── Strategy 4: Degradation cascade ──────────────────────────────
+        return this.degradationCascade(remaining, totalTokens, prunedCount);
     }
 
     /**
@@ -190,18 +204,108 @@ export class TokenPruner {
         return result.join('\n');
     }
 
+    /**
+     * Deterministic degradation cascade:
+     *   a. Downgrade `full` → `slice` (first 200 lines)
+     *   b. Downgrade `slice` → `metadata` (file name + size + first 10 lines)
+     *   c. Drop lowest-priority metadata entries
+     */
+    private degradationCascade(
+        entries: PrunableEntry[],
+        initialTotal: number,
+        prunedCount: number
+    ): PruneResult {
+        let totalTokens = initialTotal;
+
+        // ── Pass A: Downgrade full → slice (first 200 lines) ─────────────
+        for (const entry of entries) {
+            if (totalTokens <= this.tokenLimit) break;
+            if (entry.mode !== 'full') continue;
+
+            const lines = entry.content.split('\n');
+            if (lines.length <= 200) continue; // already small enough
+
+            const oldTokens = entry.tokenCount;
+            entry.content = lines.slice(0, 200).join('\n') +
+                '\n\n// ... [sliced by Coogent — budget degradation, first 200 lines] ...';
+            entry.tokenCount = this.encoder.countTokens(entry.content);
+            entry.mode = 'slice';
+            totalTokens -= (oldTokens - entry.tokenCount);
+            prunedCount++;
+        }
+
+        if (totalTokens <= this.tokenLimit) {
+            return this.buildResult(entries, totalTokens, prunedCount);
+        }
+
+        // ── Pass B: Downgrade slice → metadata (file name + size + first 10 lines)
+        for (const entry of entries) {
+            if (totalTokens <= this.tokenLimit) break;
+            if (entry.mode !== 'slice') continue;
+
+            const lines = entry.content.split('\n');
+            const oldTokens = entry.tokenCount;
+            const header = `// ${entry.path} (${lines.length} lines, ${entry.content.length} bytes)`;
+            const preview = lines.slice(0, 10).join('\n');
+            const metadataContent = header + '\n' + preview +
+                '\n// ... [metadata-only — budget degradation] ...';
+            const metadataTokens = this.encoder.countTokens(metadataContent);
+
+            // Only apply if it actually reduces token count
+            if (metadataTokens < oldTokens) {
+                entry.content = metadataContent;
+                entry.tokenCount = metadataTokens;
+                entry.mode = 'metadata';
+                totalTokens -= (oldTokens - metadataTokens);
+                prunedCount++;
+            }
+        }
+
+        if (totalTokens <= this.tokenLimit) {
+            return this.buildResult(entries, totalTokens, prunedCount);
+        }
+
+        // ── Pass C: Drop lowest-priority metadata entries ────────────────
+        const sorted = entries
+            .map((e, i) => ({ entry: e, index: i, priority: e.priority ?? 0 }))
+            .sort((a, b) => a.priority - b.priority); // lowest priority first
+
+        const droppedIndices = new Set<number>();
+        for (const { entry, index } of sorted) {
+            if (totalTokens <= this.tokenLimit) break;
+            if (entry.mode !== 'metadata') continue;
+            totalTokens -= entry.tokenCount;
+            droppedIndices.add(index);
+            prunedCount++;
+        }
+
+        const remaining = entries.filter((_, i) => !droppedIndices.has(i));
+
+        if (totalTokens <= this.tokenLimit) {
+            return this.buildResult(remaining, totalTokens, prunedCount);
+        }
+
+        // Irreducible — cannot reach budget
+        return this.buildResult(remaining, totalTokens, prunedCount, true, 'irreducible');
+    }
+
     private buildResult(
         entries: PrunableEntry[],
         totalTokens: number,
-        prunedCount: number
+        prunedCount: number,
+        overBudget = false,
+        reason?: string,
     ): PruneResult {
-        return {
+        const result: PruneResult = {
             withinBudget: totalTokens <= this.tokenLimit,
             entries,
             totalTokens,
             limit: this.tokenLimit,
             breakdown: entries.map(e => ({ path: e.path, tokens: e.tokenCount })),
             prunedCount,
+            overBudget,
+            ...(reason !== undefined ? { reason } : {}),
         };
+        return result;
     }
 }

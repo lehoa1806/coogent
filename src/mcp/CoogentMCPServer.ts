@@ -16,8 +16,15 @@ import {
     type ParsedResourceURI,
 } from './types.js';
 import { ArtifactDB } from './ArtifactDB.js';
+import { ArtifactDBBackup } from './ArtifactDBBackup.js';
 import { MCPResourceHandler } from './MCPResourceHandler.js';
 import { MCPToolHandler } from './MCPToolHandler.js';
+import { MCPPromptHandler } from './MCPPromptHandler.js';
+import {
+    type SamplingProvider,
+    NoopSamplingProvider,
+    MCPSamplingProvider,
+} from './SamplingProvider.js';
 import { PluginLoader } from './PluginLoader.js';
 import { DATABASE_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
@@ -154,16 +161,18 @@ export class CoogentMCPServer {
     private readonly emitter = new EventEmitter();
     private readonly workspaceRoot: string;
     private pluginLoader: PluginLoader | null = null;
+    private backupManager: ArtifactDBBackup | null = null;
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
 
         this.server = new Server(
-            { name: 'coogent-mcp-server', version: '0.1.0' },
+            { name: 'coogent-mcp-server', version: '0.2.0' },
             {
                 capabilities: {
                     resources: {},
                     tools: {},
+                    prompts: {},
                 },
             }
         );
@@ -188,9 +197,14 @@ export class CoogentMCPServer {
         const dbPath = path.join(coogentDir, DATABASE_FILE);
         this.db = await ArtifactDB.create(dbPath);
 
+        // Initialise backup manager (default backup dir: <coogentDir>/backups/)
+        const backupDir = path.join(coogentDir, 'backups');
+        this.backupManager = new ArtifactDBBackup(dbPath, backupDir);
+
         // Register protocol handlers now that DB is ready
         new MCPResourceHandler(this.server, this.db).register();
         new MCPToolHandler(this.server, this.db, this.workspaceRoot, this.emitter).register();
+        new MCPPromptHandler(this.server).register();
 
         // Load plugins (Sprint 5) — fire-and-forget, errors are isolated
         this.pluginLoader = new PluginLoader(this.workspaceRoot);
@@ -237,6 +251,31 @@ export class CoogentMCPServer {
     /** Get the underlying ArtifactDB for direct DB access (e.g., StateManager runbook mirror). */
     getArtifactDB(): ArtifactDB {
         return this.db;
+    }
+
+    /**
+     * Return a SamplingProvider gated by the `coogent.enableSampling` feature flag.
+     *
+     * When sampling is enabled AND the connected client advertises sampling
+     * capability, this returns an `MCPSamplingProvider`.
+     * Otherwise, it returns a `NoopSamplingProvider` so callers can safely
+     * fall back to existing (non-sampling) behaviour.
+     */
+    getSamplingProvider(): SamplingProvider {
+        try {
+            // Dynamic import to avoid hard dependency on vscode in test environments
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const vscode = require('vscode') as typeof import('vscode');
+            const enabled = vscode.workspace
+                .getConfiguration('coogent')
+                .get<boolean>('enableSampling', false);
+            if (enabled) {
+                return new MCPSamplingProvider(this.server);
+            }
+        } catch {
+            // vscode module unavailable (unit test environment) — fall through to noop
+        }
+        return new NoopSamplingProvider();
     }
 
     /** Get the full task state for internal use (e.g., from the engine). */
@@ -358,5 +397,37 @@ export class CoogentMCPServer {
     /** Remove a `phaseCompleted` listener. */
     offPhaseCompleted(listener: (handoff: PhaseHandoff) => void): void {
         this.emitter.off('phaseCompleted', listener);
+    }
+
+    // ── Backup / Restore ──────────────────────────────────────────────────
+
+    /**
+     * Create a snapshot backup of the current database.
+     * Delegates to the ArtifactDBBackup instance created during init().
+     *
+     * @returns Absolute path to the created backup file.
+     * @throws If the backup manager has not been initialised (init() not called).
+     */
+    async createBackup(): Promise<string> {
+        if (!this.backupManager) {
+            throw new Error('[CoogentMCPServer] Backup manager not initialised. Call init() first.');
+        }
+        const backupPath = await this.backupManager.createSnapshot();
+        await this.backupManager.rotateBackups();
+        return backupPath;
+    }
+
+    /**
+     * Restore the database from a backup file.
+     * After restoring, the server should be re-initialised to reload from disk.
+     *
+     * @param backupPath Absolute path to the backup file.
+     * @throws If the backup manager has not been initialised or the backup file is missing.
+     */
+    async restoreBackup(backupPath: string): Promise<void> {
+        if (!this.backupManager) {
+            throw new Error('[CoogentMCPServer] Backup manager not initialised. Call init() first.');
+        }
+        await this.backupManager.restoreFromBackup(backupPath);
     }
 }

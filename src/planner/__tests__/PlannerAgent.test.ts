@@ -106,16 +106,16 @@ describe('PlannerAgent', () => {
             expect(statusSpy).toHaveBeenCalledWith('error', expect.stringContaining('No cached output or response file'));
         });
 
-        it('should emit plan:generated when cached output contains a valid runbook', () => {
+        it('should emit plan:generated when cached output contains a valid runbook', async () => {
             const generatedSpy = jest.fn();
             const statusSpy = jest.fn();
             agent.on('plan:generated', generatedSpy);
             agent.on('plan:status', statusSpy);
 
-            // Simulate cached timeout output by using internal access
-            (agent as any).lastTimeoutOutput = validRunbookOutput;
+            // Simulate cached timeout output by using internal access to retryManager
+            (agent as any).retryManager.cacheOutput(validRunbookOutput);
 
-            agent.retryParse();
+            await agent.retryParse();
 
             expect(generatedSpy).toHaveBeenCalledWith(
                 expect.objectContaining({ project_id: 'test-project' }),
@@ -133,7 +133,7 @@ describe('PlannerAgent', () => {
             agent.on('plan:error', errorSpy);
             agent.on('plan:status', statusSpy);
 
-            (agent as any).lastTimeoutOutput = 'This is not JSON at all, just some text output';
+            (agent as any).retryManager.cacheOutput('This is not JSON at all, just some text output');
 
             await agent.retryParse();
 
@@ -147,7 +147,7 @@ describe('PlannerAgent', () => {
             const errorSpy = jest.fn();
             agent.on('plan:error', errorSpy);
 
-            (agent as any).lastTimeoutOutput = '   \n\t  ';
+            (agent as any).retryManager.cacheOutput('   \n\t  ');
 
             await agent.retryParse();
 
@@ -167,12 +167,12 @@ describe('PlannerAgent', () => {
         });
 
         it('should return true when timeout output is cached', () => {
-            (agent as any).lastTimeoutOutput = validRunbookOutput;
+            (agent as any).retryManager.cacheOutput(validRunbookOutput);
             expect(agent.hasTimeoutOutput()).toBe(true);
         });
 
         it('should return false when cached output is empty string', () => {
-            (agent as any).lastTimeoutOutput = '';
+            (agent as any).retryManager.cacheOutput('');
             expect(agent.hasTimeoutOutput()).toBe(false);
         });
     });

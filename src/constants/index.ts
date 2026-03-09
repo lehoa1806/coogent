@@ -4,3 +4,4 @@
 
 export * from './paths.js';
 export * from './storage.js';
+export * from './StorageBase.js';

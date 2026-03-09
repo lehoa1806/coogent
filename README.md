@@ -78,6 +78,9 @@ You: "Refactor the authentication module to use JWT"
 - **Specialized Worker Library** — Skill-based routing assigns domain-expert workers (frontend, backend, QA, etc.) to each phase using Jaccard similarity matching
 - **Custom Worker Profiles** — Define project-specific worker profiles in `.coogent/workers.json` with custom system prompts and skill tags
 - **Multi-Root Workspace Support** — Works across all open workspace folders with cross-root file resolution, multi-repo Git sandboxing, and extension-managed state storage
+- **MCP Prompts** — 5 discoverable prompt templates (`plan_repo_task`, `review_generated_runbook`, `repair_failed_phase`, `consolidate_session`, `architecture_review_workspace`) for MCP client integration
+- **MCP Sampling** — Feature-gated LLM inference via MCP Sampling protocol for review and summarization workflows
+- **Database Backup & Recovery** — Periodic ArtifactDB snapshots with atomic writes and automatic rotation
 
 ## Screenshots
 
@@ -95,7 +98,7 @@ You: "Refactor the authentication module to use JWT"
 
 ### Prerequisites
 
-- [Antigravity IDE](https://antigravity.dev) (VS Code ≥ 1.85)
+- [Antigravity IDE](https://antigravity.dev) (VS Code ≥ 1.85) — Coogent requires Antigravity IDE's built-in LLM access via the `vscode.lm` API for AI planning and worker execution
 - Node.js 18+
 - Git
 
@@ -143,7 +146,12 @@ All settings live under `coogent.*` in VS Code Settings:
 | `tokenLimit` | `100,000` | Max tokens per phase context |
 | `workerTimeoutMs` | `900,000` | Worker timeout (15 min) |
 | `maxRetries` | `3` | Auto-retry attempts per phase |
+| `maxConcurrentWorkers` | `4` | Parallel worker limit |
+| `contextBudgetTokens` | `150,000` | Token budget for context pack assembly |
+| `conversationMode` | `isolated` | Worker mode: `isolated`, `continuous`, `smart-switch` |
 | `logLevel` | `info` | Log verbosity (`trace` through `off`) |
+
+> See [USER_GUIDE.md](docs/USER_GUIDE.md#configuration) for all 18 settings including security flags, encryption, and sampling.
 
 ## Documentation
 
@@ -154,6 +162,7 @@ See [docs/SITE_MAP.md](docs/SITE_MAP.md) for the full documentation index, inclu
 - [Developer & Contributor Guide](docs/DEVELOPER_GUIDE.md)
 - [API & Integration Reference](docs/API_REFERENCE.md)
 - [Deployment & Operations](docs/OPERATIONS.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

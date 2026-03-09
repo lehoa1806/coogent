@@ -6,7 +6,7 @@
 import * as vscode from 'vscode';
 import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { COOGENT_DIR, IPC_DIR } from '../constants/paths.js';
+import { getSessionDir } from '../constants/paths.js';
 import { asTimestamp, type HostToWebviewMessage, type WebviewToHostMessage } from '../types/index.js';
 import type { Engine } from '../engine/Engine.js';
 import { formatSessionDirName, type SessionManager } from '../session/SessionManager.js';
@@ -73,7 +73,8 @@ export class MissionControlPanel {
     onReset?: OnResetFn,
     mcpServer?: CoogentMCPServer,
     mcpClientBridge?: MCPClientBridge,
-    agentRegistry?: AgentRegistry
+    agentRegistry?: AgentRegistry,
+    storageBase?: string
   ): void {
     const column = vscode.window.activeTextEditor?.viewColumn;
 
@@ -103,7 +104,8 @@ export class MissionControlPanel {
       onReset,
       mcpServer,
       mcpClientBridge,
-      agentRegistry
+      agentRegistry,
+      storageBase
     );
   }
 
@@ -121,7 +123,8 @@ export class MissionControlPanel {
     private readonly onReset?: OnResetFn,
     private readonly mcpServer?: CoogentMCPServer,
     private readonly mcpClientBridge?: MCPClientBridge,
-    private readonly agentRegistry?: AgentRegistry
+    private readonly agentRegistry?: AgentRegistry,
+    private readonly storageBase?: string
   ) {
     this.panel = panel;
     this.panel.webview.html = this.getHtmlForWebview();
@@ -338,13 +341,13 @@ export class MissionControlPanel {
         // Create a fresh session so loadRunbook() won't reload the old data
         const newSessionId = randomUUID();
         const newSessionDirName = formatSessionDirName(newSessionId);
-        const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        if (workspaceRoot) {
-          // TODO: Session IPC dirs should use storageBase (context.storageUri), not workspaceRoot.
-          // This matches CommandRegistry.ts — both need access to storageBase for correctness.
-          const newSessionDir = path.join(
-            workspaceRoot, COOGENT_DIR, IPC_DIR, newSessionDirName
-          );
+        if (!this.storageBase) {
+          // storageBase unavailable — fall back to vanilla reset without session dir
+          this.engine.reset().catch(err => this.handleError(err));
+          break;
+        }
+        {
+          const newSessionDir = getSessionDir(this.storageBase, newSessionDirName);
           // ERR-04: Purge the old MCP task before switching so the in-memory store
           // doesn't grow unboundedly across session resets.
           const oldTaskId = this.engine.getSessionDirName();
@@ -356,8 +359,6 @@ export class MissionControlPanel {
           this.sessionManager?.setCurrentSessionId(newSessionId, newSessionDirName);
           // Notify extension.ts to update currentSessionDir and plannerAgent
           this.onReset?.(newSessionDir, newSessionDirName);
-        } else {
-          this.engine.reset().catch(err => this.handleError(err));
         }
         break;
       }

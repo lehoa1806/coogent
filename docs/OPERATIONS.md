@@ -30,7 +30,7 @@ npm run package                # Produces coogent-<version>.vsix
 Cmd+Shift+P → "Extensions: Install from VSIX…" → select .vsix
 
 # Via CLI:
-code --install-extension coogent-0.1.0.vsix
+code --install-extension coogent-0.2.0.vsix
 ```
 
 ### Verify
@@ -49,7 +49,7 @@ code --install-extension coogent-0.1.0.vsix
 | Step | Command / Action | Pass Criteria |
 |---|---|---|
 | Type check | `npm run lint` | 0 errors |
-| Test suite | `npm test` | 57 suites, 692 tests pass |
+| Test suite | `npm test` | 75 test files pass |
 | Security audit | `npm audit --audit-level=high` | No high/critical vulnerabilities |
 | CI pipeline | `npm run ci` | All above in sequence |
 | Version bump | Update `version` in `package.json` | Semantic versioning |
@@ -57,7 +57,7 @@ code --install-extension coogent-0.1.0.vsix
 
 ### Execution
 
-1. Create a release tag: `git tag v0.1.0 && git push --tags`
+1. Create a release tag: `git tag v0.2.0 && git push --tags`
 2. Distribute the `.vsix` file (or publish to marketplace)
 3. Users install via VSIX or marketplace update
 
@@ -166,3 +166,41 @@ Each log entry is a single-line JSON object:
 5. **Force reset**: `Coogent: Reset Session` clears in-memory state and returns to `IDLE`
 6. **Inspect file locks**: Check for `.coogent/ipc/<id>/.lock` — stale locks auto-expire but can be manually deleted
 7. **Unicode in source**: If refactoring tools fail on emoji markers (`⏳`, `✅`), use line-range deletion or hex escapes
+
+---
+
+## Backup & Recovery Runbook
+
+### Automatic Backups
+
+`ArtifactDBBackup` creates periodic snapshots of the SQLite database. Backups are stored in `<storageBase>/backups/` with ISO-timestamp filenames.
+
+### Manual Snapshot
+
+To trigger a manual backup from the extension host:
+
+```typescript
+const backup = new ArtifactDBBackup(storageBase.getDBPath(), storageBase.getBackupDir());
+const snapshotPath = await backup.createSnapshot();
+await backup.rotateBackups(5); // keep last 5
+```
+
+### Restore from Backup
+
+1. **Find the latest backup**:
+   ```typescript
+   const latestPath = await backup.getLatestBackup();
+   ```
+
+2. **Restore** (atomic — writes to `.tmp` then renames):
+   ```typescript
+   await backup.restoreFromBackup(latestPath);
+   ```
+
+3. **Reload**: Restart the extension or IDE window to reload the in-memory `sql.js` instance from the restored file.
+
+### Backup File Format
+
+- Files: `artifacts-<ISO-timestamp>.db` (self-contained SQLite copies)
+- Default retention: 3 most recent backups
+- Location: Derived from `StorageBase.getBackupDir()` — see [Architecture — Storage & Path Management](ARCHITECTURE.md#storage--path-management)

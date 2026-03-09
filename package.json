@@ -2,7 +2,7 @@
   "name": "coogent",
   "displayName": "Coogent — Multi-Agent Engine",
   "description": "Context Diffusion engine for Antigravity IDE. Breaks massive implementation plans into isolated, zero-context micro-tasks executed by ephemeral AI agents.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "antigravity",
   "license": "MIT",
   "icon": "icon.png",
@@ -91,6 +91,11 @@
       {
         "command": "coogent.dumpState",
         "title": "Coogent: Dump State",
+        "category": "Coogent"
+      },
+      {
+        "command": "coogent.resumePending",
+        "title": "Coogent: Resume Pending Phases",
         "category": "Coogent"
       }
     ],
@@ -295,6 +300,11 @@
           "minimum": 100000,
           "maximum": 2000000,
           "description": "Maximum token budget for context pack assembly per phase (default: 150,000)."
+        },
+        "coogent.enableSampling": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable MCP Sampling for optional AI-assisted workflows (feature flag)."
         }
       }
     },
@@ -311,7 +321,7 @@
   },
   "lint-staged": {
     "src/**/*.ts": [
-      "eslint --max-warnings=70"
+      "eslint --max-warnings=50"
     ]
   },
   "scripts": {

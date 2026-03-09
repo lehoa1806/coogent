@@ -409,6 +409,17 @@ export class SessionManager {
         } catch {
             // Best-effort: skip if deletion fails
         }
+
+        // Also remove the corresponding rows from the database
+        if (this.db) {
+            try {
+                const dirName = path.basename(dir);
+                this.db.deleteSessionFromDB(dirName);
+                log.info(`[SessionManager] Deleted session from DB: ${dirName}`);
+            } catch (err) {
+                log.warn('[SessionManager] Failed to delete session from DB:', err);
+            }
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

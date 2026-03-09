@@ -2,13 +2,17 @@
 // src/EngineWiring.ts — Engine ↔ ADK ↔ UI event subscriptions
 // ─────────────────────────────────────────────────────────────────────────────
 // R1 refactor: Extracted from extension.ts activate() (lines 487–666, 741–786).
+// P3.2 refactor: executePhase() decomposed into ContextAssemblyAdapter,
+//   WorkerLauncher, and WorkerResultProcessor collaborators.
 
 import { randomUUID } from 'node:crypto';
 import { asTimestamp, EngineState, EngineEvent, type Phase, type HostToWebviewMessage } from './types/index.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
-import { RESOURCE_URIS } from './mcp/types.js';
 import log from './logger/log.js';
 import type { ServiceContainer } from './ServiceContainer.js';
+import { ContextAssemblyAdapter } from './engine/ContextAssemblyAdapter.js';
+import { WorkerLauncher } from './engine/WorkerLauncher.js';
+import { WorkerResultProcessor } from './engine/WorkerResultProcessor.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  wireEngine — connects Engine, ADK, MCP, and Consolidation events
@@ -201,6 +205,15 @@ export function wireEngine(
         }).catch(log.onError);
     });
 
+    // ── Build WorkerResultProcessor for worker lifecycle delegation ────
+    const resultProcessor = new WorkerResultProcessor(
+        engine as unknown as import('./engine/WorkerResultProcessor.js').ResultProcessorEngine,
+        getSessionDirName,
+        mcpServer as unknown as import('./engine/WorkerResultProcessor.js').ResultProcessorMCPServer | undefined,
+        handoffExtractor as unknown as import('./engine/WorkerResultProcessor.js').ResultProcessorHandoffExtractor | undefined,
+        mcpBridge as unknown as import('./engine/WorkerResultProcessor.js').ResultProcessorMCPBridge | undefined,
+    );
+
     // ── ADK → Engine (worker lifecycle) ────────────────────────────────
     adkController.on('worker:exited', (phaseId, exitCode) => {
         // F-5 audit fix: Clear incremental flush interval before final flush
@@ -208,122 +221,18 @@ export function wireEngine(
 
         outputRegistry?.flushAndRemove(phaseId);
 
-        // RACE-FIX: Await handoff extraction + MCP submission BEFORE triggering
-        // the engine FSM transition. The FSM transition broadcasts STATE_SNAPSHOT
-        // to the webview, which immediately fetches the handoff URI. If submission
-        // hasn't completed, the webview gets "Phase not found".
-        const handoffPromise: Promise<void> = (async () => {
-            if (exitCode === 0 && handoffExtractor && svc.currentSessionDir) {
-                const accumulatedOutput = workerOutputAccumulator.get(phaseId) ?? '';
-                const accumulatedStderr = workerStderrAccumulator.get(phaseId) ?? '';
-                workerOutputAccumulator.delete(phaseId);
-                workerStderrAccumulator.delete(phaseId);
+        const accumulatedOutput = workerOutputAccumulator.get(phaseId) ?? '';
+        const accumulatedStderr = workerStderrAccumulator.get(phaseId) ?? '';
+        workerOutputAccumulator.delete(phaseId);
+        workerStderrAccumulator.delete(phaseId);
 
-                // Persist worker output + stderr to ArtifactDB so it survives session reloads
-                if (mcpServer && (accumulatedOutput || accumulatedStderr)) {
-                    const runbook = engine.getRunbook() ?? null;
-                    const phaseObj = runbook?.phases.find(p => p.id === phaseId);
-                    const phaseIdStr = phaseObj?.mcpPhaseId;
-                    if (phaseIdStr) {
-                        mcpServer.upsertWorkerOutput(getSessionDirName(), phaseIdStr, accumulatedOutput, accumulatedStderr);
-                    }
-                }
-
-                try {
-                    const report = await handoffExtractor.extractHandoff(phaseId, accumulatedOutput);
-                    if (mcpBridge && report) {
-                        const runbook = engine.getRunbook() ?? null;
-                        const phaseObj = runbook?.phases.find(p => p.id === phaseId);
-                        const phaseIdStr = phaseObj?.mcpPhaseId;
-                        if (!phaseIdStr) {
-                            log.warn(`[Coogent] mcpPhaseId missing for phase ${phaseId} — skipping handoff submission.`);
-                        } else {
-                            await mcpBridge.submitPhaseHandoff(
-                                getSessionDirName(),
-                                phaseIdStr,
-                                report.decisions ?? [],
-                                report.modified_files ?? [],
-                                report.unresolved_issues ?? []
-                            );
-
-                            // IPC-FIX: Extract and persist implementation plan from worker
-                            // output. When the worker runs via file-based IPC (no vscode.lm),
-                            // it cannot call submit_implementation_plan via the in-process MCP.
-                            // The extractImplementationPlan() dedup guard skips extraction if
-                            // the plan was already submitted (e.g. via vscode.lm path).
-                            try {
-                                const plan = handoffExtractor.extractImplementationPlan(
-                                    accumulatedOutput,
-                                    getSessionDirName(),
-                                    phaseIdStr,
-                                );
-                                if (plan) {
-                                    await mcpBridge.submitImplementationPlan(
-                                        getSessionDirName(),
-                                        plan,
-                                        phaseIdStr,
-                                    );
-                                    log.info(
-                                        `[EngineWiring] Extracted and persisted implementation plan ` +
-                                        `for phase ${phaseId} (${plan.length} chars).`
-                                    );
-                                    MissionControlPanel.broadcast({
-                                        type: 'LOG_ENTRY',
-                                        payload: {
-                                            timestamp: asTimestamp(),
-                                            level: 'info',
-                                            message: `📋 Phase ${phaseId}: implementation plan extracted from worker output.`,
-                                        },
-                                    });
-                                }
-                            } catch (planErr) {
-                                log.warn(
-                                    `[EngineWiring] Phase ${phaseId}: implementation plan ` +
-                                    `extraction/submission failed:`,
-                                    planErr
-                                );
-                            }
-                        }
-                    }
-                } catch (err) {
-                    log.error('[Coogent] Handoff extraction/submission error:', err);
-                    // LF-6 FIX: Surface handoff failure to the webview so users
-                    // know a child agent may be missing parent context.
-                    MissionControlPanel.broadcast({
-                        type: 'LOG_ENTRY',
-                        payload: {
-                            timestamp: asTimestamp(),
-                            level: 'warn',
-                            message: `⚠ Phase ${phaseId}: handoff extraction/submission failed — ` +
-                                `child phases may start without full parent context. ` +
-                                `(${err instanceof Error ? err.message : String(err)})`,
-                        },
-                    });
-                }
-            } else {
-                workerOutputAccumulator.delete(phaseId);
-                workerStderrAccumulator.delete(phaseId);
-            }
-        })();
-
-        // Engine FSM transition fires AFTER handoff is persisted (or fails gracefully).
-        // Errors in handoff extraction/submission are caught above and don't block the FSM.
-        handoffPromise
-            .then(() => {
-                // Persist phase completion to phase_logs
-                if (mcpServer) {
-                    const rb = engine.getRunbook() ?? null;
-                    const pObj = rb?.phases.find(p => p.id === phaseId);
-                    if (pObj?.mcpPhaseId) {
-                        mcpServer.upsertPhaseLog(getSessionDirName(), pObj.mcpPhaseId, {
-                            exitCode: exitCode,
-                            completedAt: Date.now(),
-                        });
-                    }
-                }
-                return engine.onWorkerExited(phaseId, exitCode);
-            })
-            .catch(log.onError);
+        resultProcessor.processWorkerExit(
+            phaseId,
+            exitCode,
+            accumulatedOutput,
+            accumulatedStderr,
+            svc.currentSessionDir,
+        ).catch(log.onError);
     });
 
     adkController.on('worker:timeout', (phaseId) => {
@@ -332,23 +241,13 @@ export function wireEngine(
 
         outputRegistry?.flushAndRemove(phaseId);
 
-        // M3 audit fix: Flush accumulated stdout/stderr to DB before marking failure
-        // so crash diagnostics survive for debugging.
-        if (mcpServer) {
-            const accOut = workerOutputAccumulator.get(phaseId) ?? '';
-            const accErr = workerStderrAccumulator.get(phaseId) ?? '';
-            if (accOut || accErr) {
-                const rb = engine.getRunbook() ?? null;
-                const pObj = rb?.phases.find(p => p.id === phaseId);
-                if (pObj?.mcpPhaseId) {
-                    mcpServer.upsertWorkerOutput(getSessionDirName(), pObj.mcpPhaseId, accOut, accErr);
-                }
-            }
-        }
+        const accOut = workerOutputAccumulator.get(phaseId) ?? '';
+        const accErr = workerStderrAccumulator.get(phaseId) ?? '';
         workerOutputAccumulator.delete(phaseId);
         workerStderrAccumulator.delete(phaseId);
 
-        engine.onWorkerFailed(phaseId, 'timeout').catch(log.onError);
+        resultProcessor.processWorkerFailure(phaseId, 'timeout', accOut, accErr)
+            .catch(log.onError);
     });
 
     adkController.on('worker:crash', (phaseId) => {
@@ -357,22 +256,13 @@ export function wireEngine(
 
         outputRegistry?.flushAndRemove(phaseId);
 
-        // M3 audit fix: Flush accumulated stdout/stderr to DB before marking failure
-        if (mcpServer) {
-            const accOut = workerOutputAccumulator.get(phaseId) ?? '';
-            const accErr = workerStderrAccumulator.get(phaseId) ?? '';
-            if (accOut || accErr) {
-                const rb = engine.getRunbook() ?? null;
-                const pObj = rb?.phases.find(p => p.id === phaseId);
-                if (pObj?.mcpPhaseId) {
-                    mcpServer.upsertWorkerOutput(getSessionDirName(), pObj.mcpPhaseId, accOut, accErr);
-                }
-            }
-        }
+        const accOut = workerOutputAccumulator.get(phaseId) ?? '';
+        const accErr = workerStderrAccumulator.get(phaseId) ?? '';
         workerOutputAccumulator.delete(phaseId);
         workerStderrAccumulator.delete(phaseId);
 
-        engine.onWorkerFailed(phaseId, 'crash').catch(log.onError);
+        resultProcessor.processWorkerFailure(phaseId, 'crash', accOut, accErr)
+            .catch(log.onError);
     });
 
     // ── ADK → Webview (output streaming via OutputBufferRegistry) ────────
@@ -475,6 +365,9 @@ export function wireEngine(
  * Full phase execution pipeline: assemble context → spawn worker.
  * Extracted from the module-level `executePhase()` in extension.ts.
  *
+ * P3.2 refactor: Steps are delegated to ContextAssemblyAdapter and WorkerLauncher.
+ * The public signature is preserved for backward compatibility.
+ *
  * @param workspaceRoots  All active workspace roots (defaults to [workspaceRoot]).
  */
 async function executePhase(
@@ -485,7 +378,7 @@ async function executePhase(
     masterTaskId: string,
     workspaceRoots: string[] = [workspaceRoot]
 ): Promise<void> {
-    const { engine, contextScoper, adkController, logger, handoffExtractor, currentSessionDir } = svc;
+    const { engine, contextScoper, adkController, logger } = svc;
 
     // Guard against stale healing timer fires after abort/reset.
     // Allow ERROR_PAUSED → RETRY transition for self-healing retries
@@ -507,202 +400,21 @@ async function executePhase(
         return;
     }
 
-    // Step 0: Log phase start
-    await logger.logPhaseStart(phase.id);
-
-    // Step 1: Assemble context
-    // Multi-root: prefer assembleMultiRoot if the scoper supports it,
-    // otherwise fall back to single-root assemble.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- duck-type check for optional multi-root support
-    const scoper = contextScoper as unknown as Record<string, unknown>;
-    const result = typeof scoper?.assembleMultiRoot === 'function'
-        ? await (scoper.assembleMultiRoot as (phase: Phase, roots: string[]) => Promise<import('./types/index.js').ContextResult>)(phase, workspaceRoots)
-        : await contextScoper!.assemble(phase, workspaceRoot);
-
-    if (!result.ok) {
-        MissionControlPanel.broadcast({
-            type: 'TOKEN_BUDGET',
-            payload: {
-                phaseId: phase.id,
-                breakdown: result.breakdown,
-                totalTokens: result.totalTokens,
-                limit: result.limit,
-            },
-        });
-        MissionControlPanel.broadcast({
-            type: 'ERROR',
-            payload: {
-                code: 'TOKEN_OVER_BUDGET',
-                message: `Phase ${phase.id} context exceeds token limit (${result.totalTokens}/${result.limit}).`,
-                phaseId: phase.id,
-            },
-        });
+    // ── Step 1: Assemble context (delegated to ContextAssemblyAdapter) ──
+    const assembler = new ContextAssemblyAdapter(
+        contextScoper as unknown as import('./engine/ContextAssemblyAdapter.js').ContextScoperLike,
+        logger as unknown as import('./engine/ContextAssemblyAdapter.js').ContextAssemblyLogger,
+    );
+    const assemblyResult = await assembler.assembleContext(phase, workspaceRoot, workspaceRoots);
+    if (!assemblyResult.ok) {
         engine?.onWorkerFailed(phase.id, 'crash').catch(log.onError);
         return;
     }
 
-    // Step 2: Log context assembly
-    await logger.logContextAssembly(
-        phase.id, result.totalTokens, result.limit, result.breakdown.length
+    // ── Step 2: Build prompt + launch worker (delegated to WorkerLauncher) ──
+    const launcher = new WorkerLauncher(
+        adkController as unknown as import('./engine/WorkerLauncher.js').WorkerLauncherADK,
+        logger as unknown as import('./engine/WorkerLauncher.js').WorkerLauncherLogger,
     );
-
-    // Step 3: Send token budget to UI
-    MissionControlPanel.broadcast({
-        type: 'TOKEN_BUDGET',
-        payload: {
-            phaseId: phase.id,
-            breakdown: result.breakdown,
-            totalTokens: result.totalTokens,
-            limit: result.limit,
-        },
-    });
-
-    // Step 4: Log the injected prompt
-    await logger.logPhasePrompt(phase.id, phase.prompt);
-
-    // Step 5: Initialize telemetry run (on first phase)
-    const runbook = engine?.getRunbook() ?? null;
-    if (runbook && phase.id === 0) {
-        await logger.initRun(runbook.project_id);
-    }
-
-    // Step 5.5: Build handoff context from dependent phases.
-    //
-    // LF-2 NOTE — Dual-Path Context Injection (intentional design):
-    //   PATH A (inline metadata): `buildNextContext()` loads handoff metadata
-    //          (decisions, issues, next_steps) and emits Pull Model file-fetch
-    //          directives. This is injected directly into the effective prompt.
-    //   PATH B (MCP warm-start URIs): `mcpResourceUris.parentHandoffs` provides
-    //          `coogent://` URIs that workers can read via MCP read_resource.
-    //   Both paths coexist: Path A gives immediate context, Path B enables
-    //   on-demand retrieval. Consolidation into MCP-only is a V2 consideration.
-    let handoffContext = '';
-    if (handoffExtractor && currentSessionDir) {
-        try {
-            handoffContext = await handoffExtractor.buildNextContext(phase);
-        } catch (err) {
-            log.error('[Coogent] Failed to build handoff context:', err);
-        }
-    }
-
-    // CF-2 FIX: Token budget accounting for handoffContext.
-    // After the Pull Model fix (CF-1), handoffContext contains only metadata
-    // and file-pointer directives (~2K tokens typical). This guard catches
-    // edge cases where many parents produce excessive metadata.
-    const HANDOFF_TOKEN_CAP = 30_000; // Reserve 70K for context_files + prompt
-    const CHARS_PER_TOKEN = 4;
-    const handoffTokenEstimate = Math.ceil(handoffContext.length / CHARS_PER_TOKEN);
-    if (handoffTokenEstimate > HANDOFF_TOKEN_CAP) {
-        log.warn(
-            `[EngineWiring] Phase ${phase.id}: handoffContext exceeds token cap ` +
-            `(~${handoffTokenEstimate} tokens > ${HANDOFF_TOKEN_CAP}). Truncating.`
-        );
-        MissionControlPanel.broadcast({
-            type: 'LOG_ENTRY',
-            payload: {
-                timestamp: asTimestamp(),
-                level: 'warn',
-                message: `⚠ Phase ${phase.id}: handoff context truncated (~${handoffTokenEstimate} tokens > ${HANDOFF_TOKEN_CAP} cap).`,
-            },
-        });
-        // Truncate to cap — use character count to stay within budget
-        handoffContext = handoffContext.slice(0, HANDOFF_TOKEN_CAP * CHARS_PER_TOKEN);
-    }
-
-    // Step 5.6: Resolve agent profile from AgentRegistry
-    let workerSystemContext = '';
-    if (svc.agentRegistry) {
-        try {
-            const agentProfile = await svc.agentRegistry.getBestAgent(phase.required_skills ?? []);
-            log.info(`[EngineWiring] Phase ${phase.id}: routed to agent '${agentProfile.id}' (${agentProfile.name})`);
-            workerSystemContext = `## Worker Role: ${agentProfile.name}\n${agentProfile.system_prompt}\n\n`;
-
-            // Derive plan requirement from agent's default_output
-            const NON_PLAN_OUTPUTS = new Set(['review_report', 'research_summary', 'debug_report', 'task_graph']);
-            const planRequired = !NON_PLAN_OUTPUTS.has(agentProfile.default_output);
-            if (svc.mcpServer && phase.mcpPhaseId) {
-                svc.mcpServer.setPhasePlanRequired(masterTaskId, phase.mcpPhaseId, planRequired);
-            }
-        } catch (err) {
-            log.warn(
-                `[EngineWiring] Phase ${phase.id}: AgentRegistry lookup failed, ` +
-                `falling back to raw prompt processing — planRequired defaults to true.`,
-                err
-            );
-            // Lookup failed → same default as "not configured": raw workers
-            // are expected to produce an implementation plan.
-            if (svc.mcpServer && phase.mcpPhaseId) {
-                svc.mcpServer.setPhasePlanRequired(masterTaskId, phase.mcpPhaseId, true);
-            }
-        }
-    } else {
-        log.info(
-            `[EngineWiring] Phase ${phase.id}: AgentRegistry not configured (useAgentSelection=false). ` +
-            `Falling back to raw prompt processing — planRequired defaults to true ` +
-            `because the default CLI worker is expected to produce an implementation plan.`
-        );
-        // Raw prompt workers (e.g. Claude Code) are expected to submit an
-        // implementation plan as part of their standard output flow. Explicitly
-        // set planRequired so MCPResourceHandler knows what to expect when the
-        // webview fetches the phase's implementation_plan resource.
-        if (svc.mcpServer && phase.mcpPhaseId) {
-            svc.mcpServer.setPhasePlanRequired(masterTaskId, phase.mcpPhaseId, true);
-        }
-    }
-
-    // Step 6: Build effective prompt
-    const distillationPrompt = handoffExtractor?.generateDistillationPrompt(phase.id as number) ?? '';
-    let effectivePrompt = phase.prompt;
-    if (workerSystemContext) {
-        effectivePrompt = `${workerSystemContext}${effectivePrompt}`;
-    }
-    if (handoffContext) {
-        effectivePrompt = `# Context from Previous Phases\n\n${handoffContext}\n---\n\n${effectivePrompt}`;
-    }
-    if (distillationPrompt) {
-        effectivePrompt = `${effectivePrompt}\n\n---\n\n${distillationPrompt}`;
-    }
-    const effectivePhase = { ...phase, prompt: effectivePrompt };
-
-    // S2 audit fix: Persist the effective prompt (includes handoff context, worker
-    // system prompt, and distillation directives) to phase_logs.request_context.
-    if (svc.mcpServer && phase.mcpPhaseId) {
-        svc.mcpServer.upsertPhaseLog(masterTaskId, phase.mcpPhaseId, {
-            requestContext: effectivePrompt,
-        });
-    }
-
-    // MCP warm-start URIs
-    const mcpResourceUris: {
-        implementationPlan?: string;
-        parentHandoffs?: string[];
-    } = {
-        implementationPlan: RESOURCE_URIS.taskPlan(masterTaskId),
-    };
-
-    if (phase.depends_on && (phase.depends_on as unknown[]).length > 0 && engine) {
-        const rb = engine.getRunbook();
-        // LF-3 FIX: O(1) Map lookup for phase resolution instead of O(n) find().
-        // Consistent with the Map-based pattern used in Scheduler.getReadyPhases().
-        const phaseMap = new Map(rb?.phases.map(p => [p.id, p]) ?? []);
-        const parentHandoffs: string[] = [];
-        for (const parentId of phase.depends_on) {
-            const parentPhase = phaseMap.get(parentId);
-            // MF-3 FIX: Defense-in-depth — check parent is completed AND has mcpPhaseId.
-            // Log a warning if either is missing so silent context loss is visible.
-            if (parentPhase?.mcpPhaseId && parentPhase.status === 'completed') {
-                parentHandoffs.push(RESOURCE_URIS.phaseHandoff(masterTaskId, parentPhase.mcpPhaseId));
-            } else {
-                log.warn(
-                    `[EngineWiring] Phase ${phase.id}: parent ${parentId} missing mcpPhaseId ` +
-                    `or not completed (status=${parentPhase?.status}, mcpPhaseId=${parentPhase?.mcpPhaseId})`
-                );
-            }
-        }
-        if (parentHandoffs.length > 0) {
-            mcpResourceUris.parentHandoffs = parentHandoffs;
-        }
-    }
-
-    await adkController.spawnWorker(effectivePhase, timeoutMs, masterTaskId, mcpResourceUris);
+    await launcher.launch(phase, timeoutMs, masterTaskId, svc, workspaceRoots);
 }
