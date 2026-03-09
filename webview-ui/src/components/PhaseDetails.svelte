@@ -27,9 +27,6 @@
     /** Toggle state for MCP artifacts section */
     let showMCPArtifacts = $state(false);
 
-    /** Original prompt the user submitted */
-    let lastPrompt = $derived(appState.lastPrompt ?? "");
-
     let selectedPhase = $derived(
         appState.phases.find((p) => p.id === appState.selectedPhaseId) as
             | Phase
@@ -240,13 +237,8 @@
 
 <div class="phase-details">
     {#if selectedPhase}
-        <!-- Phase Header (title, elapsed badge, original prompt) -->
-        <PhaseHeader
-            {selectedPhase}
-            {phaseNumber}
-            {lastPrompt}
-            {liveElapsedMs}
-        />
+        <!-- Phase Header (title, elapsed badge) -->
+        <PhaseHeader {selectedPhase} {phaseNumber} {liveElapsedMs} />
 
         <!-- Prompt -->
         <div class="phase-detail-section">

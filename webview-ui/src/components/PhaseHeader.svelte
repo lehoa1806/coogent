@@ -1,5 +1,5 @@
 <!-- ─────────────────────────────────────────────────────────────────────── -->
-<!-- PhaseHeader.svelte — Phase title, elapsed time badge, original prompt  -->
+<!-- PhaseHeader.svelte — Phase title and elapsed time badge              -->
 <!-- ─────────────────────────────────────────────────────────────────────── -->
 
 <script lang="ts">
@@ -8,12 +8,10 @@
     interface Props {
         selectedPhase: Phase;
         phaseNumber: number;
-        lastPrompt: string;
         liveElapsedMs: number;
     }
 
-    let { selectedPhase, phaseNumber, lastPrompt, liveElapsedMs }: Props =
-        $props();
+    let { selectedPhase, phaseNumber, liveElapsedMs }: Props = $props();
 
     function truncatePrompt(prompt: string): string {
         if (!prompt) return "";
@@ -28,19 +26,6 @@
         return m > 0 ? `${m}m ${s}s` : `${s}s`;
     }
 </script>
-
-<!-- Persistent original prompt (collapsible) -->
-{#if lastPrompt}
-    <details class="original-prompt-details">
-        <summary class="original-prompt-summary">
-            <span class="summary-icon">💬</span>
-            Your original prompt
-        </summary>
-        <div class="original-prompt-body">
-            <p>{lastPrompt}</p>
-        </div>
-    </details>
-{/if}
 
 <div class="phase-title-row">
     <h3>Phase {phaseNumber}: {truncatePrompt(selectedPhase.prompt)}</h3>
@@ -104,63 +89,5 @@
         50% {
             opacity: 0.65;
         }
-    }
-
-    /* ── Original prompt collapsible ────────────────────────────────── */
-
-    .original-prompt-details {
-        margin-bottom: 4px;
-        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.25));
-        border-radius: 5px;
-        overflow: hidden;
-        background: var(--vscode-editorWidget-background);
-    }
-
-    .original-prompt-summary {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 12px;
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--vscode-descriptionForeground);
-        cursor: pointer;
-        user-select: none;
-        list-style: none;
-    }
-
-    .original-prompt-summary::-webkit-details-marker {
-        display: none;
-    }
-
-    .original-prompt-summary::before {
-        content: "›";
-        font-size: 14px;
-        transition: transform 0.15s ease;
-        color: var(--vscode-descriptionForeground);
-        line-height: 1;
-    }
-
-    details[open] .original-prompt-summary::before {
-        transform: rotate(90deg);
-    }
-
-    .summary-icon {
-        font-size: 12px;
-    }
-
-    .original-prompt-body {
-        padding: 10px 14px;
-        border-top: 1px solid
-            var(--vscode-panel-border, rgba(128, 128, 128, 0.2));
-    }
-
-    .original-prompt-body p {
-        margin: 0;
-        font-size: 12px;
-        line-height: 1.6;
-        color: var(--vscode-foreground);
-        white-space: pre-wrap;
-        word-wrap: break-word;
     }
 </style>
