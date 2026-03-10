@@ -64,8 +64,11 @@ export class ServiceContainer {
     mcpReady: Promise<void> | undefined;
     workspaceRoots: string[] | undefined;
 
-    /** Extension-managed storage base path (from context.storageUri). */
+    /** Extension-managed storage base path (from context.storageUri). Used for DB. */
     storageBase: string | undefined;
+
+    /** Workspace-level .coogent directory. Used for session/IPC data. */
+    coogentDir: string | undefined;
 
     /** Accumulated worker stdout for handoff extraction (capped at 2 MB). */
     readonly workerOutputAccumulator = new Map<number, string>();
@@ -86,16 +89,58 @@ export class ServiceContainer {
      * @returns The newly created session identifiers.
      */
     initSession(): { sessionId: string; sessionDirName: string; sessionDir: string } {
-        if (!this.storageBase) {
-            throw new Error('[ServiceContainer] Cannot init session — storageBase is not set.');
+        if (!this.coogentDir) {
+            throw new Error('[ServiceContainer] Cannot init session — coogentDir is not set.');
         }
         const sessionId = randomUUID();
         const sessionDirName = formatSessionDirName(sessionId);
-        const sessionDir = getSessionDir(this.storageBase, sessionDirName);
+        const sessionDir = getSessionDir(this.coogentDir, sessionDirName);
         this.currentSessionId = sessionId;
         this.currentSessionDirName = sessionDirName;
         this.currentSessionDir = sessionDir;
         return { sessionId, sessionDirName, sessionDir };
+    }
+
+    /**
+     * Atomically switch all session-related state to a new session.
+     *
+     * This is the **single entry point** for session switching. All callers
+     * (newSession, loadSession, CMD_RESET, PlannerWiring deferred init) must
+     * use this method to prevent divergence between `engine.getSessionDirName()`
+     * (reads from `stateManager.sessionDir`) and `svc.currentSessionDirName`
+     * (used by PlannerWiring/EngineWiring for MCP storage).
+     *
+     * @param opts.sessionId       UUID of the session.
+     * @param opts.sessionDirName  Formatted directory name (e.g., `20260310-200030-<uuid>`).
+     * @param opts.sessionDir      Absolute path to the session IPC directory.
+     * @param opts.newStateManager  Optional new StateManager instance. When provided,
+     *   replaces `this.stateManager` (e.g., after `engine.reset(newSM)`). When omitted,
+     *   re-binds the existing StateManager to the new `sessionDir`.
+     */
+    switchSession(opts: {
+        sessionId: string;
+        sessionDirName: string;
+        sessionDir: string;
+        newStateManager?: StateManager;
+    }): void {
+        this.currentSessionId = opts.sessionId;
+        this.currentSessionDirName = opts.sessionDirName;
+        this.currentSessionDir = opts.sessionDir;
+
+        if (opts.newStateManager) {
+            this.stateManager = opts.newStateManager;
+        } else {
+            this.stateManager?.setSessionDir(opts.sessionDir);
+        }
+
+        this.plannerAgent?.setMasterTaskId(opts.sessionDirName);
+        this.sessionManager?.setCurrentSessionId(opts.sessionId, opts.sessionDirName);
+
+        // Defensive: ensure SessionManager always has ArtifactDB access after session switch
+        const db = this.mcpServer?.getArtifactDB?.();
+        if (db && this.sessionManager) {
+            this.sessionManager.setArtifactDB(db);
+        }
     }
 
     /**
@@ -164,6 +209,7 @@ export class ServiceContainer {
         this.mcpReady = undefined;
         this.workspaceRoots = undefined;
         this.storageBase = undefined;
+        this.coogentDir = undefined;
         this.workerOutputAccumulator.clear();
         this.workerStderrAccumulator.clear();
         this.sandboxBranchCreatedForSession.clear();
@@ -199,6 +245,7 @@ export type ResolvableServices = {
     mcpReady: Promise<void>;
     workspaceRoots: string[];
     storageBase: string;
+    coogentDir: string;
 };
 
 /** Key set used by `getActiveServices()` to enumerate resolvable properties. */
@@ -227,4 +274,5 @@ const RESOLVABLE_KEYS: Record<keyof ResolvableServices, true> = {
     mcpReady: true,
     workspaceRoots: true,
     storageBase: true,
+    coogentDir: true,
 };

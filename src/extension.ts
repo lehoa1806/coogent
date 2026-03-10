@@ -101,6 +101,8 @@ export function activate(context: vscode.ExtensionContext): void {
     // Store workspace roots and storage base on the container for multi-root support
     svc.workspaceRoots = workspaceRoots;
     svc.storageBase = storageBase;
+    const coogentDir = getCoogentDir(primaryRoot);
+    svc.coogentDir = coogentDir;
 
     // Read extension configuration
     const config = vscode.workspace.getConfiguration('coogent');
@@ -127,7 +129,7 @@ export function activate(context: vscode.ExtensionContext): void {
     svc.gitManager = new GitManager(primaryRoot);
     svc.gitSandbox = new GitSandboxManager(primaryRoot);
 
-    svc.sessionManager = new SessionManager(storageBase, '' /* deferred */);
+    svc.sessionManager = new SessionManager(coogentDir, '' /* deferred */);
 
     const adkAdapter = new AntigravityADKAdapter(primaryRoot);
     svc.adkController = new ADKController(adkAdapter, primaryRoot);
@@ -164,9 +166,8 @@ export function activate(context: vscode.ExtensionContext): void {
     log.info('[Coogent] AgentRegistry initialized');
 
     // ── Initialize MCP Server & Client Bridge ──────────────────────────
-    // DB lives in workspace .coogent/ (persistent, workspace-scoped).
-    // IPC sessions live under storageBase (context.storageUri, ephemeral).
-    const coogentDir = getCoogentDir(primaryRoot);
+    // DB + IPC sessions both live under coogentDir (workspace .coogent/).
+    // This keeps all data local for easy debugging.
     svc.mcpServer = new CoogentMCPServer(primaryRoot);
     svc.mcpBridge = new MCPClientBridge(svc.mcpServer, primaryRoot);
     svc.mcpReady = svc.mcpServer.init(coogentDir)
@@ -184,18 +185,26 @@ export function activate(context: vscode.ExtensionContext): void {
         }
 
         // Initialize Session History Services
-        const restoreService = new SessionRestoreService(svc.engine!, svc.mcpServer!, storageBase);
+        const restoreService = new SessionRestoreService(svc.engine!, svc.mcpServer!, coogentDir);
         const deleteService = new SessionDeleteService(svc.mcpServer!, svc.sessionManager!);
         svc.sessionHistoryService = new SessionHistoryService(
           svc.sessionManager!, restoreService, deleteService,
         );
         log.info('[Coogent] SessionHistoryService initialized.');
 
-        // DB wiring is deferred until plan:request materialises the session.
-        // At this point we only connect the MCP bridge so it's ready.
-        // When initSession() runs (in PlannerWiring), it will call
-        // upsertSession(), stateManager.setArtifactDB(), and
-        // sessionManager.setArtifactDB().
+        // Eagerly wire ArtifactDB so session history is available before first prompt
+        const artifactDB = svc.mcpServer!.getArtifactDB();
+        if (artifactDB && svc.sessionManager) {
+          svc.sessionManager.setArtifactDB(artifactDB);
+          log.info('[Coogent] SessionManager wired to ArtifactDB (eager).');
+        }
+
+        // Re-trigger sidebar refresh now that DB is available
+        svc.sidebarMenu?.refresh();
+
+        // SessionManager DB wiring is now done above (eager).
+        // StateManager DB wiring is still deferred until plan:request
+        // materialises the session directory (see PlannerWiring.ts).
 
         return svc.mcpBridge!.connect();
       })
@@ -245,7 +254,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // ── File system watcher — auto-reload on external runbook edit ─────
     const storageGlob = new vscode.RelativePattern(
-      vscode.Uri.file(storageBase),
+      vscode.Uri.file(coogentDir),
       `ipc/**/${RUNBOOK_FILENAME}`
     );
     const watcher = vscode.workspace.createFileSystemWatcher(

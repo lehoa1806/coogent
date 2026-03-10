@@ -322,7 +322,7 @@ export function wireEngine(
         agent.generateReport(evtSessionDir, runbook, mcpBridge, getSessionDirName())
             .then(async report => {
                 try {
-                    await agent.saveReport(evtSessionDir, report, mcpBridge, getSessionDirName(), svc.storageBase);
+                    await agent.saveReport(evtSessionDir, report, mcpBridge, getSessionDirName(), svc.coogentDir);
                 } catch (err) {
                     log.error('[Coogent] saveReport failed:', err);
                 }

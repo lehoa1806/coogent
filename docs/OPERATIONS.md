@@ -49,7 +49,7 @@ code --install-extension coogent-0.2.0.vsix
 | Step | Command / Action | Pass Criteria |
 |---|---|---|
 | Type check | `npm run lint` | 0 errors |
-| Test suite | `npm test` | 75 test files pass |
+| Test suite | `npm test` | 79 test files pass |
 | Security audit | `npm audit --audit-level=high` | No high/critical vulnerabilities |
 | CI pipeline | `npm run ci` | All above in sequence |
 | Version bump | Update `version` in `package.json` | Semantic versioning |
@@ -133,10 +133,12 @@ The runbook schema is validated by AJV on every load. When modifying the schema:
 
 ## Log Locations
 
+> **Note**: Log paths are resolved from `StorageBase.getLogsDir()`, which derives from `ExtensionContext.storageUri` (extension-managed storage). The deprecated `.coogent/` workspace directory is no longer used for logs.
+
 | Log | Path | Format | Content |
 |---|---|---|---|
-| Engine transitions | `.coogent/logs/<run_id>/engine.jsonl` | JSONL | State changes, errors, system events |
-| Phase output | `.coogent/logs/<run_id>/phase-<n>.jsonl` | JSONL | Prompts, agent output, token counts, exit codes |
+| Engine transitions | `<storageBase>/logs/<run_id>/engine.jsonl` | JSONL | State changes, errors, system events |
+| Phase output | `<storageBase>/logs/<run_id>/phase-<n>.jsonl` | JSONL | Prompts, agent output, token counts, exit codes |
 | Extension Host | VS Code Output → "Coogent" | Text | General extension logging |
 | Webview console | DevTools (see below) | Browser | UI errors, IPC messages |
 

@@ -114,8 +114,9 @@ describe('messageHandler', () => {
                 },
             });
 
-            // masterTaskId should NOT be updated to the slug
-            expect(appState.masterTaskId).toBe('');
+            // masterTaskId should NOT be updated to the slug;
+            // the else clause in the fix clears it to undefined.
+            expect(appState.masterTaskId).toBeUndefined();
         });
 
         it('sets masterSummary from runbook.summary', () => {
@@ -128,6 +129,67 @@ describe('messageHandler', () => {
             });
 
             expect(appState.masterSummary).toBe('Build auth module');
+        });
+
+        // ── Regression: stale masterTaskId after CMD_RESET (#stale-task-id) ──
+
+        it('clears masterTaskId to undefined when STATE_SNAPSHOT has no masterTaskId (reset scenario)', () => {
+            // Simulate a session with an active masterTaskId
+            patchState({
+                masterTaskId: '20260310-200030-c992afc5-cd37-4b50-8a75-f06c30f5b157',
+            });
+            expect(appState.masterTaskId).toBe(
+                '20260310-200030-c992afc5-cd37-4b50-8a75-f06c30f5b157',
+            );
+
+            // Simulate CMD_RESET → Extension Host sends STATE_SNAPSHOT without masterTaskId
+            fireMessage({
+                type: 'STATE_SNAPSHOT',
+                payload: {
+                    runbook: makeRunbook(),
+                    engineState: 'IDLE',
+                    // masterTaskId intentionally omitted (reset scenario)
+                },
+            });
+
+            // Without the fix, the stale ID would persist. With the fix, it's cleared.
+            expect(appState.masterTaskId).toBeUndefined();
+        });
+
+        it('sets masterTaskId from undefined when a valid ID arrives', () => {
+            // Start with no masterTaskId
+            patchState({ masterTaskId: undefined });
+            expect(appState.masterTaskId).toBeUndefined();
+
+            const validId = '20260310-210000-a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+            fireMessage({
+                type: 'STATE_SNAPSHOT',
+                payload: {
+                    runbook: makeRunbook(),
+                    engineState: 'EXECUTING_WORKER',
+                    masterTaskId: validId,
+                },
+            });
+
+            expect(appState.masterTaskId).toBe(validId);
+        });
+
+        it('updates masterTaskId when a different valid ID arrives', () => {
+            const oldId = '20260310-200030-c992afc5-cd37-4b50-8a75-f06c30f5b157';
+            const newId = '20260310-210000-d1e2f3a4-b5c6-7890-abcd-ef1234567890';
+            patchState({ masterTaskId: oldId });
+            expect(appState.masterTaskId).toBe(oldId);
+
+            fireMessage({
+                type: 'STATE_SNAPSHOT',
+                payload: {
+                    runbook: makeRunbook(),
+                    engineState: 'EXECUTING_WORKER',
+                    masterTaskId: newId,
+                },
+            });
+
+            expect(appState.masterTaskId).toBe(newId);
         });
     });
 

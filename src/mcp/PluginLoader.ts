@@ -24,6 +24,9 @@ export interface LoadedPlugin {
 /**
  * Discovers, loads, and manages MCP plugins from `.coogent/plugins/`.
  *
+ * @experimental This plugin system is functional but has zero production
+ * implementations. The API may change in future releases.
+ *
  * Plugin directory structure:
  * ```
  * .coogent/plugins/

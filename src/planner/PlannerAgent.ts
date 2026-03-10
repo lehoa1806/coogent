@@ -215,6 +215,7 @@ export class PlannerAgent extends EventEmitter {
                 zeroContext: true,
                 workingDirectory: this.config.workspaceRoot,
                 initialPrompt: systemPrompt,
+                newConversation: true, // Planner must always run in a fresh conversation
                 ...(this.masterTaskId !== undefined && { masterTaskId: this.masterTaskId }),
                 phaseNumber: 0, // Planner is always "phase 0" in the IPC directory
             });

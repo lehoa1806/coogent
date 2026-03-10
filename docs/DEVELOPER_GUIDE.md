@@ -121,7 +121,8 @@ coogent/
 │   ├── prompt-compiler/          ← PlannerPromptCompiler, PolicyEngine, TaskClassifier,
 │   │                               RepoFingerprinter, RequirementNormalizer, TemplateLoader
 │   ├── consolidation/            ← ConsolidationAgent (phase aggregation → report)
-│   ├── session/                  ← SessionManager (history, search, pruning)
+│   ├── session/                  ← SessionManager, SessionHistoryService, SessionRestoreService,
+│   │                               SessionDeleteService, SessionHealthValidator
 │   ├── planner/                  ← PlannerAgent, WorkspaceScanner, RunbookParser, PlannerRetryManager
 │   ├── logger/                   ← TelemetryLogger (JSONL), log.ts, LogStream.ts
 │   ├── webview/                  ← MissionControlPanel (IPC proxy), ipcValidator
@@ -256,14 +257,14 @@ The most common source of bugs. To trace:
 ### Run Tests
 
 ```bash
-npm test                           # All 75 test files (serial, leak detection)
+npm test                           # All 79 test files (serial, leak detection)
 npx jest --verbose                 # With detailed output
 npx jest src/engine                # Run specific module
 npx jest --watch                   # Watch mode
 npx jest --listTests               # List all test files
 ```
 
-### Test Suites (75 files)
+### Test Suites (79 files)
 
 #### Core Engine (`src/engine/__tests__/`)
 

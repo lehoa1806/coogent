@@ -76,6 +76,24 @@ export class SessionHistoryService {
     async loadSession(sessionDirName: string): Promise<SessionRestoreResult> {
         log.info(`[SessionHistoryService] Loading session: ${sessionDirName}`);
 
+        // Guard: the active session is already loaded — restoring it would
+        // reset the engine and corrupt a running session.  It may also lack
+        // DB metadata (only written on plan:request), causing health-check failure.
+        const currentDirName = this.sessionManager.getCurrentSessionDirName();
+        if (currentDirName && sessionDirName === currentDirName) {
+            log.info(
+                `[SessionHistoryService] Session "${sessionDirName}" is already active — skipping restore`,
+            );
+            return {
+                success: true,
+                sessionDirName,
+                healthStatus: 'healthy',
+                runbook: null,
+                workerOutputs: {},
+                errors: [],
+            };
+        }
+
         const result = await this.restoreService.restore(sessionDirName);
 
         if (result.success) {

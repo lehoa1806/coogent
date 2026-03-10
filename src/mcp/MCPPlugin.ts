@@ -39,6 +39,9 @@ export interface PluginContext {
 /**
  * Interface that all MCP plugins must implement.
  *
+ * @experimental This plugin system is functional but has zero production
+ * implementations. The interface may change in future releases.
+ *
  * Plugins are loaded from `.coogent/plugins/<name>/` directories.
  * Each plugin directory must contain a `plugin.json` manifest and
  * a main module that exports an object implementing this interface.

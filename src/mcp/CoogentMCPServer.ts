@@ -188,8 +188,7 @@ export class CoogentMCPServer {
      * Initialise the persistent SQLite store. Must be called after construction
      * and before any tool/resource calls.
      *
-     * @param coogentDir Absolute path to the workspace-level `.coogent/` directory
-     *        (e.g. `/workspace/.coogent`).
+     * @param coogentDir Absolute path to the workspace `.coogent/` directory.
      *        The database file will be created at `<coogentDir>/artifacts.db`.
      *        Data is keyed by masterTaskId so all sessions share one DB safely.
      */

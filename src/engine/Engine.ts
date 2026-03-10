@@ -62,6 +62,8 @@ export interface EngineEvents {
     'plan:retryParse': () => void;
     /** Fired when the user requests a diff review for a specific phase. */
     'phase:review-diff': (phaseId: number) => void;
+    /** Fired when a listener throws during emit — diagnostic only. */
+    'engine:listener-error': (sourceEvent: string, error: unknown) => void;
 }
 
 // Typed EventEmitter helper
@@ -97,6 +99,9 @@ export class Engine extends EventEmitter implements EngineInternals {
     private state: EngineState = EngineState.IDLE;
     private runbook: Runbook | null = null;
     private pauseRequested = false;
+
+    /** Guard against recursive emit when the error handler itself throws. */
+    private emittingError = false;
 
     /**
      * Number of concurrently active workers.
@@ -136,6 +141,28 @@ export class Engine extends EventEmitter implements EngineInternals {
         }
     ) {
         super();
+
+        // Override emit() to fence listener errors
+        const origEmit = super.emit.bind(this);
+        (this as any).emit = <K extends keyof EngineEvents>(
+            event: K,
+            ...args: Parameters<EngineEvents[K]>
+        ): boolean => {
+            try {
+                return origEmit(event, ...args);
+            } catch (err) {
+                log.error(`[Engine] Listener error on '${String(event)}':`, err);
+                if (!this.emittingError) {
+                    this.emittingError = true;
+                    try {
+                        origEmit('engine:listener-error', String(event), err);
+                    } catch { /* swallow recursive error */ }
+                    this.emittingError = false;
+                }
+                return true;
+            }
+        };
+
         this.scheduler = options?.scheduler ?? new Scheduler();
         this.healer = options?.healer ?? new SelfHealingController();
         if (options?.workspaceRoot) {

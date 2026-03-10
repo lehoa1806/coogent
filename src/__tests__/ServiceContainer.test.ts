@@ -169,4 +169,56 @@ describe('ServiceContainer', () => {
         svc.engine = newEngine;
         expect(svc.resolve('engine')).toBe(newEngine);
     });
+
+    // ── switchSession() ArtifactDB re-wiring (regression) ──────────────
+    it('switchSession() re-wires ArtifactDB on SessionManager from mcpServer', () => {
+        const mockArtifactDB = {} as any;
+        const mockSessionManager = {
+            setCurrentSessionId: jest.fn(),
+            setArtifactDB: jest.fn(),
+        } as any;
+        const mockMcpServer = {
+            getArtifactDB: jest.fn().mockReturnValue(mockArtifactDB),
+        } as any;
+        const mockPlannerAgent = {
+            setMasterTaskId: jest.fn(),
+        } as any;
+
+        svc.sessionManager = mockSessionManager;
+        svc.mcpServer = mockMcpServer;
+        svc.plannerAgent = mockPlannerAgent;
+
+        const sessionId = 'test-session-uuid';
+        const sessionDirName = '20260310-120000-test-session-uuid';
+        const sessionDir = '/tmp/test-session';
+
+        svc.switchSession({ sessionId, sessionDirName, sessionDir });
+
+        expect(mockSessionManager.setCurrentSessionId).toHaveBeenCalledWith(sessionId, sessionDirName);
+        expect(mockMcpServer.getArtifactDB).toHaveBeenCalled();
+        expect(mockSessionManager.setArtifactDB).toHaveBeenCalledWith(mockArtifactDB);
+    });
+
+    it('switchSession() does not call setArtifactDB when mcpServer is undefined', () => {
+        const mockSessionManager = {
+            setCurrentSessionId: jest.fn(),
+            setArtifactDB: jest.fn(),
+        } as any;
+        const mockPlannerAgent = {
+            setMasterTaskId: jest.fn(),
+        } as any;
+
+        svc.sessionManager = mockSessionManager;
+        svc.mcpServer = undefined;
+        svc.plannerAgent = mockPlannerAgent;
+
+        const sessionId = 'test-session-uuid-2';
+        const sessionDirName = '20260310-130000-test-session-uuid-2';
+        const sessionDir = '/tmp/test-session-2';
+
+        svc.switchSession({ sessionId, sessionDirName, sessionDir });
+
+        expect(mockSessionManager.setCurrentSessionId).toHaveBeenCalledWith(sessionId, sessionDirName);
+        expect(mockSessionManager.setArtifactDB).not.toHaveBeenCalled();
+    });
 });

@@ -807,6 +807,50 @@ Shared types are defined in `db-types.ts`. All repositories receive the `Artifac
 
 ---
 
+## Session History Services
+
+The `src/session/` module provides a layered service architecture for session lifecycle management, built on top of `SessionManager` and `ArtifactDB`.
+
+### Service Architecture
+
+```
+SessionHistoryService (Unified Facade)
+  ├── SessionManager        (list, search, create, prune)
+  ├── SessionRestoreService (load + reconstruct)
+  │     └── SessionHealthValidator (pre-load health check)
+  └── SessionDeleteService  (cascade delete)
+```
+
+### Components
+
+| Service | File | Responsibility |
+|---|---|---|
+| `SessionManager` | `src/session/SessionManager.ts` | Session discovery (DB-first with IPC fallback), listing, full-text search, pruning, and directory management. Uses UUIDv7 session IDs with `YYYYMMDD-HHMMSS-<uuid>` directory naming. |
+| `SessionHealthValidator` | `src/session/SessionHealthValidator.ts` | Pre-load validation of session integrity. Checks metadata in `SessionRepository`, directory existence on disk, and runbook availability (file or ArtifactDB). Reports `healthy`, `degraded`, or `invalid` status. |
+| `SessionRestoreService` | `src/session/SessionRestoreService.ts` | Deterministic session restoration. Validates health via `SessionHealthValidator`, reconstructs `StateManager` and MCP `TaskState`, and restores worker outputs from ArtifactDB. Returns a structured `SessionRestoreResult`. |
+| `SessionDeleteService` | `src/session/SessionDeleteService.ts` | Controlled cascade deletion: clears active MCP task state → deletes session files and database records via `SessionManager` → purges associated artifacts from ArtifactDB. Handles errors at each step gracefully. |
+| `SessionHistoryService` | `src/session/SessionHistoryService.ts` | Unified orchestration facade for all session history operations. Delegates to `SessionManager` (list, search), `SessionRestoreService` (load), and `SessionDeleteService` (delete). Updates the current session ID on successful load. |
+
+### Data Flow
+
+When a user loads a session via the sidebar or `CMD_LOAD_SESSION`:
+
+1. `SessionHistoryService.loadSession(sessionId)` is called
+2. `SessionRestoreService.restore(sessionId)` validates health and reconstructs state
+3. `SessionHealthValidator.validate(sessionId)` checks metadata, directory, and runbook
+4. On success, `SessionHistoryService` updates `ServiceContainer.currentSessionId`
+5. Engine transitions are replayed from the restored `StateManager`
+
+When a user deletes a session:
+
+1. `SessionHistoryService.deleteSession(sessionId)` is called
+2. `SessionDeleteService` checks if the session is currently active
+3. If active, clears MCP task state first
+4. Deletes session directory and database records
+5. Returns `SessionDeleteResult` with success status and any errors
+
+---
+
 ## MCP Plugin System
 
 The MCP server supports an extensible plugin architecture for adding custom resources and tools:
