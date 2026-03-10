@@ -1,10 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// handleMCPFetchResource.test.ts — Regression tests for stale task guard
+// handleMCPFetchResource.test.ts — Regression tests for cross-session access
 //
-// After CMD_RESET, the webview may still have in-flight MCP_FETCH_RESOURCE
-// requests for the old (purged) task ID. The guard in routeWebviewMessage()
-// should reject these with an error response instead of forwarding them to
-// the MCP client bridge.
+// After the stale guard was removed, MCP_FETCH_RESOURCE requests for any
+// session (current or historical) should be forwarded to the MCP client bridge
+// without rejection.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { routeWebviewMessage, type MessageRouterDeps } from '../messageRouter.js';
@@ -12,6 +11,9 @@ import { routeWebviewMessage, type MessageRouterDeps } from '../messageRouter.js
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Minimal mock construction via MessageRouterDeps
 // ═══════════════════════════════════════════════════════════════════════════════
+
+/** Flush pending microtasks so fire-and-forget promise chains settle. */
+const flushPromises = () => new Promise<void>(resolve => setImmediate(resolve));
 
 function createMockDeps(opts: {
     currentSessionDirName?: string;
@@ -40,12 +42,12 @@ function createMockDeps(opts: {
     return { deps, postMessageMock };
 }
 
-describe('routeWebviewMessage — MCP_FETCH_RESOURCE stale task guard', () => {
+describe('routeWebviewMessage — MCP_FETCH_RESOURCE cross-session access', () => {
     const CURRENT_TASK_ID = '20260310-220000-a1b2c3d4-e5f6-7890-abcd-ef1234567890';
     const STALE_TASK_ID = '20260310-200030-c992afc5-cd37-4b50-8a75-f06c30f5b157';
 
-    it('rejects MCP_FETCH_RESOURCE when URI task ID differs from current session', async () => {
-        const readResourceMock = jest.fn();
+    it('allows MCP_FETCH_RESOURCE when URI task ID differs from current session', async () => {
+        const readResourceMock = jest.fn().mockResolvedValue('{"plan":"historical-data"}');
         const { deps, postMessageMock } = createMockDeps({
             currentSessionDirName: CURRENT_TASK_ID,
             mcpClientBridge: { readResource: readResourceMock },
@@ -55,16 +57,20 @@ describe('routeWebviewMessage — MCP_FETCH_RESOURCE stale task guard', () => {
             { type: 'MCP_FETCH_RESOURCE', payload: { uri: `coogent://tasks/${STALE_TASK_ID}/plan`, requestId: 'req-001' } },
             deps
         );
+        await flushPromises();
 
-        expect(postMessageMock).toHaveBeenCalledWith({
-            type: 'MCP_RESOURCE_DATA',
-            payload: {
-                requestId: 'req-001',
-                data: '',
-                error: 'Session has been reset. Resource no longer available.',
-            },
-        });
-        expect(readResourceMock).not.toHaveBeenCalled();
+        // readResource should be called with the full (cross-session) URI
+        expect(readResourceMock).toHaveBeenCalledWith(
+            `coogent://tasks/${STALE_TASK_ID}/plan`,
+        );
+
+        // No stale rejection error should be sent
+        const staleErrorCalls = postMessageMock.mock.calls.filter(
+            (call: any[]) =>
+                call[0]?.type === 'MCP_RESOURCE_DATA' &&
+                call[0]?.payload?.error === 'Session has been reset. Resource no longer available.',
+        );
+        expect(staleErrorCalls).toHaveLength(0);
     });
 
     it('allows MCP_FETCH_RESOURCE when URI task ID matches current session', async () => {
@@ -78,6 +84,7 @@ describe('routeWebviewMessage — MCP_FETCH_RESOURCE stale task guard', () => {
             { type: 'MCP_FETCH_RESOURCE', payload: { uri: `coogent://tasks/${CURRENT_TASK_ID}/plan`, requestId: 'req-002' } },
             deps
         );
+        await flushPromises();
 
         expect(readResourceMock).toHaveBeenCalledWith(
             `coogent://tasks/${CURRENT_TASK_ID}/plan`,
@@ -91,9 +98,9 @@ describe('routeWebviewMessage — MCP_FETCH_RESOURCE stale task guard', () => {
         expect(staleErrorCalls).toHaveLength(0);
     });
 
-    it('rejects stale request and does NOT invoke mcpClientBridge at all', async () => {
-        const readResourceMock = jest.fn();
-        const { deps } = createMockDeps({
+    it('fetches cross-session resource without stale guard rejection', async () => {
+        const readResourceMock = jest.fn().mockResolvedValue('{"report":"data"}');
+        const { deps, postMessageMock } = createMockDeps({
             currentSessionDirName: CURRENT_TASK_ID,
             mcpClientBridge: { readResource: readResourceMock },
         });
@@ -102,8 +109,19 @@ describe('routeWebviewMessage — MCP_FETCH_RESOURCE stale task guard', () => {
             { type: 'MCP_FETCH_RESOURCE', payload: { uri: `coogent://tasks/${STALE_TASK_ID}/report`, requestId: 'req-003' } },
             deps
         );
+        await flushPromises();
 
-        expect(readResourceMock).not.toHaveBeenCalled();
+        // readResource should have been called exactly once
+        expect(readResourceMock).toHaveBeenCalledTimes(1);
+
+        // The resolved data should be forwarded to the webview via MCP_RESOURCE_DATA
+        expect(postMessageMock).toHaveBeenCalledWith({
+            type: 'MCP_RESOURCE_DATA',
+            payload: {
+                requestId: 'req-003',
+                data: { report: 'data' },
+            },
+        });
     });
 
     it('sends "MCP Client Bridge not available" when no bridge and URI matches', async () => {
