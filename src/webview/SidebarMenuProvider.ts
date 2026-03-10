@@ -119,13 +119,13 @@ export class SidebarMenuProvider implements vscode.TreeDataProvider<vscode.TreeI
         if (!element) {
             return [
                 new LauncherItem(
-                    '🚀 Launch Mission Control',
+                    'Launch Mission Control',
                     'Open the full Mission Control panel',
                     'coogent.openMissionControl',
                     'rocket',
                 ),
                 new LauncherItem(
-                    '➕ New Orchestration Session',
+                    'New Orchestration Session',
                     'Reset engine and start a fresh session',
                     'coogent.newSession',
                     'add',

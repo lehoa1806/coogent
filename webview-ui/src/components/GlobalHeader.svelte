@@ -53,6 +53,12 @@
         {appState.conversationMode}
     </span>
 
+    {#if appState.masterTaskId}
+        <span class="badge badge-session" title="Session ID: {appState.masterTaskId}">
+            🆔 {appState.masterTaskId.slice(0, 8)}
+        </span>
+    {/if}
+
     <span class="header-spacer"></span>
 
     <button
@@ -309,5 +315,24 @@
                 transparent
             );
         text-transform: capitalize;
+    }
+
+    .badge-session {
+        background: color-mix(
+            in srgb,
+            var(--vscode-descriptionForeground, #888) 8%,
+            transparent
+        );
+        color: var(--vscode-descriptionForeground, #888);
+        border: 1px solid
+            color-mix(
+                in srgb,
+                var(--vscode-descriptionForeground, #888) 20%,
+                transparent
+            );
+        font-family: var(--vscode-editor-font-family, monospace);
+        font-size: 9px;
+        letter-spacing: 0.3px;
+        cursor: default;
     }
 </style>

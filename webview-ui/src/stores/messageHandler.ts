@@ -67,6 +67,15 @@ function handleMessage(msg: HostToWebviewMessage): void {
             const { runbook, engineState, masterTaskId } = msg.payload;
             appState.engineState = engineState;
             appState.projectId = runbook.project_id;
+
+            // Detect session change: if masterTaskId changed, we're switching
+            // sessions. Stale mcpPhaseId from the old session MUST NOT leak into
+            // the new session's phases, even if phase numeric IDs (0, 1, 2…)
+            // coincidentally match.
+            const sessionChanged = isValidMasterTaskId(masterTaskId)
+                && appState.masterTaskId !== undefined
+                && appState.masterTaskId !== masterTaskId;
+
             // Only update masterTaskId when the incoming value passes the strict
             // YYYYMMDD-HHMMSS-uuid format check. Human-readable project_id slugs
             // (e.g. "coogent-context-management-audit") must NOT be used here,
@@ -78,14 +87,20 @@ function handleMessage(msg: HostToWebviewMessage): void {
                 // fire MCP_FETCH_RESOURCE requests for a purged task.
                 appState.masterTaskId = undefined;
             }
-            // Merge phases: preserve runtime fields (mcpPhaseId) that the
-            // Extension Host doesn't include in the runbook snapshot.
-            appState.phases = (runbook.phases as Phase[]).map((incoming) => {
-                const existing = appState.phases.find((p) => p.id === incoming.id);
-                return existing
-                    ? { ...incoming, mcpPhaseId: existing.mcpPhaseId ?? (incoming as Phase).mcpPhaseId }
-                    : (incoming as Phase);
-            });
+
+            // Merge phases: preserve runtime fields (mcpPhaseId) ONLY within
+            // the same session. Cross-session merges must not carry over stale
+            // mcpPhaseId values — those IDs are scoped to a specific masterTaskId.
+            if (sessionChanged) {
+                appState.phases = runbook.phases as Phase[];
+            } else {
+                appState.phases = (runbook.phases as Phase[]).map((incoming) => {
+                    const existing = appState.phases.find((p) => p.id === incoming.id);
+                    return existing
+                        ? { ...incoming, mcpPhaseId: existing.mcpPhaseId ?? (incoming as Phase).mcpPhaseId }
+                        : (incoming as Phase);
+                });
+            }
             if (runbook.summary) appState.masterSummary = runbook.summary;
             break;
         }

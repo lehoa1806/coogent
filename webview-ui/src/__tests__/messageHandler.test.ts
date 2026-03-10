@@ -191,6 +191,74 @@ describe('messageHandler', () => {
 
             expect(appState.masterTaskId).toBe(newId);
         });
+
+        // ── Regression: cross-session mcpPhaseId contamination (#phase-not-found) ──
+
+        it('clears stale mcpPhaseId when masterTaskId changes (session switch)', () => {
+            const oldTaskId = '20260310-200030-c992afc5-cd37-4b50-8a75-f06c30f5b157';
+            const newTaskId = '20260311-020845-c0b44bbb-64dc-4f25-b510-bd4ee39e6fa2';
+
+            // Simulate Session A: phase 0 has an mcpPhaseId from the old session
+            patchState({
+                masterTaskId: oldTaskId,
+                phases: [
+                    {
+                        id: 0 as PhaseId,
+                        status: 'completed',
+                        prompt: 'old phase',
+                        context_files: [],
+                        success_criteria: 'done',
+                        mcpPhaseId: 'phase-001-aaaa-bbbb-cccc-old-session',
+                    },
+                ],
+            });
+
+            // Session B starts: new masterTaskId, same phase numeric ID, no mcpPhaseId
+            fireMessage({
+                type: 'STATE_SNAPSHOT',
+                payload: {
+                    runbook: makeRunbook(),  // phase with id: 0, no mcpPhaseId
+                    engineState: 'EXECUTING_WORKER',
+                    masterTaskId: newTaskId,
+                },
+            });
+
+            // The old mcpPhaseId MUST NOT persist — it belongs to a different task
+            expect(appState.phases[0].mcpPhaseId).toBeUndefined();
+            expect(appState.masterTaskId).toBe(newTaskId);
+        });
+
+        it('preserves mcpPhaseId within the same session', () => {
+            const taskId = '20260310-200030-c992afc5-cd37-4b50-8a75-f06c30f5b157';
+
+            // First STATE_SNAPSHOT: phase gets mcpPhaseId
+            patchState({
+                masterTaskId: taskId,
+                phases: [
+                    {
+                        id: 0 as PhaseId,
+                        status: 'running',
+                        prompt: 'write auth',
+                        context_files: ['src/auth.ts'],
+                        success_criteria: 'tests pass',
+                        mcpPhaseId: 'phase-001-1111-2222-3333-same-session',
+                    },
+                ],
+            });
+
+            // Second STATE_SNAPSHOT with same masterTaskId but phase without mcpPhaseId
+            fireMessage({
+                type: 'STATE_SNAPSHOT',
+                payload: {
+                    runbook: makeRunbook(),  // phase with id: 0, no mcpPhaseId
+                    engineState: 'EXECUTING_WORKER',
+                    masterTaskId: taskId,
+                },
+            });
+
+            // mcpPhaseId should be preserved since we're in the same session
+            expect(appState.phases[0].mcpPhaseId).toBe('phase-001-1111-2222-3333-same-session');
+        });
     });
 
     describe('PHASE_STATUS', () => {
