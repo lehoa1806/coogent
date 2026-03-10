@@ -9,9 +9,9 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import Ajv from 'ajv';
-import { RUNBOOK_FILENAME, asTimestamp, type Runbook, type WALEntry, type EngineState } from '../types/index.js';
+import { asTimestamp, type Runbook, type WALEntry, type EngineState } from '../types/index.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
-import { WAL_FILE, LOCK_FILE } from '../constants/paths.js';
+import { RUNBOOK_FILE, WAL_FILE, LOCK_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 /**
@@ -131,7 +131,7 @@ export class StateManager {
      */
     constructor(sessionDir: string, enableEncryption = false, secretStorage?: SecretStorageLike) {
         this.sessionDir = sessionDir;
-        this.runbookPath = path.join(sessionDir, RUNBOOK_FILENAME);
+        this.runbookPath = path.join(sessionDir, RUNBOOK_FILE);
         this.walPath = path.join(sessionDir, WAL_FILE);
         this.lockPath = path.join(sessionDir, LOCK_FILE);
         this.encryptionEnabled = enableEncryption;
@@ -163,7 +163,7 @@ export class StateManager {
      */
     public setSessionDir(dir: string): void {
         this.sessionDir = dir;
-        this.runbookPath = path.join(dir, RUNBOOK_FILENAME);
+        this.runbookPath = path.join(dir, RUNBOOK_FILE);
         this.walPath = path.join(dir, WAL_FILE);
         this.lockPath = path.join(dir, LOCK_FILE);
         this.dirEnsured = false;   // force re-creation on next write

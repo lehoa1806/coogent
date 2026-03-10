@@ -168,6 +168,19 @@ function createBuiltInPolicies(): PolicyModule[] {
                 ].join('\n');
             },
         },
+
+        // ── i. no-pipe-output ───────────────────────────────────────────────
+        {
+            id: 'no-pipe-output',
+            description: 'Prevents piped command output to preserve reporter formatting and interactive features.',
+            apply(_fingerprint: RepoFingerprint, _taskSpec: NormalizedTaskSpec): string | null {
+                return [
+                    '## Policy: no-pipe-output',
+                    '- Do NOT pipe command output through another command (e.g., `| cat`, `| tee`, `| grep`)',
+                    '- Run commands directly so built-in reporters and interactive features work correctly',
+                ].join('\n');
+            },
+        },
     ];
 }
 

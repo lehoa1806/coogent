@@ -4,24 +4,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as vscode from 'vscode';
-import * as path from 'node:path';
-import { randomUUID } from 'node:crypto';
-import { getSessionDir } from '../constants/paths.js';
-import { asTimestamp, type HostToWebviewMessage, type WebviewToHostMessage } from '../types/index.js';
+import type { HostToWebviewMessage } from '../types/index.js';
 import type { Engine } from '../engine/Engine.js';
-import { formatSessionDirName, type SessionManager } from '../session/SessionManager.js';
+import type { SessionManager } from '../session/SessionManager.js';
 import type { ADKController } from '../adk/ADKController.js';
 import { StateManager } from '../state/StateManager.js';
-import { isValidWebviewMessage } from './ipcValidator.js';
+import { getWebviewHtml } from './webviewHtml.js';
 import type { CoogentMCPServer } from '../mcp/CoogentMCPServer.js';
 import type { MCPClientBridge } from '../mcp/MCPClientBridge.js';
-import { RESOURCE_URIS } from '../mcp/types.js';
-import { getWebviewHtml } from './webviewHtml.js';
-import log from '../logger/log.js';
 import type { AgentRegistry } from '../agent-selection/AgentRegistry.js';
-
-/** Timeout (ms) for MCP resource fetch calls from the webview. Prevents infinite loading spinners. */
-const MCP_FETCH_TIMEOUT_MS = 15_000;
+import { routeWebviewMessage, deriveMasterTaskId, broadcastSuggestionData, type MessageRouterDeps } from './messageRouter.js';
 
 /** Signature for the injected pre-flight Git check function. */
 type PreFlightGitCheckFn = () => Promise<{ blocked: true; message: string } | { blocked: false }>;
@@ -113,6 +105,9 @@ export class MissionControlPanel {
   //  Instance
   // ═══════════════════════════════════════════════════════════════════════════
 
+  /** Cached dependency bag for the message router. */
+  private readonly routerDeps: MessageRouterDeps;
+
   private constructor(
     panel: vscode.WebviewPanel,
     private readonly extensionUri: vscode.Uri,
@@ -127,6 +122,7 @@ export class MissionControlPanel {
     private readonly coogentDir?: string
   ) {
     this.panel = panel;
+    this.routerDeps = this.buildDeps();
     this.panel.webview.html = this.getHtmlForWebview();
 
     this.panel.webview.onDidReceiveMessage(
@@ -144,7 +140,7 @@ export class MissionControlPanel {
           const runbook = this.engine.getRunbook();
           const draft = this.engine.getPlanDraft();
           const state = this.engine.getState();
-          const _masterTaskId = this.deriveMasterTaskId();
+          const _masterTaskId = deriveMasterTaskId(this.routerDeps);
           this.sendToWebview({
             type: 'STATE_SNAPSHOT',
             payload: {
@@ -172,599 +168,41 @@ export class MissionControlPanel {
     }
 
     // Broadcast initial suggestion data for @ mention and / workflow popups
-    this.broadcastSuggestionData();
+    broadcastSuggestionData(this.routerDeps);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  //  Message Handling
+  //  Message Handling — delegates to messageRouter.ts
   // ═══════════════════════════════════════════════════════════════════════════
 
-  /**
-   * Validate and handle incoming messages from the Webview.
-   * Runtime validation prevents malformed payloads from crashing the host.
-   * See 02-review.md § P1-3.
-   */
   private async handleMessage(raw: unknown): Promise<void> {
-    // ── Host-side pass-through: PLAN_SUMMARY → forward to webview ──
-    if (
-      typeof raw === 'object' && raw !== null &&
-      (raw as Record<string, unknown>).type === 'PLAN_SUMMARY'
-    ) {
-      const msg = raw as { type: 'PLAN_SUMMARY'; payload?: { summary?: unknown } };
-      // W-5 fix: Validate payload before forwarding to prevent null dereference in Svelte
-      if (typeof msg.payload?.summary !== 'string') {
-        log.warn('[MissionControl] PLAN_SUMMARY: invalid payload (missing or non-string summary).');
-        return;
-      }
-      log.info('[MissionControl] Host → Webview (pass-through): PLAN_SUMMARY');
-      this.sendToWebview({
-        type: 'PLAN_SUMMARY',
-        payload: { summary: msg.payload.summary },
-      });
-      return;
-    }
-
-    // ── Legacy CMD_PAUSE guard — no-op with clear warning ───────────────────
-    // The Webview sends `{type:"CMD_PAUSE"}` (bare, no phaseId) which is not
-    // a valid message type. The correct type is CMD_PAUSE_PHASE with a phaseId.
-    // Intercept before the generic IPC validator to avoid confusing log noise.
-    if (typeof raw === 'object' && raw !== null && (raw as Record<string, unknown>).type === 'CMD_PAUSE') {
-      log.warn('[MissionControl] Received deprecated CMD_PAUSE (no phaseId). Use CMD_PAUSE_PHASE instead. Ignoring.');
-      return;
-    }
-
-    if (!isValidWebviewMessage(raw)) {
-      log.warn('[MissionControl] Invalid or malformed message:', raw);
-      return;
-    }
-
-    const message = raw as WebviewToHostMessage;
-    log.info(`[MissionControl] Webview → Host: ${message.type} `);
-
-    switch (message.type) {
-      case 'CMD_START': {
-        // Git pre-flight: offer bypass instead of hard-blocking
-        if (this.preFlightGitCheck) {
-          const check = await this.preFlightGitCheck();
-          if (check.blocked) {
-            const choice = await vscode.window.showWarningMessage(
-              `Coogent: ${check.message} `,
-              'Continue on Current Branch',
-              'Cancel'
-            );
-            if (choice !== 'Continue on Current Branch') return;
-            this._skipSandboxBranch = true;
-          }
-        }
-        this.engine.start().catch(err => this.handleError(err));
-        break;
-      }
-
-      case 'CMD_ABORT':
-        this.engine.abort().catch(err => this.handleError(err));
-        break;
-      case 'CMD_RETRY':
-        this.engine.retry(message.payload.phaseId).catch(err => this.handleError(err));
-        break;
-      case 'CMD_SKIP_PHASE':
-        this.engine.skipPhase(message.payload.phaseId).catch(err => this.handleError(err));
-        break;
-      case 'CMD_PAUSE_PHASE':
-        this.engine.pausePhase(message.payload.phaseId);
-        break;
-      case 'CMD_STOP_PHASE':
-        this.engine.stopPhase(message.payload.phaseId).catch(err => this.handleError(err));
-        break;
-      case 'CMD_RESTART_PHASE':
-        this.engine.restartPhase(message.payload.phaseId).catch(err => this.handleError(err));
-        break;
-      case 'CMD_EDIT_PHASE':
-        this.engine.editPhase(
-          message.payload.phaseId,
-          message.payload.patch
-        ).catch(err => this.handleError(err));
-        break;
-      case 'CMD_LOAD_RUNBOOK':
-        this.engine.loadRunbook(message.payload?.filePath).catch(err => this.handleError(err));
-        break;
-      case 'CMD_REQUEST_STATE': {
-        const runbook = this.engine.getRunbook();
-        const draft = this.engine.getPlanDraft();
-        const state = this.engine.getState();
-        const _masterTaskId = this.deriveMasterTaskId();
-        this.sendToWebview({
-          type: 'STATE_SNAPSHOT',
-          payload: {
-            runbook: runbook ?? draft ?? { project_id: '', status: 'idle', current_phase: 0, phases: [] },
-            engineState: state,
-            ...(_masterTaskId ? { masterTaskId: _masterTaskId } : {}),
-          },
-        });
-        break;
-      }
-      case 'CMD_PLAN_REQUEST': {
-        // ERR-01: Store the prompt before the async pre-flight check so it
-        // can be echoed back if the user cancels the Git warning (prompt is never lost).
-        const pendingPrompt = message.payload.prompt;
-        log.info('[MissionControl] CMD_PLAN_REQUEST: prompt received, starting pre-flight...');
-
-        // Git pre-flight: offer bypass instead of hard-blocking
-        if (this.preFlightGitCheck) {
-          try {
-            const check = await this.preFlightGitCheck();
-            log.info(`[MissionControl] CMD_PLAN_REQUEST: pre-flight result — blocked=${check.blocked}`);
-            if (check.blocked) {
-              const choice = await vscode.window.showWarningMessage(
-                `Coogent: ${check.message} `,
-                'Continue on Current Branch',
-                'Cancel'
-              );
-              if (choice !== 'Continue on Current Branch') {
-                // ERR-01: Restore the prompt to the webview chat input via
-                // a LOG_ENTRY with the sentinel [LAST_PROMPT] prefix.
-                // The Svelte messageHandler reads this and populates lastPrompt.
-                this.sendToWebview({
-                  type: 'LOG_ENTRY',
-                  payload: {
-                    timestamp: asTimestamp(),
-                    level: 'warn',
-                    message: `[LAST_PROMPT] ${pendingPrompt}`,
-                  },
-                });
-                return;
-              }
-              this._skipSandboxBranch = true;
-            }
-          } catch (err) {
-            log.warn('[MissionControl] CMD_PLAN_REQUEST: pre-flight check threw — skipping:', err);
-          }
-        }
-        log.info('[MissionControl] CMD_PLAN_REQUEST: invoking engine.planRequest()');
-        this.engine.planRequest(pendingPrompt);
-        break;
-      }
-      case 'CMD_PLAN_APPROVE':
-        this.engine.planApproved().catch(err => this.handleError(err));
-        break;
-      case 'CMD_PLAN_REJECT':
-        this.engine.planRejected(message.payload.feedback);
-        break;
-      case 'CMD_PLAN_EDIT_DRAFT':
-        this.engine.updatePlanDraft(message.payload.draft);
-        break;
-      case 'CMD_PLAN_RETRY_PARSE':
-        this.engine.planRetryParse();
-        break;
-      case 'CMD_RESET': {
-        // Reset the skip flag for the new session
-        this._skipSandboxBranch = false;
-        // Create a fresh session so loadRunbook() won't reload the old data
-        const newSessionId = randomUUID();
-        const newSessionDirName = formatSessionDirName(newSessionId);
-
-        // Eagerly register the new session in the DB so the sidebar shows it immediately
-        if (this.mcpServer) {
-          this.mcpServer.upsertSession(newSessionDirName, newSessionId, '', Date.now());
-          log.info(`[MissionControl] CMD_RESET: registered new session ${newSessionDirName} in sessions table`);
-        }
-
-        if (!this.coogentDir) {
-          // coogentDir unavailable — fall back to vanilla reset without session dir
-          this.engine.reset().catch(err => this.handleError(err));
-          break;
-        }
-        {
-          const newSessionDir = getSessionDir(this.coogentDir, newSessionDirName);
-          // ERR-04: Purge the old MCP task before switching so the in-memory store
-          // doesn't grow unboundedly across session resets.
-          const oldTaskId = this.engine.getSessionDirName();
-          // Belt-and-suspenders: persist outgoing session state before switching.
-          // This ensures the previous session's runbook is saved even if the
-          // PlannerWiring upsert was somehow missed.
-          if (oldTaskId && this.mcpServer) {
-            const runbook = this.engine.getRunbook();
-            if (runbook) {
-              try {
-                this.mcpServer.getArtifactDB()?.tasks.upsert(oldTaskId, {
-                  runbookJson: JSON.stringify(runbook),
-                  completedAt: Date.now(),
-                });
-                log.info(`[MissionControl] CMD_RESET: persisted outgoing session runbook for ${oldTaskId}`);
-              } catch (err) {
-                log.warn('[MissionControl] CMD_RESET: failed to persist outgoing session:', err);
-              }
-            }
-
-            // Also ensure the outgoing session has a row in the sessions table so
-            // the history JOIN query (sessions LEFT JOIN tasks) finds it.
-            try {
-              const db = this.mcpServer.getArtifactDB();
-              if (db) {
-                const existingRows = db.sessions.list();
-                const match = existingRows.find(r => r.sessionDirName === oldTaskId);
-                if (!match) {
-                  // Session row missing — create one so history shows this session
-                  this.mcpServer.upsertSession(oldTaskId, oldTaskId, '', Date.now());
-                  log.info(`[MissionControl] CMD_RESET: created missing sessions row for outgoing session ${oldTaskId}`);
-                }
-              }
-            } catch (err) {
-              log.warn('[MissionControl] CMD_RESET: failed to ensure outgoing session row:', err);
-            }
-          }
-          // Purge heavy child data but keep sessions + tasks rows for history
-          if (oldTaskId) {
-            this.mcpServer?.purgeTaskKeepSession(oldTaskId);
-          }
-          const freshStateManager = new StateManager(newSessionDir);
-          this.engine.reset(freshStateManager).catch(err => this.handleError(err));
-          // Delegate all session-state updates to onReset → svc.switchSession().
-          // Pass freshStateManager so switchSession replaces svc.stateManager
-          // instead of re-binding the stale one.
-          this.onReset?.(newSessionDir, newSessionDirName, freshStateManager);
-        }
-        break;
-      }
-      case 'CMD_SET_CONVERSATION_MODE':
-        this.handleSetConversationMode(message.payload.mode);
-        break;
-      case 'CMD_REQUEST_REPORT':
-        this.handleRequestReport();
-        break;
-      case 'CMD_REQUEST_PLAN':
-        this.handleRequestPlan();
-        break;
-      case 'CMD_REVIEW_DIFF':
-        this.engine.reviewDiff(message.payload.phaseId).catch(err => this.handleError(err));
-        break;
-      case 'CMD_RESUME_PENDING':
-        this.engine.resumePending().catch(err => this.handleError(err));
-        break;
-      case 'MCP_FETCH_RESOURCE':
-        this.handleMCPFetchResource(message.payload.uri, message.payload.requestId);
-        break;
-      case 'CMD_UPLOAD_FILE':
-        this.handleUploadFile(false);
-        break;
-      case 'CMD_UPLOAD_IMAGE':
-        this.handleUploadFile(true);
-        break;
-
-      // ── Session management (webview-initiated) ─────────────────────────────
-      case 'CMD_LIST_SESSIONS': {
-        if (!this.sessionManager) break;
-        const sessions = await this.sessionManager.listSessions();
-        this.sendToWebview({ type: 'SESSION_LIST', payload: { sessions } });
-        break;
-      }
-      case 'CMD_SEARCH_SESSIONS': {
-        if (!this.sessionManager) break;
-        const results = await this.sessionManager.searchSessions(message.payload.query);
-        this.sendToWebview({
-          type: 'SESSION_SEARCH_RESULTS',
-          payload: { query: message.payload.query, sessions: results },
-        });
-        break;
-      }
-      case 'CMD_LOAD_SESSION': {
-        // Delegate to the registered command so extension.ts module-level state
-        // (currentSessionDir, plannerAgent) is updated in a single place.
-        await vscode.commands.executeCommand('coogent.loadSession', message.payload.sessionId);
-        break;
-      }
-      case 'CMD_DELETE_SESSION': {
-        // Delegate to the registered command so the sidebar TreeView auto-refreshes.
-        await vscode.commands.executeCommand(
-          'coogent.deleteSession',
-          { session: { sessionId: message.payload.sessionId } }
-        );
-        break;
-      }
-
-      // ── Worker Studio (webview-initiated) ─────────────────────────────
-      case 'workers:request': {
-        if (!this.agentRegistry) {
-          this.sendToWebview({ type: 'workers:loaded', workers: [] });
-          break;
-        }
-        try {
-          const workers = await this.agentRegistry.getAgents();
-          this.sendToWebview({ type: 'workers:loaded', workers });
-        } catch (err) {
-          log.error('[MissionControl] workers:request failed:', err);
-          this.sendToWebview({ type: 'workers:loaded', workers: [] });
-        }
-        break;
-      }
-
-      default: {
-        const _exhaustive: never = message;
-        log.warn('[MissionControl] Unknown message:', _exhaustive);
-      }
-    }
+    await routeWebviewMessage(raw, this.routerDeps);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  //  Session Management Handlers
+  //  Dependency Construction
   // ═══════════════════════════════════════════════════════════════════════════
+
+  private buildDeps(): MessageRouterDeps {
+    return {
+      engine: this.engine,
+      sendToWebview: (msg) => this.sendToWebview(msg),
+      isPanelAlive: () => MissionControlPanel.currentPanel !== undefined,
+      getSkipSandboxBranch: () => this._skipSandboxBranch,
+      setSkipSandboxBranch: (v) => { this._skipSandboxBranch = v; },
+      sessionManager: this.sessionManager,
+      adkController: this.adkController,
+      preFlightGitCheck: this.preFlightGitCheck,
+      onReset: this.onReset,
+      mcpServer: this.mcpServer,
+      mcpClientBridge: this.mcpClientBridge,
+      agentRegistry: this.agentRegistry,
+      coogentDir: this.coogentDir,
+    };
+  }
 
   private sendToWebview(message: HostToWebviewMessage): void {
     this.panel.webview.postMessage(message);
-  }
-
-  /**
-   * Derive the masterTaskId from the Engine's active session directory.
-   * Returns `undefined` if no session is active (e.g., IDLE state).
-   */
-  private deriveMasterTaskId(): string | undefined {
-    return this.engine.getSessionDirName();
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  //  MCP Resource Proxy
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  /**
-   * Handle `MCP_FETCH_RESOURCE` requests from the Webview.
-   *
-   * TYPE-03: Wraps the async read with a 15-second timeout so `mcpStore.ts`
-   * never hangs in `loading: true` forever. Also guards the response against
-   * panel disposal that may occur while the promise is in-flight.
-   */
-  private handleMCPFetchResource(uri: string, requestId: string): void {
-    log.info(`[MissionControl] MCP_FETCH_RESOURCE: uri = ${uri}, requestId = ${requestId} `);
-
-    // Guard against stale resource requests for purged tasks.
-    // After CMD_RESET, the webview may still have in-flight or queued
-    // MCP_FETCH_RESOURCE requests for the old task ID.
-    const currentTaskId = this.deriveMasterTaskId();
-    const taskIdMatch = uri.match(/coogent:\/\/tasks\/([^/]+)/);
-    if (taskIdMatch && currentTaskId && taskIdMatch[1] !== currentTaskId) {
-      log.info(`[MissionControl] MCP_FETCH_RESOURCE: rejecting stale request for ${taskIdMatch[1]} (current: ${currentTaskId})`);
-      this.sendToWebview({
-        type: 'MCP_RESOURCE_DATA',
-        payload: { requestId, data: '', error: 'Session has been reset. Resource no longer available.' },
-      });
-      return;
-    }
-
-    if (!this.mcpClientBridge) {
-      this.sendToWebview({
-        type: 'MCP_RESOURCE_DATA',
-        payload: { requestId, data: '', error: 'MCP Client Bridge not available.' },
-      });
-      return;
-    }
-
-    const timeoutPromise = new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`MCP_FETCH_RESOURCE timed out after ${MCP_FETCH_TIMEOUT_MS / 1_000} s`)), MCP_FETCH_TIMEOUT_MS)
-    );
-
-    Promise.race([this.mcpClientBridge.readResource(uri), timeoutPromise])
-      .then(content => {
-        if (!MissionControlPanel.currentPanel) return; // panel disposed while in-flight
-        let data: string | object = content;
-        try { data = JSON.parse(content); } catch { /* leave as string */ }
-        this.sendToWebview({
-          type: 'MCP_RESOURCE_DATA',
-          payload: { requestId, data },
-        });
-      })
-      .catch(err => {
-        if (!MissionControlPanel.currentPanel) return; // panel disposed while in-flight
-        const message = err instanceof Error ? err.message : String(err);
-        log.error('[MissionControl] MCP_FETCH_RESOURCE error:', message);
-        this.sendToWebview({
-          type: 'MCP_RESOURCE_DATA',
-          payload: { requestId, data: '', error: message },
-        });
-      });
-  }
-
-  /**
-   * #55: Forward async errors to the webview as ERROR messages
-   * instead of silently swallowing them with console.error.
-   */
-  private handleError(err: unknown): void {
-    const message = err instanceof Error ? err.message : String(err);
-    log.error('[MissionControl] Error:', message);
-    this.sendToWebview({
-      type: 'ERROR',
-      payload: {
-        code: 'COMMAND_ERROR',
-        message,
-      },
-    });
-  }
-
-  private handleSetConversationMode(mode: 'isolated' | 'continuous' | 'smart'): void {
-    if (!this.adkController) return;
-    this.adkController.setConversationSettings({ mode });
-    const settings = this.adkController.conversationSettings;
-    this.sendToWebview({
-      type: 'CONVERSATION_MODE',
-      payload: {
-        mode: settings.mode,
-        smartSwitchTokenThreshold: settings.smartSwitchTokenThreshold,
-      },
-    });
-  }
-
-  /**
-   * Handle file/image upload requests from the Webview.
-   * Opens the VS Code file picker and sends selected paths back.
-   */
-  private async handleUploadFile(imageOnly: boolean): Promise<void> {
-    const filters = imageOnly
-      ? { Images: ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp'] }
-      : undefined;
-
-    const uris = await vscode.window.showOpenDialog({
-      canSelectFiles: true,
-      canSelectFolders: false,
-      canSelectMany: true,
-      openLabel: imageOnly ? 'Attach Image' : 'Attach File',
-      ...(filters ? { filters } : {}),
-    });
-
-    if (!uris || uris.length === 0) return;
-
-    const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    const paths = uris.map(uri => {
-      if (workspaceRoot && uri.fsPath.startsWith(workspaceRoot)) {
-        return path.relative(workspaceRoot, uri.fsPath);
-      }
-      return uri.fsPath;
-    });
-
-    this.sendToWebview({
-      type: 'ATTACHMENT_SELECTED',
-      payload: { paths },
-    });
-  }
-
-  /**
-   * Broadcast context-aware suggestion data for @ mention and / workflow popups.
-   */
-  private broadcastSuggestionData(): void {
-    // Derive mention items from active runbook context
-    const runbook = this.engine.getRunbook() ?? this.engine.getPlanDraft();
-    const mentions: { label: string; description: string; insert: string }[] = [
-      { label: '@file', description: 'Reference a file', insert: '@file ' },
-      { label: '@context', description: 'Attach context', insert: '@context ' },
-    ];
-
-    // Add phase-specific mentions if runbook exists
-    if (runbook?.phases) {
-      for (const phase of runbook.phases) {
-        mentions.push({
-          label: `@phase-${phase.id} `,
-          description: phase.context_summary ?? phase.prompt.slice(0, 40),
-          insert: `@phase-${phase.id} `,
-        });
-      }
-    }
-
-    const workflows = [
-      { label: '/plan', description: 'Generate a plan', insert: '/plan ' },
-      { label: '/run', description: 'Execute the runbook', insert: '/run ' },
-      { label: '/history', description: 'Show session history', insert: '/history ' },
-      { label: '/abort', description: 'Abort execution', insert: '/abort ' },
-      { label: '/reset', description: 'Start new chat', insert: '/reset ' },
-    ];
-
-    this.sendToWebview({
-      type: 'SUGGESTION_DATA',
-      payload: { mentions, workflows },
-    });
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════
-  //  MCP Resource Helpers (ERR-03: extracted to avoid duplication)
-  // ═══════════════════════════════════════════════════════════════════════
-
-  /**
-   * Read a resource via MCPClientBridge, or fallback to direct state map access.
-   * Returns `null` and sends an ERROR if no content is available.
-   * Extracted to eliminate duplication between handleRequestReport and handleRequestPlan.
-   *
-   * @param uri             The `coogent://` resource URI.
-   * @param notFoundMsg     Human - readable message when the resource exists but is empty.
-   * @param directFallback  Optional fallback accessor for when the bridge is unavailable.
-   */
-  private async readMCPResourceOrError(
-    uri: string,
-    notFoundMsg: string,
-    directFallback?: () => string | undefined
-  ): Promise<string | null> {
-    if (this.mcpClientBridge) {
-      try {
-        const content = await this.mcpClientBridge.readResource(uri);
-        if (content) return content;
-        this.sendToWebview({
-          type: 'ERROR',
-          payload: { code: 'COMMAND_ERROR', message: notFoundMsg },
-        });
-        return null;
-      } catch (err) {
-        // "Resource not yet available" means the agent hasn't submitted the artifact yet.
-        // This is expected during EXECUTING_WORKER — convert to a pending signal, not an error.
-        const errMsg = err instanceof Error ? err.message : String(err);
-        if (errMsg.includes('Resource not yet available')) {
-          log.info(`[MissionControl] readMCPResourceOrError: resource pending (${uri})`);
-          this.sendToWebview({
-            type: 'PLAN_STATUS',
-            payload: { status: 'generating', message: 'Implementation plan is being generated…' },
-          });
-          return null;
-        }
-        this.handleError(err);
-        return null;
-      }
-    }
-
-    // Fallback: direct state map access (bridge not yet connected)
-    if (!this.mcpServer) {
-      this.sendToWebview({
-        type: 'ERROR',
-        payload: { code: 'COMMAND_ERROR', message: 'MCP server not available.' },
-      });
-      return null;
-    }
-    const content = directFallback?.();
-    if (content) return content;
-    this.sendToWebview({
-      type: 'ERROR',
-      payload: { code: 'COMMAND_ERROR', message: notFoundMsg },
-    });
-    return null;
-  }
-
-  private handleRequestReport(): void {
-    const masterTaskId = this.deriveMasterTaskId();
-    if (!masterTaskId) {
-      this.sendToWebview({
-        type: 'ERROR',
-        payload: { code: 'COMMAND_ERROR', message: 'No active session.' },
-      });
-      return;
-    }
-
-    this.readMCPResourceOrError(
-      RESOURCE_URIS.taskReport(masterTaskId),
-      'No consolidation report available for this session.',
-      () => this.mcpServer?.getTaskState(masterTaskId)?.consolidationReport
-    ).then(report => {
-      if (report) {
-        this.sendToWebview({ type: 'CONSOLIDATION_REPORT', payload: { report } });
-      }
-    }).catch(err => this.handleError(err));
-  }
-
-  private handleRequestPlan(): void {
-    const masterTaskId = this.deriveMasterTaskId();
-    if (!masterTaskId) {
-      this.sendToWebview({
-        type: 'ERROR',
-        payload: { code: 'COMMAND_ERROR', message: 'No active session. Cannot load implementation plan.' },
-      });
-      return;
-    }
-
-    this.readMCPResourceOrError(
-      RESOURCE_URIS.taskPlan(masterTaskId),
-      'No implementation plan available for this session.',
-      () =>
-        // Primary: MCP in-memory store (present when engine is live)
-        this.mcpServer?.getTaskState(masterTaskId)?.implementationPlan
-        // Fallback: runbook.implementation_plan (survives extension restart)
-        ?? this.engine.getRunbook()?.implementation_plan
-    ).then(plan => {
-      if (plan) {
-        log.info(`[MissionControl] handleRequestPlan: plan loaded (${plan.length} chars)`);
-        this.sendToWebview({ type: 'IMPLEMENTATION_PLAN', payload: { plan } });
-      }
-    }).catch(err => this.handleError(err));
   }
 
   // ═══════════════════════════════════════════════════════════════════════════

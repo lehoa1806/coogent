@@ -6,6 +6,29 @@ import type { Database } from './db-types.js';
 import type { PhaseHandoff } from '../types.js';
 
 /**
+ * Raw SQL row as returned by `getAsObject()` — column names match the
+ * `handoffs` table definition in ArtifactDB.
+ * @internal Used only for typed deserialization inside this repository.
+ */
+interface HandoffDbRow {
+    [key: string]: unknown;
+    phase_id: string;
+    decisions: string;
+    modified_files: string;
+    blockers: string;
+    completed_at: number;
+    next_steps_context: string | null;
+    summary: string | null;
+    rationale: string | null;
+    remaining_work: string | null;
+    constraints_json: string | null;
+    warnings: string | null;
+    changed_files_json: string | null;
+    workspace_folder: string | null;
+    symbols_touched: string | null;
+}
+
+/**
  * Repository for the `handoffs` table.
  * Handles serialization of JSON arrays for decisions, modifiedFiles, blockers,
  * remainingWork, constraints, warnings, and symbolsTouched.
@@ -83,38 +106,38 @@ export class HandoffRepository {
         );
         stmt.bind([masterTaskId, phaseId]);
         if (!stmt.step()) { stmt.free(); return undefined; }
-        const row = stmt.getAsObject() as Record<string, unknown>;
+        const row = stmt.getAsObject<HandoffDbRow>();
         stmt.free();
 
-        const parseJsonArray = (val: unknown): string[] | undefined => {
-            if (typeof val !== 'string' || !val) { return undefined; }
+        const parseJsonArray = (val: string | null): string[] | undefined => {
+            if (!val) { return undefined; }
             try { return JSON.parse(val) as string[]; } catch { return undefined; }
         };
 
         let decisions: string[], modifiedFiles: string[], blockers: string[];
         try {
-            decisions = JSON.parse(row.decisions as string) as string[];
-            modifiedFiles = JSON.parse(row.modified_files as string) as string[];
-            blockers = JSON.parse(row.blockers as string) as string[];
+            decisions = JSON.parse(row.decisions) as string[];
+            modifiedFiles = JSON.parse(row.modified_files) as string[];
+            blockers = JSON.parse(row.blockers) as string[];
         } catch {
             decisions = []; modifiedFiles = []; blockers = [];
         }
 
         return {
-            phaseId: row.phase_id as string,
+            phaseId: row.phase_id,
             masterTaskId,
             decisions,
             modifiedFiles,
             blockers,
-            completedAt: row.completed_at as number,
-            nextStepsContext: (row.next_steps_context as string) || undefined,
-            summary: (row.summary as string) || undefined,
-            rationale: (row.rationale as string) || undefined,
+            completedAt: row.completed_at,
+            nextStepsContext: row.next_steps_context || undefined,
+            summary: row.summary || undefined,
+            rationale: row.rationale || undefined,
             remainingWork: parseJsonArray(row.remaining_work),
             constraints: parseJsonArray(row.constraints_json),
             warnings: parseJsonArray(row.warnings),
-            changedFilesJson: (row.changed_files_json as string) || undefined,
-            workspaceFolder: (row.workspace_folder as string) || undefined,
+            changedFilesJson: row.changed_files_json || undefined,
+            workspaceFolder: row.workspace_folder || undefined,
             symbolsTouched: parseJsonArray(row.symbols_touched),
         };
     }

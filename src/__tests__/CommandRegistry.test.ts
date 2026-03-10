@@ -11,6 +11,7 @@ jest.mock('vscode', () => ({
 
 
 import { preFlightGitCheck } from '../CommandRegistry.js';
+import { createMockGitSandbox } from './factories/mockGitSandbox.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  preFlightGitCheck (exported helper)
@@ -23,22 +24,18 @@ describe('preFlightGitCheck', () => {
     });
 
     it('returns { blocked: false } when preFlightCheck reports clean=true', async () => {
-        const mockSandbox = {
-            preFlightCheck: jest.fn().mockResolvedValue({ clean: true, message: 'All clean' }),
-        };
-        const result = await preFlightGitCheck(mockSandbox as any);
+        const mockSandbox = createMockGitSandbox({ clean: true, message: 'All clean' });
+        const result = await preFlightGitCheck(mockSandbox);
         expect(result.blocked).toBe(false);
         expect(mockSandbox.preFlightCheck).toHaveBeenCalledTimes(1);
     });
 
     it('returns { blocked: true, message } when preFlightCheck reports clean=false', async () => {
-        const mockSandbox = {
-            preFlightCheck: jest.fn().mockResolvedValue({
-                clean: false,
-                message: 'Uncommitted changes detected',
-            }),
-        };
-        const result = await preFlightGitCheck(mockSandbox as any);
+        const mockSandbox = createMockGitSandbox({
+            clean: false,
+            message: 'Uncommitted changes detected',
+        });
+        const result = await preFlightGitCheck(mockSandbox);
         expect(result.blocked).toBe(true);
         if (result.blocked) {
             expect(result.message).toBe('Uncommitted changes detected');
@@ -46,10 +43,9 @@ describe('preFlightGitCheck', () => {
     });
 
     it('returns { blocked: false } when preFlightCheck throws (non-blocking)', async () => {
-        const mockSandbox = {
-            preFlightCheck: jest.fn().mockRejectedValue(new Error('Git API unavailable')),
-        };
-        const result = await preFlightGitCheck(mockSandbox as any);
+        const mockSandbox = createMockGitSandbox();
+        mockSandbox.preFlightCheck.mockRejectedValue(new Error('Git API unavailable'));
+        const result = await preFlightGitCheck(mockSandbox);
         expect(result.blocked).toBe(false);
     });
 });

@@ -31,11 +31,7 @@ export const DEFAULT_CONVERSATION_SETTINGS: ConversationSettings = {
     smartSwitchTokenThreshold: 80_000,
 };
 
-/**
- * Canonical filename for the persisted runbook.
- * @deprecated Import `RUNBOOK_FILE` from `../constants/paths.js` instead.
- */
-export { RUNBOOK_FILE as RUNBOOK_FILENAME } from '../constants/paths.js';
+
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Branded Types — nominal type safety for opaque IDs and timestamps
@@ -159,50 +155,6 @@ export interface Runbook {
     summary?: string;
     /** Detailed implementation plan markdown generated during the Task Planning phase. */
     implementation_plan?: string;
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  ADK Integration Contracts
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * The payload sent to the ADK when spawning an ephemeral worker agent.
- * Enforces zero-context mode and explicit file injection.
- */
-export interface ADKInjectionPayload {
-    /**
-     * MUST be `true`. Workers are always ephemeral — no conversation history,
-     * no prior file access, no accumulated state.
-     */
-    readonly ephemeral: true;
-    /** The micro-task prompt to inject into the worker. */
-    readonly prompt: string;
-    /**
-     * Pre-assembled, delimited file content payload.
-     * Format: `<<<FILE: path>>>..content..<<<END FILE>>>` per file.
-     */
-    readonly contextPayload: string;
-    /** Workspace root for the worker agent. */
-    readonly workingDirectory: string;
-    /** Maximum execution time before force-termination (ms). */
-    readonly timeoutMs: number;
-}
-
-/**
- * Handle returned by the ADK after spawning a worker.
- * Used for monitoring and termination.
- */
-export interface ADKWorkerHandle {
-    /** Unique session identifier from the ADK. */
-    readonly sessionId: string;
-    /** OS process ID of the worker (for orphan cleanup). */
-    readonly pid: number;
-    /** Register a callback for stdout/stderr output chunks. Returns an unsubscribe function. */
-    onOutput(callback: (stream: 'stdout' | 'stderr', chunk: string) => void): () => void;
-    /** Register a callback for process exit. Returns an unsubscribe function. */
-    onExit(callback: (exitCode: number) => void): () => void;
-    /** Force-terminate the worker process. */
-    terminate(): Promise<void>;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -16,6 +16,7 @@ export type {
 
 export { RequirementNormalizer } from './RequirementNormalizer.js';
 export { RepoFingerprinter } from './RepoFingerprinter.js';
+export { TechStackDetector } from './TechStackDetector.js';
 export { TaskClassifier } from './TaskClassifier.js';
 export { TemplateLoader } from './TemplateLoader.js';
 export { PolicyEngine } from './PolicyEngine.js';

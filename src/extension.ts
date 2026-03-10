@@ -1,45 +1,26 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/extension.ts — Main entry point: service init + delegation
+// src/extension.ts — Main entry point: thin orchestrator
 // ─────────────────────────────────────────────────────────────────────────────
-// R1 refactor: Service instantiation only. All command registrations and event
+// P3 refactor: activate() is now a thin orchestrator that delegates to
+// composable functions in activation.ts. All command registrations and event
 // wiring are delegated to CommandRegistry, EngineWiring, and PlannerWiring.
 
 import * as vscode from 'vscode';
-import * as fsSync from 'node:fs';
 
-import { RUNBOOK_FILENAME, asPhaseId } from './types/index.js';
-import { StateManager } from './state/StateManager.js';
-import { Engine } from './engine/Engine.js';
-import { ADKController } from './adk/ADKController.js';
-import { AntigravityADKAdapter } from './adk/AntigravityADKAdapter.js';
-import { OutputBufferRegistry } from './adk/OutputBufferRegistry.js';
-import { ContextScoper, CharRatioEncoder } from './context/ContextScoper.js';
-import { ASTFileResolver } from './context/FileResolver.js';
-import { TelemetryLogger } from './logger/TelemetryLogger.js';
-import log, { initLog, disposeLog } from './logger/log.js';
-import { parseLogLevel } from './logger/LogStream.js';
-import { GitManager } from './git/GitManager.js';
-import { GitSandboxManager } from './git/GitSandboxManager.js';
-import { PlannerAgent } from './planner/PlannerAgent.js';
-import { SessionManager } from './session/SessionManager.js';
-import { HandoffExtractor } from './context/HandoffExtractor.js';
-import { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
-import { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
-import { MCPClientBridge } from './mcp/MCPClientBridge.js';
-import { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
-import { MissionControlPanel } from './webview/MissionControlPanel.js';
-import { AgentRegistry } from './agent-selection/AgentRegistry.js';
-import { ContextPackBuilder } from './context/ContextPackBuilder.js';
-import { SessionRestoreService } from './session/SessionRestoreService.js';
-import { SessionDeleteService } from './session/SessionDeleteService.js';
-import { SessionHistoryService } from './session/SessionHistoryService.js';
-
+import log, { disposeLog } from './logger/log.js';
 import { ServiceContainer } from './ServiceContainer.js';
 import { registerAllCommands, preFlightGitCheck } from './CommandRegistry.js';
-import { wireEngine } from './EngineWiring.js';
-import { wirePlanner } from './PlannerWiring.js';
-import { getStorageBasePath, getWorkspaceRoots, getPrimaryRoot } from './utils/WorkspaceHelper.js';
-import { getCoogentDir } from './constants/paths.js';
+
+import {
+  initializeLogging,
+  createServices,
+  startMCPServer,
+  registerSidebar,
+  wireEventSystems,
+  registerReactiveConfig,
+  registerRunbookWatcher,
+  cleanupOrphanWorkers,
+} from './activation.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Shared Services
@@ -64,216 +45,37 @@ export { preFlightGitCheck };
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export function activate(context: vscode.ExtensionContext): void {
-  // Start log stream FIRST — captures everything from this point on
-  const wsRoot = getPrimaryRoot();
-  if (wsRoot) {
-    const logConfig = vscode.workspace.getConfiguration('coogent');
-    const logLevel = parseLogLevel(logConfig.get<string>('logLevel', 'info'));
-    const logMaxSizeMB = logConfig.get<number>('logMaxSizeMB', 5);
-    const logMaxBackups = logConfig.get<number>('logMaxBackups', 2);
-    initLog(wsRoot, {
-      level: logLevel,
-      maxLogBytes: logMaxSizeMB * 1024 * 1024,
-      maxBackups: logMaxBackups,
-    });
-  }
-
+  // Step 1-3: Start log stream FIRST — captures everything from this point on
+  initializeLogging();
   log.info('[Coogent] Extension activating...');
 
-  // ── Register commands FIRST — must always be available ──────────────
+  // Commands must always be available, even without a workspace
   registerAllCommands(context, svc);
 
   try {
-    const workspaceRoots = getWorkspaceRoots();
-    const primaryRoot = getPrimaryRoot();
-    if (!primaryRoot) {
-      log.warn('[Coogent] No workspace folder open — engine not initialized.');
-      return;
-    }
-    log.info('[Coogent] Workspace root:', primaryRoot);
+    // Step 4-5: Resolve paths, read config, instantiate all services
+    const result = createServices(context, svc);
+    if (!result) return; // No workspace open
 
-    // Ensure extension-managed storage directory exists (sync — activate() is not async)
-    const storageUri = context.storageUri ?? context.globalStorageUri;
-    fsSync.mkdirSync(storageUri.fsPath, { recursive: true });
-    const storageBase = getStorageBasePath(context);
-    log.info('[Coogent] Storage base:', storageBase);
+    const { config, primaryRoot } = result;
 
-    // Store workspace roots and storage base on the container for multi-root support
-    svc.workspaceRoots = workspaceRoots;
-    svc.storageBase = storageBase;
-    const coogentDir = getCoogentDir(primaryRoot);
-    svc.coogentDir = coogentDir;
+    // Step 10: Initialize MCP Server, Client Bridge, SessionHistory
+    startMCPServer(svc, primaryRoot);
 
-    // Read extension configuration
-    const config = vscode.workspace.getConfiguration('coogent');
-    const tokenLimit = config.get<number>('tokenLimit', 100_000);
-    const workerTimeoutMs = config.get<number>('workerTimeoutMs', 900_000);
-    const contextBudgetTokens = config.get<number>('contextBudgetTokens', 100_000);
+    // Steps 8-9: Register sidebar tree-data provider
+    registerSidebar(context, svc);
 
-    // ── Session (deferred) ─────────────────────────────────────────────
-    // Session directory and ID are NOT created here. They are materialised
-    // lazily on the first `plan:request` event (see PlannerWiring.ts).
-    // This avoids orphan sessions when the user opens a workspace but
-    // never submits a prompt.
-    log.info('[Coogent] Session creation deferred until first prompt.');
+    // Steps 6-7: Wire Engine + Planner event systems
+    wireEventSystems(svc, config, primaryRoot);
 
-    // ── Initialize services ────────────────────────────────────────────
-    // StateManager starts with an empty sentinel dir; it will be re-bound
-    // to the real session dir once initSession() is called.
-    svc.stateManager = new StateManager('');
-    log.info('[Coogent] StateManager initialized (deferred session dir)');
+    // Reactive configuration change listener
+    registerReactiveConfig(context, svc);
 
-    svc.engine = new Engine(svc.stateManager, { workspaceRoot: primaryRoot });
-    log.info('[Coogent] Engine initialized');
+    // File system watcher for external runbook edits
+    registerRunbookWatcher(context, svc);
 
-    svc.gitManager = new GitManager(primaryRoot);
-    svc.gitSandbox = new GitSandboxManager(primaryRoot);
-
-    svc.sessionManager = new SessionManager(coogentDir, '' /* deferred */);
-
-    const adkAdapter = new AntigravityADKAdapter(primaryRoot);
-    svc.adkController = new ADKController(adkAdapter, primaryRoot);
-    log.info('[Coogent] ADKController initialized');
-
-    svc.contextScoper = new ContextScoper({
-      encoder: new CharRatioEncoder(),
-      tokenLimit,
-      resolver: new ASTFileResolver(),
-    });
-
-    svc.logger = new TelemetryLogger(primaryRoot);
-    log.info('[Coogent] TelemetryLogger initialized');
-
-    svc.outputRegistry = new OutputBufferRegistry((phaseId, stream, chunk) => {
-      MissionControlPanel.broadcast({
-        type: 'PHASE_OUTPUT',
-        payload: { phaseId: asPhaseId(phaseId), stream, chunk },
-      });
-    });
-
-    svc.plannerAgent = new PlannerAgent(adkAdapter, {
-      workspaceRoot: primaryRoot,
-      maxTreeDepth: 4,
-      maxTreeChars: 8000,
-    });
-    // PlannerAgent.masterTaskId set in PlannerWiring on first plan:request
-    log.info('[Coogent] PlannerAgent initialized');
-
-    svc.handoffExtractor = new HandoffExtractor();
-    svc.consolidationAgent = new ConsolidationAgent();
-
-    svc.agentRegistry = new AgentRegistry(primaryRoot);
-    log.info('[Coogent] AgentRegistry initialized');
-
-    // ── Initialize MCP Server & Client Bridge ──────────────────────────
-    // DB + IPC sessions both live under coogentDir (workspace .coogent/).
-    // This keeps all data local for easy debugging.
-    svc.mcpServer = new CoogentMCPServer(primaryRoot);
-    svc.mcpBridge = new MCPClientBridge(svc.mcpServer, primaryRoot);
-    svc.mcpReady = svc.mcpServer.init(coogentDir)
-      .then(async () => {
-        log.info('[Coogent] ArtifactDB initialised.');
-
-        // Initialize ContextPackBuilder now that ArtifactDB is available
-        if (svc.contextScoper) {
-          svc.contextPackBuilder = new ContextPackBuilder(
-            svc.mcpServer!.getArtifactDB(),
-            svc.contextScoper.getEncoder(),
-            primaryRoot,
-          );
-          log.info('[Coogent] ContextPackBuilder initialized.');
-        }
-
-        // Initialize Session History Services
-        const restoreService = new SessionRestoreService(svc.engine!, svc.mcpServer!, coogentDir);
-        const deleteService = new SessionDeleteService(svc.mcpServer!, svc.sessionManager!);
-        svc.sessionHistoryService = new SessionHistoryService(
-          svc.sessionManager!, restoreService, deleteService,
-        );
-        log.info('[Coogent] SessionHistoryService initialized.');
-
-        // Eagerly wire ArtifactDB so session history is available before first prompt
-        const artifactDB = svc.mcpServer!.getArtifactDB();
-        if (artifactDB && svc.sessionManager) {
-          svc.sessionManager.setArtifactDB(artifactDB);
-          log.info('[Coogent] SessionManager wired to ArtifactDB (eager).');
-        }
-
-        // Re-trigger sidebar refresh now that DB is available
-        svc.sidebarMenu?.refresh();
-
-        // SessionManager DB wiring is now done above (eager).
-        // StateManager DB wiring is still deferred until plan:request
-        // materialises the session directory (see PlannerWiring.ts).
-
-        return svc.mcpBridge!.connect();
-      })
-      .then(() => log.info('[Coogent] MCP Client Bridge connected.'))
-      .catch(err => log.error('[Coogent] MCP Server/Bridge init failed:', err));
-
-    // MCP phaseCompleted logging bridge
-    svc.mcpServer.onPhaseCompleted((handoff) => {
-      log.info(
-        `[Coogent] MCP phaseCompleted: masterTaskId=${handoff.masterTaskId}, ` +
-        `phaseId=${handoff.phaseId}`
-      );
-    });
-
-    // ── Register sidebar ───────────────────────────────────────────────
-    svc.sidebarMenu = new SidebarMenuProvider(svc.sessionManager);
-    context.subscriptions.push(
-      vscode.window.registerTreeDataProvider('coogent.sidebarMenu', svc.sidebarMenu)
-    );
-    svc.sidebarMenu.refresh();
-    log.info('[Coogent] Activity Bar sidebar menu registered.');
-
-    // ── Wire events (delegated) ────────────────────────────────────────
-    wireEngine(svc, primaryRoot, workerTimeoutMs, workspaceRoots, contextBudgetTokens);
-    wirePlanner(svc);
-
-    // ── Reactive configuration ─────────────────────────────────────────
-    context.subscriptions.push(
-      vscode.workspace.onDidChangeConfiguration((e) => {
-        if (!e.affectsConfiguration('coogent')) return;
-        const updated = vscode.workspace.getConfiguration('coogent');
-        const newTokenLimit = updated.get<number>('tokenLimit', 100_000);
-        const newWorkerTimeoutMs = updated.get<number>('workerTimeoutMs', 900_000);
-        const newMaxRetries = updated.get<number>('maxRetries', 3);
-        svc.contextScoper?.setTokenLimit(newTokenLimit);
-        svc.engine?.setMaxRetries(newMaxRetries);
-        if (e.affectsConfiguration('coogent.logLevel')) {
-          const newLogLevel = parseLogLevel(updated.get<string>('logLevel', 'info'));
-          log.setLevel(newLogLevel);
-        }
-        log.info(
-          `[Coogent] Configuration updated: tokenLimit=${newTokenLimit}, ` +
-          `workerTimeoutMs=${newWorkerTimeoutMs}, maxRetries=${newMaxRetries}`
-        );
-      })
-    );
-
-    // ── File system watcher — auto-reload on external runbook edit ─────
-    const storageGlob = new vscode.RelativePattern(
-      vscode.Uri.file(coogentDir),
-      `ipc/**/${RUNBOOK_FILENAME}`
-    );
-    const watcher = vscode.workspace.createFileSystemWatcher(
-      storageGlob,
-      true, false, true
-    );
-    watcher.onDidChange(() => {
-      log.info(`[Coogent] ${RUNBOOK_FILENAME} changed externally`);
-      if (svc.engine?.getState() === 'IDLE') {
-        svc.engine.loadRunbook().catch(log.onError);
-      }
-    });
-    context.subscriptions.push(watcher);
-
-    // ── Orphan cleanup ─────────────────────────────────────────────────
-    // NOTE: Crash recovery is now sequenced inside the DB init chain above
-    // so that setArtifactDB() is guaranteed to run before loadRunbook().
-    log.info('[Coogent] All event handlers wired — running orphan cleanup...');
-    svc.adkController.cleanupOrphanedWorkers().catch(log.onError);
+    // Orphan cleanup
+    cleanupOrphanWorkers(svc);
 
     log.info('[Coogent] Extension activated.');
 

@@ -5,7 +5,8 @@
 // a single, typed container that is passed to extracted wiring modules.
 
 import { randomUUID } from 'node:crypto';
-import { formatSessionDirName, type SessionManager } from './session/SessionManager.js';
+import { formatSessionDirName } from './session/session-utils.js';
+import type { SessionManager } from './session/SessionManager.js';
 import { getSessionDir } from './constants/paths.js';
 
 import type { StateManager } from './state/StateManager.js';

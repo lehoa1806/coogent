@@ -346,15 +346,6 @@ export class PlannerAgent extends EventEmitter {
         return this.retryManager.hasRetryData();
     }
 
-    /**
-     * Extract a JSON runbook from the agent's raw output.
-     * Delegates to RunbookParser.
-     * @deprecated Use RunbookParser.parse() directly for new code.
-     */
-    extractRunbook(output: string): Runbook | null {
-        return this.parser.parse(output);
-    }
-
     // ═══════════════════════════════════════════════════════════════════════════
     //  Private
     // ═══════════════════════════════════════════════════════════════════════════
@@ -431,15 +422,6 @@ export class PlannerAgent extends EventEmitter {
         this.draft = parsed;
         this.emit('plan:status', 'ready', 'Plan generated successfully');
         this.emit('plan:generated', parsed, this.fileTree);
-    }
-
-    /**
-     * Collect the workspace file tree up to the specified depth.
-     * Delegates to WorkspaceScanner.
-     * @deprecated Use WorkspaceScanner.scan() directly for new code.
-     */
-    async collectFileTree(rootDir: string, maxDepth: number): Promise<string[]> {
-        return this.scanner.scan(rootDir, maxDepth, this.config.maxTreeChars);
     }
 
     /**
