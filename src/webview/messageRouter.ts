@@ -425,17 +425,6 @@ export function broadcastSuggestionData(deps: MessageRouterDeps): void {
 function handleMCPFetchResource(uri: string, requestId: string, deps: MessageRouterDeps): void {
     log.info(`[MissionControl] MCP_FETCH_RESOURCE: uri = ${uri}, requestId = ${requestId} `);
 
-    const currentTaskId = deriveMasterTaskId(deps);
-    const taskIdMatch = uri.match(/coogent:\/\/tasks\/([^/]+)/);
-    if (taskIdMatch && currentTaskId && taskIdMatch[1] !== currentTaskId) {
-        log.info(`[MissionControl] MCP_FETCH_RESOURCE: rejecting stale request for ${taskIdMatch[1]} (current: ${currentTaskId})`);
-        deps.sendToWebview({
-            type: 'MCP_RESOURCE_DATA',
-            payload: { requestId, data: '', error: 'Session has been reset. Resource no longer available.' },
-        });
-        return;
-    }
-
     if (!deps.mcpClientBridge) {
         deps.sendToWebview({
             type: 'MCP_RESOURCE_DATA',

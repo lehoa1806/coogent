@@ -292,13 +292,14 @@ export class CoogentMCPServer {
     }
 
     /**
-     * Remove heavy child data (phases, outputs, evaluations) but keep the
-     * `sessions` and `tasks` rows so the session appears in history.
-     * Use this instead of `purgeTask()` on CMD_RESET.
+     * Called on CMD_RESET when switching away from a session.
+     * No data is deleted — session switching only resets the UI.
+     * All task and phase data is preserved in SQLite for historical access.
      */
     purgeTaskKeepSession(masterTaskId: string): void {
-        this.db.tasks.deleteChildRecords(masterTaskId);
-        log.info(`[CoogentMCPServer] Purged task (kept session): ${masterTaskId}`);
+        // No data deletion — session switching only resets the UI.
+        // All task and phase-level data is preserved for historical browsing.
+        log.info(`[CoogentMCPServer] Session switched away from: ${masterTaskId}`);
     }
 
     /**
