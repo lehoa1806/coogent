@@ -134,12 +134,12 @@ describe('GitSandboxManager — Multi-Repo', () => {
         expect(result.results).toHaveLength(3);
         result.results.forEach(r => {
             expect(r.success).toBe(true);
-            expect(r.branchName).toBe('coogent/multi-root-test');
+            expect(r.branchName).toBe('multi-root-test');
         });
         // Verify consistent naming used for all repos
-        expect(repo1.createBranch).toHaveBeenCalledWith('coogent/multi-root-test', true);
-        expect(repo2.createBranch).toHaveBeenCalledWith('coogent/multi-root-test', true);
-        expect(repo3.createBranch).toHaveBeenCalledWith('coogent/multi-root-test', true);
+        expect(repo1.createBranch).toHaveBeenCalledWith('multi-root-test', true);
+        expect(repo2.createBranch).toHaveBeenCalledWith('multi-root-test', true);
+        expect(repo3.createBranch).toHaveBeenCalledWith('multi-root-test', true);
         // Previous branches are captured
         expect(result.results[0].previousBranch).toBe('main');
         expect(result.results[1].previousBranch).toBe('develop');
@@ -208,9 +208,9 @@ describe('GitSandboxManager — Multi-Repo', () => {
     // ─────────────────────────────────────────────────────────────────────────
 
     test('returnToOriginalBranchAll — all succeed', async () => {
-        const repo1 = createMockRepo({ rootPath: '/repo/alpha', branch: 'coogent/task' });
-        const repo2 = createMockRepo({ rootPath: '/repo/beta', branch: 'coogent/task' });
-        const repo3 = createMockRepo({ rootPath: '/repo/gamma', branch: 'coogent/task' });
+        const repo1 = createMockRepo({ rootPath: '/repo/alpha', branch: 'task' });
+        const repo2 = createMockRepo({ rootPath: '/repo/beta', branch: 'task' });
+        const repo3 = createMockRepo({ rootPath: '/repo/gamma', branch: 'task' });
 
         // Simulate checkout updating HEAD
         repo1.checkout.mockImplementation(async (ref: string) => {

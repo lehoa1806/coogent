@@ -91,7 +91,7 @@ describe('GitSandboxManager', () => {
     //  createSandboxBranch
     // ─────────────────────────────────────────────────────────────────────────
 
-    test('createSandboxBranch creates and checks out a coogent/ branch', async () => {
+    test('createSandboxBranch creates and checks out a branch from the task slug', async () => {
         // Pre-flight is clean (defaults)
         mockRepository.createBranch.mockImplementation(async (name: string) => {
             // Simulate the branch being created and HEAD updated
@@ -100,9 +100,9 @@ describe('GitSandboxManager', () => {
 
         const result = await manager.createSandboxBranch({ taskSlug: 'fix-login' });
         expect(result.success).toBe(true);
-        expect(result.branchName).toBe('coogent/fix-login');
+        expect(result.branchName).toBe('fix-login');
         expect(result.previousBranch).toBe('main');
-        expect(mockRepository.createBranch).toHaveBeenCalledWith('coogent/fix-login', true);
+        expect(mockRepository.createBranch).toHaveBeenCalledWith('fix-login', true);
     });
 
     test('createSandboxBranch throws when working tree is dirty', async () => {
@@ -122,8 +122,8 @@ describe('GitSandboxManager', () => {
             taskSlug: 'Fix Login Bug!!! @#$%',
         });
         expect(result.success).toBe(true);
-        expect(result.branchName).toBe('coogent/fix-login-bug');
-        expect(mockRepository.createBranch).toHaveBeenCalledWith('coogent/fix-login-bug', true);
+        expect(result.branchName).toBe('fix-login-bug');
+        expect(mockRepository.createBranch).toHaveBeenCalledWith('fix-login-bug', true);
     });
 
     // ─────────────────────────────────────────────────────────────────────────
