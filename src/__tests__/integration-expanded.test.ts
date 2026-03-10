@@ -581,3 +581,458 @@ describe('P2.1 Integration: Scheduler + Healer combined flow', () => {
         expect(ready[0].id).toBe(1);
     });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  9. Session History Integration
+// ═══════════════════════════════════════════════════════════════════════════════
+
+
+import { SessionRestoreService } from '../session/SessionRestoreService.js';
+import { SessionDeleteService } from '../session/SessionDeleteService.js';
+import { SessionHistoryService } from '../session/SessionHistoryService.js';
+import { SessionHealthValidator } from '../session/SessionHealthValidator.js';
+import { RUNBOOK_FILE, IPC_DIR } from '../constants/paths.js';
+import type { ArtifactDB } from '../mcp/ArtifactDB.js';
+import type { CoogentMCPServer } from '../mcp/CoogentMCPServer.js';
+import type { SessionManager } from '../session/SessionManager.js';
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
+/** In-memory mock of ArtifactDB for session history integration tests. */
+interface MockArtifactDB {
+    sessions: {
+        upsert(dirName: string, sessionId: string, prompt: string, createdAt: number): void;
+        list(): Array<{
+            sessionDirName: string; sessionId: string; prompt: string;
+            createdAt: number; runbookJson: string | null; status: string | null;
+        }>;
+        delete(sessionDirName: string): void;
+    };
+    tasks: {
+        upsert(masterTaskId: string, fields: Record<string, unknown>): void;
+        get(masterTaskId: string): { summary?: string; implementationPlan?: string } | undefined;
+        delete(masterTaskId: string): void;
+    };
+    phases: {
+        getOutputs(masterTaskId: string): Record<string, string>;
+        upsertOutput(masterTaskId: string, phaseId: string, output: string, stderr?: string): void;
+    };
+    sessionsRows: Array<{
+        sessionDirName: string; sessionId: string; prompt: string;
+        createdAt: number; runbookJson: string | null; status: string | null;
+    }>;
+    tasksMap: Map<string, any>;
+    phaseOutputs: Map<string, Record<string, string>>;
+}
+
+/**
+ * Build a mock ArtifactDB that exposes sessions and tasks repositories
+ * backed by simple in-memory arrays/maps (no real SQLite needed).
+ */
+function buildMockArtifactDB(): MockArtifactDB {
+    type SessionRow = {
+        sessionDirName: string; sessionId: string; prompt: string;
+        createdAt: number; runbookJson: string | null; status: string | null;
+    };
+    const sessionsRows: SessionRow[] = [];
+
+    const tasksMap = new Map<string, { summary?: string; implementationPlan?: string; runbook_json?: string }>();
+
+    const phaseOutputs = new Map<string, Record<string, string>>();
+
+    const sessions = {
+        upsert(dirName: string, sessionId: string, prompt: string, createdAt: number) {
+            const existing = sessionsRows.find(s => s.sessionDirName === dirName);
+            if (existing) {
+                existing.sessionId = sessionId;
+                existing.prompt = prompt;
+                existing.createdAt = createdAt;
+            } else {
+                sessionsRows.push({ sessionDirName: dirName, sessionId, prompt, createdAt, runbookJson: null, status: null });
+            }
+        },
+        list: () => sessionsRows,
+        delete(sessionDirName: string) {
+            const idx = sessionsRows.findIndex(s => s.sessionDirName === sessionDirName);
+            if (idx >= 0) sessionsRows.splice(idx, 1);
+            tasksMap.delete(sessionDirName);
+        },
+    };
+
+    const tasks = {
+        upsert(masterTaskId: string, fields: Record<string, unknown>) {
+            const existing = tasksMap.get(masterTaskId) ?? {};
+            tasksMap.set(masterTaskId, { ...existing, ...fields });
+        },
+        get(masterTaskId: string) {
+            return tasksMap.get(masterTaskId) as { summary?: string; implementationPlan?: string } | undefined;
+        },
+        delete(masterTaskId: string) {
+            tasksMap.delete(masterTaskId);
+        },
+    };
+
+    const phases = {
+        getOutputs(masterTaskId: string): Record<string, string> {
+            return phaseOutputs.get(masterTaskId) ?? {};
+        },
+        upsertOutput(masterTaskId: string, phaseId: string, output: string, _stderr: string = '') {
+            const existing = phaseOutputs.get(masterTaskId) ?? {};
+            existing[phaseId] = output;
+            phaseOutputs.set(masterTaskId, existing);
+        },
+    };
+
+    return { sessions, tasks, phases, sessionsRows, tasksMap, phaseOutputs };
+}
+
+/** Build a mock CoogentMCPServer wrapping a mock ArtifactDB. */
+function buildMockMCPServer(mockDB: ReturnType<typeof buildMockArtifactDB>) {
+    const purgedTasks = new Set<string>();
+
+    return {
+        getArtifactDB: () => mockDB as unknown as ArtifactDB,
+        getTaskState: (masterTaskId: string) => mockDB.tasks.get(masterTaskId),
+        purgeTask: (masterTaskId: string) => {
+            mockDB.tasks.delete(masterTaskId);
+            purgedTasks.add(masterTaskId);
+        },
+        upsertSummary: (masterTaskId: string, summary: string) => {
+            mockDB.tasks.upsert(masterTaskId, { summary });
+        },
+        getWorkerOutputs: (masterTaskId: string) => mockDB.phases.getOutputs(masterTaskId),
+        purgedTasks,
+    } as unknown as CoogentMCPServer & { purgedTasks: Set<string> };
+}
+
+/** Build a mock SessionManager that tracks deleteSession calls. */
+function buildMockSessionManager(mockDB: ReturnType<typeof buildMockArtifactDB>) {
+    const deletedSessions: string[] = [];
+    let currentSessionId = '';
+    let currentSessionDirName = '';
+
+    return {
+        listSessions: async () => mockDB.sessionsRows.map((s: any) => ({
+            sessionId: s.sessionId,
+            projectId: 'test',
+            status: 'idle' as const,
+            phaseCount: 0,
+            completedPhases: 0,
+            createdAt: s.createdAt,
+            firstPrompt: s.prompt,
+        })),
+        searchSessions: async (_q: string) => [],
+        deleteSession: async (sessionDirName: string) => {
+            deletedSessions.push(sessionDirName);
+            mockDB.sessions.delete(sessionDirName);
+        },
+        setCurrentSessionId: (id: string, dirName?: string) => {
+            currentSessionId = id;
+            currentSessionDirName = dirName ?? id;
+        },
+        getCurrentSessionDirName: () => currentSessionDirName,
+        deletedSessions,
+        getCurrentSessionId: () => currentSessionId,
+    } as unknown as SessionManager & {
+        deletedSessions: string[];
+        getCurrentSessionId: () => string;
+    };
+}
+
+/** Build a mock Engine that tracks switchSession calls. */
+function buildMockEngine() {
+    let currentSessionDir = '';
+    const switchedSessions: string[] = [];
+    let cachedRunbook: any = null;
+
+    return {
+        switchSession: async (sm: { sessionDir?: string }) => {
+            currentSessionDir = (sm as any).sessionDir ?? '';
+            switchedSessions.push(currentSessionDir);
+        },
+        getStateManager: () => ({
+            getCachedRunbook: () => cachedRunbook,
+            sessionDir: currentSessionDir,
+        }),
+        setCachedRunbook: (rb: any) => { cachedRunbook = rb; },
+        switchedSessions,
+        getCurrentSessionDir: () => currentSessionDir,
+    } as unknown as Engine & {
+        switchedSessions: string[];
+        getCurrentSessionDir: () => string;
+        setCachedRunbook: (rb: any) => void;
+    };
+}
+
+describe('Session History Integration', () => {
+    let storageBase: string;
+
+    beforeEach(async () => {
+        storageBase = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-session-int-'));
+        const ipcDir = path.join(storageBase, IPC_DIR);
+        await fs.mkdir(ipcDir, { recursive: true });
+    });
+
+    afterEach(async () => {
+        await new Promise(r => setTimeout(r, 50));
+        try {
+            await fs.rm(storageBase, { recursive: true, force: true });
+        } catch {
+            // Best-effort cleanup
+        }
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  1. Load valid session end-to-end
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('loads a valid session end-to-end via SessionRestoreService', async () => {
+        const sessionDirName = 'test-valid-session';
+        const sessionDir = path.join(storageBase, IPC_DIR, sessionDirName);
+        await fs.mkdir(sessionDir, { recursive: true });
+
+        // Create runbook file on disk
+        const runbook = {
+            project_id: 'session-integ',
+            status: 'idle',
+            current_phase: 0,
+            phases: [{ id: 0, status: 'pending', prompt: 'Test', context_files: [], success_criteria: 'exit_code:0' }],
+        };
+        await fs.writeFile(path.join(sessionDir, RUNBOOK_FILE), JSON.stringify(runbook));
+
+        // Set up mock DB with matching session metadata
+        const mockDB = buildMockArtifactDB();
+        mockDB.sessions.upsert(sessionDirName, 'uuid-1', 'Create a feature', Date.now());
+        mockDB.tasks.upsert(sessionDirName, { summary: 'Build feature X' });
+
+        const mockMCP = buildMockMCPServer(mockDB);
+        const mockEngine = buildMockEngine();
+
+        const restoreService = new SessionRestoreService(
+            mockEngine as any,
+            mockMCP as any,
+            storageBase,
+        );
+
+        const result = await restoreService.restore(sessionDirName);
+
+        expect(result.success).toBe(true);
+        expect(result.healthStatus).not.toBe('invalid');
+        expect(result.sessionDirName).toBe(sessionDirName);
+        expect(mockEngine.switchedSessions.length).toBeGreaterThanOrEqual(1);
+    }, 5_000);
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  2. Load missing session fails with invalid status
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('returns invalid health status for a nonexistent session', async () => {
+        const mockDB = buildMockArtifactDB();
+        const mockMCP = buildMockMCPServer(mockDB);
+        const mockEngine = buildMockEngine();
+
+        const restoreService = new SessionRestoreService(
+            mockEngine as any,
+            mockMCP as any,
+            storageBase,
+        );
+
+        const result = await restoreService.restore('nonexistent-session-dir');
+
+        expect(result.success).toBe(false);
+        expect(result.healthStatus).toBe('invalid');
+        expect(result.errors.length).toBeGreaterThan(0);
+    }, 5_000);
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  3. Delete session cascades correctly
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('deletes a session with full cascade — DB records removed', async () => {
+        const sessionDirName = 'test-delete-session';
+
+        // Set up mock DB with session + task records
+        const mockDB = buildMockArtifactDB();
+        mockDB.sessions.upsert(sessionDirName, 'uuid-del', 'Delete test', Date.now());
+        mockDB.tasks.upsert(sessionDirName, { summary: 'To be deleted' });
+
+        const mockMCP = buildMockMCPServer(mockDB);
+        const mockSessionMgr = buildMockSessionManager(mockDB);
+
+        const deleteService = new SessionDeleteService(
+            mockMCP as any,
+            mockSessionMgr as any,
+        );
+
+        const result = await deleteService.deleteSession(sessionDirName, false);
+
+        expect(result.success).toBe(true);
+        expect(result.sessionDirName).toBe(sessionDirName);
+
+        // Verify the session is no longer in the sessions list
+        const remaining = mockDB.sessions.list();
+        expect(remaining.find((s: any) => s.sessionDirName === sessionDirName)).toBeUndefined();
+
+        // Verify SessionManager.deleteSession was called
+        expect(mockSessionMgr.deletedSessions).toContain(sessionDirName);
+    }, 5_000);
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  4. Switch sessions clears prior state
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('switching sessions replaces engine state with new session', async () => {
+        // Create two session directories
+        const sessionA = 'session-a';
+        const sessionB = 'session-b';
+        const sessionDirA = path.join(storageBase, IPC_DIR, sessionA);
+        const sessionDirB = path.join(storageBase, IPC_DIR, sessionB);
+        await fs.mkdir(sessionDirA, { recursive: true });
+        await fs.mkdir(sessionDirB, { recursive: true });
+
+        const runbookA = {
+            project_id: 'project-a',
+            status: 'idle',
+            current_phase: 0,
+            phases: [{ id: 0, status: 'completed', prompt: 'Phase A', context_files: [], success_criteria: 'exit_code:0' }],
+        };
+        const runbookB = {
+            project_id: 'project-b',
+            status: 'idle',
+            current_phase: 0,
+            phases: [{ id: 0, status: 'pending', prompt: 'Phase B', context_files: [], success_criteria: 'exit_code:0' }],
+        };
+
+        await fs.writeFile(path.join(sessionDirA, RUNBOOK_FILE), JSON.stringify(runbookA));
+        await fs.writeFile(path.join(sessionDirB, RUNBOOK_FILE), JSON.stringify(runbookB));
+
+        const mockDB = buildMockArtifactDB();
+        mockDB.sessions.upsert(sessionA, 'uuid-a', 'Session A', Date.now() - 1000);
+        mockDB.sessions.upsert(sessionB, 'uuid-b', 'Session B', Date.now());
+        mockDB.tasks.upsert(sessionA, { summary: 'Summary A' });
+        mockDB.tasks.upsert(sessionB, { summary: 'Summary B' });
+
+        const mockMCP = buildMockMCPServer(mockDB);
+        const mockEngine = buildMockEngine();
+
+        const restoreService = new SessionRestoreService(
+            mockEngine as any,
+            mockMCP as any,
+            storageBase,
+        );
+
+        // Load session A
+        const resultA = await restoreService.restore(sessionA);
+        expect(resultA.success).toBe(true);
+        expect(mockEngine.switchedSessions.length).toBe(1);
+
+        // Load session B (switch)
+        const resultB = await restoreService.restore(sessionB);
+        expect(resultB.success).toBe(true);
+        expect(mockEngine.switchedSessions.length).toBe(2);
+
+        // The engine should have been switched twice — once per session
+        // The last switch should be for session B's directory
+        const lastSwitchedDir = mockEngine.switchedSessions[1];
+        expect(lastSwitchedDir).toContain(sessionB);
+    }, 5_000);
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  5. Delete active session resets runtime
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('deleting the active session purges MCP TaskState', async () => {
+        const sessionDirName = 'test-active-delete';
+
+        // Set up mock DB with session + task records
+        const mockDB = buildMockArtifactDB();
+        mockDB.sessions.upsert(sessionDirName, 'uuid-active', 'Active session', Date.now());
+        mockDB.tasks.upsert(sessionDirName, { summary: 'Active task' });
+
+        const mockMCP = buildMockMCPServer(mockDB);
+        const mockSessionMgr = buildMockSessionManager(mockDB);
+
+        const deleteService = new SessionDeleteService(
+            mockMCP as any,
+            mockSessionMgr as any,
+        );
+
+        // Delete with isActiveSession = true
+        const result = await deleteService.deleteSession(sessionDirName, true);
+
+        expect(result.success).toBe(true);
+
+        // Verify purgeTask was called (TaskState purged)
+        expect((mockMCP as any).purgedTasks.has(sessionDirName)).toBe(true);
+
+        // Verify the task no longer exists in the DB
+        expect(mockDB.tasks.get(sessionDirName)).toBeUndefined();
+    }, 5_000);
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  6. SessionHealthValidator: healthy session
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('SessionHealthValidator returns healthy for a complete session', async () => {
+        const sessionDirName = 'test-healthy-session';
+        const sessionDir = path.join(storageBase, IPC_DIR, sessionDirName);
+        await fs.mkdir(sessionDir, { recursive: true });
+        await fs.writeFile(path.join(sessionDir, RUNBOOK_FILE), '{}');
+
+        const mockDB = buildMockArtifactDB();
+        mockDB.sessions.upsert(sessionDirName, 'uuid-h', 'Healthy', Date.now());
+
+        const validator = new SessionHealthValidator(
+            mockDB as unknown as ArtifactDB,
+            storageBase,
+        );
+
+        const result = validator.validate(sessionDirName);
+
+        expect(result.status).toBe('healthy');
+        expect(result.hasMetadata).toBe(true);
+        expect(result.hasSnapshot).toBe(true);
+        expect(result.errors).toHaveLength(0);
+    }, 5_000);
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  7. SessionHistoryService: orchestrated delete
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('SessionHistoryService.deleteSession determines active status correctly', async () => {
+        const sessionDirName = 'test-orchestrated-delete';
+
+        const mockDB = buildMockArtifactDB();
+        mockDB.sessions.upsert(sessionDirName, 'uuid-orch', 'Orchestrated', Date.now());
+        mockDB.tasks.upsert(sessionDirName, { summary: 'Will be deleted' });
+
+        const mockMCP = buildMockMCPServer(mockDB);
+        const mockSessionMgr = buildMockSessionManager(mockDB);
+        const mockEngine = buildMockEngine();
+
+        const restoreService = new SessionRestoreService(
+            mockEngine as any,
+            mockMCP as any,
+            storageBase,
+        );
+        const deleteService = new SessionDeleteService(
+            mockMCP as any,
+            mockSessionMgr as any,
+        );
+        const historyService = new SessionHistoryService(
+            mockSessionMgr as any,
+            restoreService,
+            deleteService,
+        );
+
+        // Delete with the session being the currently active one
+        const result = await historyService.deleteSession(
+            sessionDirName,
+            sessionDirName, // current active = same session → isActive = true
+        );
+
+        expect(result.success).toBe(true);
+        // purgeTask should have been called for the active session
+        expect((mockMCP as any).purgedTasks.has(sessionDirName)).toBe(true);
+    }, 5_000);
+});

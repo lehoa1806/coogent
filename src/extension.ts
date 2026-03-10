@@ -30,6 +30,9 @@ import { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
 import { AgentRegistry } from './agent-selection/AgentRegistry.js';
 import { ContextPackBuilder } from './context/ContextPackBuilder.js';
+import { SessionRestoreService } from './session/SessionRestoreService.js';
+import { SessionDeleteService } from './session/SessionDeleteService.js';
+import { SessionHistoryService } from './session/SessionHistoryService.js';
 
 import { ServiceContainer } from './ServiceContainer.js';
 import { registerAllCommands, preFlightGitCheck } from './CommandRegistry.js';
@@ -179,6 +182,14 @@ export function activate(context: vscode.ExtensionContext): void {
           );
           log.info('[Coogent] ContextPackBuilder initialized.');
         }
+
+        // Initialize Session History Services
+        const restoreService = new SessionRestoreService(svc.engine!, svc.mcpServer!, storageBase);
+        const deleteService = new SessionDeleteService(svc.mcpServer!, svc.sessionManager!);
+        svc.sessionHistoryService = new SessionHistoryService(
+          svc.sessionManager!, restoreService, deleteService,
+        );
+        log.info('[Coogent] SessionHistoryService initialized.');
 
         // DB wiring is deferred until plan:request materialises the session.
         // At this point we only connect the MCP bridge so it's ready.

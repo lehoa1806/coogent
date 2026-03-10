@@ -24,6 +24,7 @@ import type { MCPClientBridge } from './mcp/MCPClientBridge.js';
 import type { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
 import type { AgentRegistry } from './agent-selection/AgentRegistry.js';
 import type { ContextPackBuilder } from './context/ContextPackBuilder.js';
+import type { SessionHistoryService } from './session/SessionHistoryService.js';
 
 /**
  * Centralised container holding all extension service instances.
@@ -58,6 +59,7 @@ export class ServiceContainer {
     sidebarMenu: SidebarMenuProvider | undefined;
     agentRegistry: AgentRegistry | undefined;
     contextPackBuilder: ContextPackBuilder | undefined;
+    sessionHistoryService: SessionHistoryService | undefined;
     /** Resolves once MCP server + ArtifactDB are fully initialised. */
     mcpReady: Promise<void> | undefined;
     workspaceRoots: string[] | undefined;
@@ -158,6 +160,7 @@ export class ServiceContainer {
         this.sidebarMenu = undefined;
         this.agentRegistry = undefined;
         this.contextPackBuilder = undefined;
+        this.sessionHistoryService = undefined;
         this.mcpReady = undefined;
         this.workspaceRoots = undefined;
         this.storageBase = undefined;
@@ -192,6 +195,7 @@ export type ResolvableServices = {
     sidebarMenu: SidebarMenuProvider;
     agentRegistry: AgentRegistry;
     contextPackBuilder: ContextPackBuilder;
+    sessionHistoryService: SessionHistoryService;
     mcpReady: Promise<void>;
     workspaceRoots: string[];
     storageBase: string;
@@ -219,6 +223,7 @@ const RESOLVABLE_KEYS: Record<keyof ResolvableServices, true> = {
     sidebarMenu: true,
     agentRegistry: true,
     contextPackBuilder: true,
+    sessionHistoryService: true,
     mcpReady: true,
     workspaceRoots: true,
     storageBase: true,

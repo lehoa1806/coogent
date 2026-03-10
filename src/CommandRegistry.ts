@@ -143,63 +143,47 @@ export function registerAllCommands(
     // ── loadSession ────────────────────────────────────────────────────
     context.subscriptions.push(
         vscode.commands.registerCommand('coogent.loadSession', async (sessionId?: string) => {
-            if (!svc.engine || !svc.sessionManager) {
-                vscode.window.showWarningMessage(
-                    'Coogent: Open a workspace folder first to load a session.'
-                );
+            if (!svc.sessionHistoryService) {
+                vscode.window.showWarningMessage('Coogent: Session services not ready. Try again in a moment.');
                 return;
             }
             if (!sessionId) return;
-            const sessionDir = svc.sessionManager.getSessionDir(sessionId);
-            const masterTaskId = path.basename(sessionDir);
-            const newStateManager = new StateManager(sessionDir);
 
-            // Bind ArtifactDB so DB-primary runbook persistence works after switch
-            if (svc.mcpServer) {
-                newStateManager.setArtifactDB(svc.mcpServer.getArtifactDB(), masterTaskId);
-            }
+            // SessionManager stores sessions by sessionId but SessionHistoryService
+            // needs the sessionDirName. Resolve it.
+            const sessionDir = svc.sessionManager!.getSessionDir(sessionId);
+            const sessionDirName = path.basename(sessionDir);
 
             try {
-                await svc.engine.switchSession(newStateManager);
+                const result = await svc.sessionHistoryService.loadSession(sessionDirName);
+                if (!result.success) {
+                    vscode.window.showErrorMessage(`Coogent: Session load failed — ${result.errors.join('; ')}`);
+                    return;
+                }
                 svc.currentSessionDir = sessionDir;
-                svc.sessionManager.setCurrentSessionId(sessionId, masterTaskId);
-                svc.plannerAgent?.setMasterTaskId(masterTaskId);
+                svc.plannerAgent?.setMasterTaskId(sessionDirName);
                 showMissionControl(context.extensionUri, svc);
 
-                // ── Hydrate persisted artifacts into webview ────────────
-                // Read the original prompt and worker outputs from ArtifactDB
-                // and broadcast them using existing message types so the
-                // webview's messageHandler restores appState.lastPrompt
-                // and appState.phaseOutputs from history.
+                // Hydrate UI with restored worker outputs
+                for (const [phaseIdStr, output] of Object.entries(result.workerOutputs)) {
+                    const indexMatch = phaseIdStr.match(/^phase-(\d+)-/);
+                    if (indexMatch && output) {
+                        const phaseId = asPhaseId(parseInt(indexMatch[1], 10));
+                        MissionControlPanel.broadcast({
+                            type: 'PHASE_OUTPUT',
+                            payload: { phaseId, stream: 'stdout', chunk: output },
+                        });
+                    }
+                }
+
+                // Broadcast last prompt if available
                 if (svc.mcpServer) {
-                    const taskState = svc.mcpServer.getTaskState(masterTaskId);
+                    const taskState = svc.mcpServer.getTaskState(sessionDirName);
                     if (taskState?.summary) {
                         MissionControlPanel.broadcast({
                             type: 'LOG_ENTRY',
-                            payload: {
-                                timestamp: asTimestamp(),
-                                level: 'info',
-                                message: `[LAST_PROMPT] ${taskState.summary}`,
-                            },
+                            payload: { timestamp: asTimestamp(), level: 'info', message: `[LAST_PROMPT] ${taskState.summary}` },
                         });
-                    }
-
-                    const workerOutputs = svc.mcpServer.getWorkerOutputs(masterTaskId);
-                    for (const [phaseIdStr, output] of Object.entries(workerOutputs)) {
-                        // phaseIdStr is the mcpPhaseId (e.g. "phase-000-<uuid>")
-                        // Extract the numeric phase index from the MCP phase ID
-                        const indexMatch = phaseIdStr.match(/^phase-(\d+)-/);
-                        if (indexMatch && output) {
-                            const phaseId = asPhaseId(parseInt(indexMatch[1], 10));
-                            MissionControlPanel.broadcast({
-                                type: 'PHASE_OUTPUT',
-                                payload: {
-                                    phaseId,
-                                    stream: 'stdout',
-                                    chunk: output,
-                                },
-                            });
-                        }
                     }
                 }
             } catch (err: unknown) {
@@ -211,11 +195,17 @@ export function registerAllCommands(
     // ── deleteSession ──────────────────────────────────────────────────
     context.subscriptions.push(
         vscode.commands.registerCommand('coogent.deleteSession', async (item?: { session?: { sessionId?: string } }) => {
-            if (!svc.sessionManager) return;
+            if (!svc.sessionHistoryService) return;
             const sessionId = typeof item === 'string' ? item : item?.session?.sessionId;
             if (!sessionId) return;
             try {
-                await svc.sessionManager.deleteSession(sessionId);
+                const sessionDir = svc.sessionManager!.getSessionDir(sessionId);
+                const sessionDirName = path.basename(sessionDir);
+                const currentDirName = svc.currentSessionDir ? path.basename(svc.currentSessionDir) : undefined;
+                const result = await svc.sessionHistoryService.deleteSession(sessionDirName, currentDirName);
+                if (!result.success) {
+                    vscode.window.showWarningMessage(`Coogent: Session delete had errors — ${result.errors.join('; ')}`);
+                }
                 svc.sidebarMenu?.refresh();
             } catch (err: unknown) {
                 vscode.window.showErrorMessage(`Coogent: Failed to delete session — ${err instanceof Error ? err.message : String(err)}`);
