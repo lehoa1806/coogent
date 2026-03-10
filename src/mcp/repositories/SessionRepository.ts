@@ -55,14 +55,18 @@ export class SessionRepository {
         this.scheduleFlush();
     }
 
-    /** List all sessions, joined with tasks to include runbook status. */
+    /** List all sessions, joined with tasks to include runbook status and consolidation report. */
     list(): Array<{
         sessionDirName: string; sessionId: string; prompt: string; createdAt: number;
         runbookJson: string | null; status: string | null;
+        consolidationReport: string | null; consolidationReportJson: string | null;
+        implementationPlan: string | null;
     }> {
         const stmt = this.db.prepare(
             `SELECT s.session_dir_name, s.session_id, s.prompt, s.created_at,
-                    t.runbook_json, t.status
+                    t.runbook_json, t.status,
+                    t.consolidation_report, t.consolidation_report_json,
+                    t.implementation_plan
              FROM sessions s
              LEFT JOIN tasks t ON s.session_dir_name = t.master_task_id
              ORDER BY s.created_at DESC`
@@ -70,19 +74,73 @@ export class SessionRepository {
         const results: Array<{
             sessionDirName: string; sessionId: string; prompt: string; createdAt: number;
             runbookJson: string | null; status: string | null;
+            consolidationReport: string | null; consolidationReportJson: string | null;
+            implementationPlan: string | null;
         }> = [];
         while (stmt.step()) {
             const row = stmt.getAsObject() as {
                 session_dir_name: string; session_id: string; prompt: string;
                 created_at: number; runbook_json: string | null; status: string | null;
+                consolidation_report: string | null; consolidation_report_json: string | null;
+                implementation_plan: string | null;
             };
             results.push({
                 sessionDirName: row.session_dir_name, sessionId: row.session_id,
                 prompt: row.prompt, createdAt: row.created_at,
                 runbookJson: row.runbook_json, status: row.status,
+                consolidationReport: row.consolidation_report,
+                consolidationReportJson: row.consolidation_report_json,
+                implementationPlan: row.implementation_plan,
             });
         }
         stmt.free();
         return results;
+    }
+
+    /**
+     * Retrieve the consolidation report for a specific session.
+     * Returns `undefined` if the session is not found.
+     */
+    getConsolidationReport(sessionDirName: string): {
+        markdown: string | null;
+        json: string | null;
+    } | undefined {
+        const stmt = this.db.prepare(
+            `SELECT t.consolidation_report, t.consolidation_report_json
+             FROM sessions s
+             LEFT JOIN tasks t ON s.session_dir_name = t.master_task_id
+             WHERE s.session_dir_name = ?`
+        );
+        stmt.bind([sessionDirName]);
+        if (!stmt.step()) { stmt.free(); return undefined; }
+        const row = stmt.getAsObject() as {
+            consolidation_report: string | null;
+            consolidation_report_json: string | null;
+        };
+        stmt.free();
+        return {
+            markdown: row.consolidation_report,
+            json: row.consolidation_report_json,
+        };
+    }
+
+    /**
+     * Retrieve the implementation plan for a specific session.
+     * Returns `undefined` if the session is not found.
+     */
+    getImplementationPlan(sessionDirName: string): string | null | undefined {
+        const stmt = this.db.prepare(
+            `SELECT t.implementation_plan
+             FROM sessions s
+             LEFT JOIN tasks t ON s.session_dir_name = t.master_task_id
+             WHERE s.session_dir_name = ?`
+        );
+        stmt.bind([sessionDirName]);
+        if (!stmt.step()) { stmt.free(); return undefined; }
+        const row = stmt.getAsObject() as {
+            implementation_plan: string | null;
+        };
+        stmt.free();
+        return row.implementation_plan;
     }
 }

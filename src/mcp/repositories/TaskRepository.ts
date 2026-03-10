@@ -191,6 +191,30 @@ export class TaskRepository {
     }
 
     /**
+     * Delete child records (phases, outputs, evaluations, etc.) but keep
+     * the `sessions` and `tasks` rows intact for session history listing.
+     * Use this during CMD_RESET to free heavy data without destroying history.
+     */
+    deleteChildRecords(masterTaskId: string): void {
+        this.db.run('BEGIN');
+        try {
+            this.db.run('DELETE FROM evaluation_results WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM healing_attempts WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM plan_revisions WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM handoffs WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM worker_outputs WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM phase_logs WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM selection_audits WHERE session_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM phases WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('COMMIT');
+        } catch (e) {
+            this.db.run('ROLLBACK');
+            throw e;
+        }
+        this.scheduleFlush();
+    }
+
+    /**
      * Delete a task and all its child rows.
      * Manually cascades because sql.js does not honour ON DELETE CASCADE.
      */

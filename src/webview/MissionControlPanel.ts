@@ -341,6 +341,13 @@ export class MissionControlPanel {
         // Create a fresh session so loadRunbook() won't reload the old data
         const newSessionId = randomUUID();
         const newSessionDirName = formatSessionDirName(newSessionId);
+
+        // Eagerly register the new session in the DB so the sidebar shows it immediately
+        if (this.mcpServer) {
+          this.mcpServer.upsertSession(newSessionDirName, newSessionId, '', Date.now());
+          log.info(`[MissionControl] CMD_RESET: registered new session ${newSessionDirName} in sessions table`);
+        }
+
         if (!this.coogentDir) {
           // coogentDir unavailable — fall back to vanilla reset without session dir
           this.engine.reset().catch(err => this.handleError(err));
@@ -360,15 +367,34 @@ export class MissionControlPanel {
               try {
                 this.mcpServer.getArtifactDB()?.tasks.upsert(oldTaskId, {
                   runbookJson: JSON.stringify(runbook),
+                  completedAt: Date.now(),
                 });
                 log.info(`[MissionControl] CMD_RESET: persisted outgoing session runbook for ${oldTaskId}`);
               } catch (err) {
                 log.warn('[MissionControl] CMD_RESET: failed to persist outgoing session:', err);
               }
             }
+
+            // Also ensure the outgoing session has a row in the sessions table so
+            // the history JOIN query (sessions LEFT JOIN tasks) finds it.
+            try {
+              const db = this.mcpServer.getArtifactDB();
+              if (db) {
+                const existingRows = db.sessions.list();
+                const match = existingRows.find(r => r.sessionDirName === oldTaskId);
+                if (!match) {
+                  // Session row missing — create one so history shows this session
+                  this.mcpServer.upsertSession(oldTaskId, oldTaskId, '', Date.now());
+                  log.info(`[MissionControl] CMD_RESET: created missing sessions row for outgoing session ${oldTaskId}`);
+                }
+              }
+            } catch (err) {
+              log.warn('[MissionControl] CMD_RESET: failed to ensure outgoing session row:', err);
+            }
           }
+          // Purge heavy child data but keep sessions + tasks rows for history
           if (oldTaskId) {
-            this.mcpServer?.purgeTask(oldTaskId);
+            this.mcpServer?.purgeTaskKeepSession(oldTaskId);
           }
           const freshStateManager = new StateManager(newSessionDir);
           this.engine.reset(freshStateManager).catch(err => this.handleError(err));

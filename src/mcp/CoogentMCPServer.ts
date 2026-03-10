@@ -292,6 +292,16 @@ export class CoogentMCPServer {
     }
 
     /**
+     * Remove heavy child data (phases, outputs, evaluations) but keep the
+     * `sessions` and `tasks` rows so the session appears in history.
+     * Use this instead of `purgeTask()` on CMD_RESET.
+     */
+    purgeTaskKeepSession(masterTaskId: string): void {
+        this.db.tasks.deleteChildRecords(masterTaskId);
+        log.info(`[CoogentMCPServer] Purged task (kept session): ${masterTaskId}`);
+    }
+
+    /**
      * Persist the user's original prompt as the task summary.
      * Called directly by the extension host (not via MCP tool protocol)
      * to ensure the prompt survives extension restarts.

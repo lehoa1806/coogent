@@ -78,6 +78,8 @@ function createMockSessionManager(): SessionManager {
         searchSessions: jest.fn().mockResolvedValue([MOCK_SESSIONS[0]]),
         setCurrentSessionId: jest.fn(),
         getCurrentSessionDirName: jest.fn().mockReturnValue('20260309-105927-current-uuid'),
+        getConsolidationReport: jest.fn().mockResolvedValue(null),
+        getImplementationPlan: jest.fn().mockResolvedValue(null),
     } as unknown as SessionManager;
 }
 
@@ -265,5 +267,78 @@ describe('SessionHistoryService', () => {
             SESSION_DIR_NAME,
             false, // isActiveSession = false
         );
+    });
+
+    // ── 7. getConsolidationReport delegates to SessionManager ────────────
+
+    describe('getConsolidationReport', () => {
+        it('should delegate to SessionManager.getConsolidationReport()', async () => {
+            const sessionManager = createMockSessionManager();
+            const reportData = { markdown: '# Report', json: '{"status":"done"}' };
+            (sessionManager.getConsolidationReport as jest.Mock).mockResolvedValue(reportData);
+            const restoreService = createMockRestoreService(makeRestoreResult(SESSION_DIR_NAME, true));
+            const deleteService = createMockDeleteService(makeDeleteResult(SESSION_DIR_NAME, true));
+
+            const service = new SessionHistoryService(
+                sessionManager, restoreService, deleteService,
+            );
+
+            const result = await service.getConsolidationReport(SESSION_DIR_NAME);
+
+            expect(sessionManager.getConsolidationReport).toHaveBeenCalledWith(SESSION_DIR_NAME);
+            expect(result).toEqual(reportData);
+        });
+
+        it('should return null when no report exists', async () => {
+            const sessionManager = createMockSessionManager();
+            // Default mock already returns null
+            const restoreService = createMockRestoreService(makeRestoreResult(SESSION_DIR_NAME, true));
+            const deleteService = createMockDeleteService(makeDeleteResult(SESSION_DIR_NAME, true));
+
+            const service = new SessionHistoryService(
+                sessionManager, restoreService, deleteService,
+            );
+
+            const result = await service.getConsolidationReport(SESSION_DIR_NAME);
+
+            expect(sessionManager.getConsolidationReport).toHaveBeenCalledWith(SESSION_DIR_NAME);
+            expect(result).toBeNull();
+        });
+    });
+
+    // ── 8. getImplementationPlan delegates to SessionManager ─────────────
+
+    describe('getImplementationPlan', () => {
+        it('should delegate to SessionManager.getImplementationPlan()', async () => {
+            const sessionManager = createMockSessionManager();
+            (sessionManager.getImplementationPlan as jest.Mock).mockResolvedValue('## Plan\nDo the thing.');
+            const restoreService = createMockRestoreService(makeRestoreResult(SESSION_DIR_NAME, true));
+            const deleteService = createMockDeleteService(makeDeleteResult(SESSION_DIR_NAME, true));
+
+            const service = new SessionHistoryService(
+                sessionManager, restoreService, deleteService,
+            );
+
+            const result = await service.getImplementationPlan(SESSION_DIR_NAME);
+
+            expect(sessionManager.getImplementationPlan).toHaveBeenCalledWith(SESSION_DIR_NAME);
+            expect(result).toBe('## Plan\nDo the thing.');
+        });
+
+        it('should return null when no plan exists', async () => {
+            const sessionManager = createMockSessionManager();
+            // Default mock already returns null
+            const restoreService = createMockRestoreService(makeRestoreResult(SESSION_DIR_NAME, true));
+            const deleteService = createMockDeleteService(makeDeleteResult(SESSION_DIR_NAME, true));
+
+            const service = new SessionHistoryService(
+                sessionManager, restoreService, deleteService,
+            );
+
+            const result = await service.getImplementationPlan(SESSION_DIR_NAME);
+
+            expect(sessionManager.getImplementationPlan).toHaveBeenCalledWith(SESSION_DIR_NAME);
+            expect(result).toBeNull();
+        });
     });
 });

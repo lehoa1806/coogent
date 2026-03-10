@@ -33,6 +33,10 @@ export interface SessionSummary {
     firstPrompt: string;
     /** Whether this is the currently active session. */
     isActive: boolean;
+    /** Whether a consolidation report is available for this session. */
+    hasConsolidationReport: boolean;
+    /** Whether an implementation plan is available for this session. */
+    hasImplementationPlan: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -212,6 +216,8 @@ export class SessionManager {
                                 row.createdAt,
                             );
                             summary.isActive = isActive;
+                            summary.hasConsolidationReport = Boolean(row.consolidationReport);
+                            summary.hasImplementationPlan = Boolean(row.implementationPlan);
                             summaries.push(summary);
                             continue;
                         }
@@ -234,6 +240,8 @@ export class SessionManager {
                             : row.prompt)
                         : '(empty)',
                     isActive,
+                    hasConsolidationReport: Boolean(row.consolidationReport),
+                    hasImplementationPlan: Boolean(row.implementationPlan),
                 });
             }
         } catch (err) {
@@ -368,6 +376,48 @@ export class SessionManager {
     }
 
     /**
+     * Retrieve the consolidation report for a specific session.
+     * Returns both the Markdown and structured JSON representations.
+     * Reads exclusively from the ArtifactDB.
+     */
+    public async getConsolidationReport(
+        sessionDirName: string
+    ): Promise<{ markdown: string | null; json: string | null } | null> {
+        if (!this.db) return null;
+
+        try {
+            const result = this.db.sessions.getConsolidationReport(sessionDirName);
+            if (!result) return null;
+            return {
+                markdown: result.markdown,
+                json: result.json,
+            };
+        } catch (err) {
+            log.warn('[SessionManager] getConsolidationReport failed:', err);
+            return null;
+        }
+    }
+
+    /**
+     * Retrieve the implementation plan for a specific session.
+     * Reads exclusively from the ArtifactDB.
+     */
+    public async getImplementationPlan(
+        sessionDirName: string
+    ): Promise<string | null> {
+        if (!this.db) return null;
+
+        try {
+            const result = this.db.sessions.getImplementationPlan(sessionDirName);
+            if (result === undefined) return null;
+            return result;
+        } catch (err) {
+            log.warn('[SessionManager] getImplementationPlan failed:', err);
+            return null;
+        }
+    }
+
+    /**
      * Get the absolute session directory path for a given session ID or dir name.
      * Pure path builder — does not scan the filesystem.
      */
@@ -441,6 +491,8 @@ export class SessionManager {
                 ? firstPrompt.slice(0, MAX_PROMPT_LENGTH) + '…'
                 : firstPrompt,
             isActive: false,
+            hasConsolidationReport: false,
+            hasImplementationPlan: false,
         };
     }
 }
