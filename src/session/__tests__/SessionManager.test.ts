@@ -69,6 +69,9 @@ describe('SessionManager.deleteSession()', () => {
                         createdAt: Date.now(),
                         runbookJson: null,
                         status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
                     },
                 ]),
             },
@@ -174,6 +177,9 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         createdAt: Date.now() - 1000,
                         runbookJson: null,
                         status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
                     },
                     {
                         sessionDirName: dir2,
@@ -182,6 +188,9 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         createdAt: Date.now(),
                         runbookJson: null,
                         status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
                     },
                 ]),
             },
@@ -218,6 +227,9 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         createdAt: Date.now() - 1000,
                         runbookJson: null,
                         status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
                     },
                     {
                         sessionDirName: dir2,
@@ -226,6 +238,9 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         createdAt: Date.now(),
                         runbookJson: null,
                         status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
                     },
                 ]),
             },
@@ -273,6 +288,9 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         createdAt: Date.now(),
                         runbookJson: JSON.stringify(runbook),
                         status: 'completed',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
                     },
                 ]),
             },
@@ -307,6 +325,9 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         createdAt: Date.now(),
                         runbookJson: null,
                         status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
                     },
                 ]),
             },
@@ -338,6 +359,9 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         createdAt: Date.now(),
                         runbookJson: null,
                         status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
                     },
                 ]),
             },
@@ -393,6 +417,9 @@ describe('SessionManager.listSessions() — setArtifactDB wiring regression', ()
                         createdAt: Date.now(),
                         runbookJson: null,
                         status: null,
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
                     },
                 ]),
             },
@@ -412,5 +439,561 @@ describe('SessionManager.listSessions() — setArtifactDB wiring regression', ()
         expect(sessions[0].sessionId).toBe('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee');
         expect(sessions[0].firstPrompt).toBe('Test prompt');
         expect(mockDB.sessions.list).toHaveBeenCalledTimes(1);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  listSessions() — Session history population regression tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('SessionManager.listSessions() — session history population', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'session-mgr-history-'));
+    });
+
+    afterEach(async () => {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('returns sessions sorted by createdAt descending (most recent first)', async () => {
+        const now = Date.now();
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([
+                    {
+                        sessionDirName: '20260301-100000-aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        sessionId: 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        prompt: 'Oldest session',
+                        createdAt: now - 3000,
+                        runbookJson: null,
+                        status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
+                    },
+                    {
+                        sessionDirName: '20260303-100000-cccc3333-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        sessionId: 'cccc3333-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        prompt: 'Newest session',
+                        createdAt: now,
+                        runbookJson: null,
+                        status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
+                    },
+                    {
+                        sessionDirName: '20260302-100000-bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        sessionId: 'bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        prompt: 'Middle session',
+                        createdAt: now - 1000,
+                        runbookJson: null,
+                        status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
+                    },
+                ]),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const sessions = await mgr.listSessions();
+
+        expect(sessions.length).toBe(3);
+        // Most recent first
+        expect(sessions[0].sessionId).toBe('cccc3333-bbbb-cccc-dddd-eeeeeeeeeeee');
+        expect(sessions[1].sessionId).toBe('bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee');
+        expect(sessions[2].sessionId).toBe('aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee');
+        // Verify timestamps are descending
+        expect(sessions[0].createdAt).toBeGreaterThan(sessions[1].createdAt);
+        expect(sessions[1].createdAt).toBeGreaterThan(sessions[2].createdAt);
+    });
+
+    it('handles DB errors gracefully and returns empty array', async () => {
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockImplementation(() => {
+                    throw new Error('Database corrupted');
+                }),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        // Should not throw — returns empty array
+        const sessions = await mgr.listSessions();
+        expect(sessions).toEqual([]);
+    });
+
+    it('derives projectId from runbook.project_id or prompt depending on runbookJson presence', async () => {
+        const now = Date.now();
+        const runbook = {
+            project_id: 'auth-service',
+            status: 'in_progress',
+            phases: [
+                { prompt: 'Implement OAuth flow', status: 'completed' },
+                { prompt: 'Add JWT validation', status: 'in_progress' },
+            ],
+        };
+
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([
+                    {
+                        sessionDirName: '20260310-100000-aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        sessionId: 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        prompt: 'Implement OAuth flow',
+                        createdAt: now,
+                        runbookJson: JSON.stringify(runbook),
+                        status: 'in_progress',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
+                    },
+                    {
+                        sessionDirName: '20260310-090000-bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        sessionId: 'bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        prompt: 'Fix the login page',
+                        createdAt: now - 1000,
+                        runbookJson: null,
+                        status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
+                    },
+                ]),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const sessions = await mgr.listSessions();
+
+        expect(sessions.length).toBe(2);
+
+        // Session with runbook: projectId from runbook.project_id
+        const withRunbook = sessions.find(s => s.sessionId === 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee');
+        expect(withRunbook).toBeDefined();
+        expect(withRunbook!.projectId).toBe('auth-service');
+        expect(withRunbook!.phaseCount).toBe(2);
+        expect(withRunbook!.completedPhases).toBe(1);
+
+        // Session without runbook: projectId derived from prompt
+        const withoutRunbook = sessions.find(s => s.sessionId === 'bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee');
+        expect(withoutRunbook).toBeDefined();
+        expect(withoutRunbook!.projectId).toBe('Fix the login page');
+        expect(withoutRunbook!.phaseCount).toBe(0);
+        expect(withoutRunbook!.completedPhases).toBe(0);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  getConsolidationReport() — Consolidation report retrieval tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('SessionManager.getConsolidationReport()', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'session-mgr-consol-'));
+    });
+
+    afterEach(async () => {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return markdown and JSON when report exists', async () => {
+        const dirName = '20260310-120000-aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee';
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([]),
+                getConsolidationReport: jest.fn().mockReturnValue({
+                    markdown: '# Report\nAll phases completed.',
+                    json: '{"summary":"done"}',
+                }),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const result = await mgr.getConsolidationReport(dirName);
+
+        expect(result).not.toBeNull();
+        expect(result!.markdown).toBe('# Report\nAll phases completed.');
+        expect(result!.json).toBe('{"summary":"done"}');
+        expect(mockDB.sessions.getConsolidationReport).toHaveBeenCalledWith(dirName);
+    });
+
+    it('should return null when no report exists', async () => {
+        const dirName = '20260310-120000-bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee';
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([]),
+                getConsolidationReport: jest.fn().mockReturnValue(undefined),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const result = await mgr.getConsolidationReport(dirName);
+
+        expect(result).toBeNull();
+    });
+
+    it('should return null when ArtifactDB is not wired', async () => {
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            CURRENT_SESSION_ID,
+        );
+
+        const result = await mgr.getConsolidationReport('20260310-120000-any-uuid');
+
+        expect(result).toBeNull();
+    });
+
+    it('should handle DB errors gracefully and return null', async () => {
+        const dirName = '20260310-120000-cccc3333-bbbb-cccc-dddd-eeeeeeeeeeee';
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([]),
+                getConsolidationReport: jest.fn().mockImplementation(() => {
+                    throw new Error('DB read failure');
+                }),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const result = await mgr.getConsolidationReport(dirName);
+
+        expect(result).toBeNull();
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  listSessions() — hasConsolidationReport field tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('SessionManager.listSessions() — hasConsolidationReport field', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'session-mgr-has-report-'));
+    });
+
+    afterEach(async () => {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should set hasConsolidationReport to true when consolidationReport is present', async () => {
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([
+                    {
+                        sessionDirName: '20260310-120000-aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        sessionId: 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        prompt: 'Session with report',
+                        createdAt: Date.now(),
+                        runbookJson: null,
+                        status: 'completed',
+                        consolidationReport: '# Full Consolidation Report',
+                        consolidationReportJson: '{"phases":[]}',
+                        implementationPlan: null,
+                    },
+                ]),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const sessions = await mgr.listSessions();
+
+        expect(sessions.length).toBe(1);
+        expect(sessions[0].hasConsolidationReport).toBe(true);
+    });
+
+    it('should set hasConsolidationReport to false when consolidationReport is null', async () => {
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([
+                    {
+                        sessionDirName: '20260310-120000-bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        sessionId: 'bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        prompt: 'Session without report',
+                        createdAt: Date.now(),
+                        runbookJson: null,
+                        status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
+                    },
+                ]),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const sessions = await mgr.listSessions();
+
+        expect(sessions.length).toBe(1);
+        expect(sessions[0].hasConsolidationReport).toBe(false);
+    });
+
+    it('should set hasConsolidationReport correctly for sessions with runbook data', async () => {
+        const runbook = {
+            project_id: 'alpha',
+            status: 'completed',
+            phases: [
+                { prompt: 'Phase 1', status: 'completed' },
+            ],
+        };
+
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([
+                    {
+                        sessionDirName: '20260310-120000-cccc3333-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        sessionId: 'cccc3333-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        prompt: 'Phase 1',
+                        createdAt: Date.now(),
+                        runbookJson: JSON.stringify(runbook),
+                        status: 'completed',
+                        consolidationReport: '# Report for alpha',
+                        consolidationReportJson: '{"outcome":"success"}',
+                        implementationPlan: null,
+                    },
+                ]),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const sessions = await mgr.listSessions();
+
+        expect(sessions.length).toBe(1);
+        expect(sessions[0].projectId).toBe('alpha');
+        expect(sessions[0].hasConsolidationReport).toBe(true);
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  getImplementationPlan() — Implementation plan retrieval tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('SessionManager.getImplementationPlan()', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'session-mgr-impl-plan-'));
+    });
+
+    afterEach(async () => {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return implementation plan when it exists', async () => {
+        const dirName = '20260310-120000-aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee';
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([]),
+                getImplementationPlan: jest.fn().mockReturnValue('## Approach\nDo the thing.'),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const result = await mgr.getImplementationPlan(dirName);
+
+        expect(result).toBe('## Approach\nDo the thing.');
+        expect(mockDB.sessions.getImplementationPlan).toHaveBeenCalledWith(dirName);
+    });
+
+    it('should return null when no plan exists', async () => {
+        const dirName = '20260310-120000-bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee';
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([]),
+                getImplementationPlan: jest.fn().mockReturnValue(undefined),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const result = await mgr.getImplementationPlan(dirName);
+
+        expect(result).toBeNull();
+    });
+
+    it('should return null when ArtifactDB is not wired', async () => {
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            'current-session-id',
+        );
+
+        const result = await mgr.getImplementationPlan('20260310-120000-any-uuid');
+
+        expect(result).toBeNull();
+    });
+
+    it('should handle DB errors gracefully and return null', async () => {
+        const dirName = '20260310-120000-cccc3333-bbbb-cccc-dddd-eeeeeeeeeeee';
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([]),
+                getImplementationPlan: jest.fn().mockImplementation(() => {
+                    throw new Error('DB read failure');
+                }),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const result = await mgr.getImplementationPlan(dirName);
+
+        expect(result).toBeNull();
+    });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  listSessions() — hasImplementationPlan field tests
+// ═════════════════════════════════════════════════════════════════════════════
+
+describe('SessionManager.listSessions() — hasImplementationPlan field', () => {
+    let tmpDir: string;
+
+    beforeEach(async () => {
+        tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'session-mgr-has-plan-'));
+    });
+
+    afterEach(async () => {
+        await fs.rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should set hasImplementationPlan to true when implementationPlan is present', async () => {
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([
+                    {
+                        sessionDirName: '20260310-120000-aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        sessionId: 'aaaa1111-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        prompt: 'Session with plan',
+                        createdAt: Date.now(),
+                        runbookJson: null,
+                        status: 'completed',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: '## Plan\nDo the thing.',
+                    },
+                ]),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const sessions = await mgr.listSessions();
+
+        expect(sessions.length).toBe(1);
+        expect(sessions[0].hasImplementationPlan).toBe(true);
+    });
+
+    it('should set hasImplementationPlan to false when implementationPlan is null', async () => {
+        const mockDB = {
+            sessions: {
+                list: jest.fn().mockReturnValue([
+                    {
+                        sessionDirName: '20260310-120000-bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        sessionId: 'bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee',
+                        prompt: 'Session without plan',
+                        createdAt: Date.now(),
+                        runbookJson: null,
+                        status: 'idle',
+                        consolidationReport: null,
+                        consolidationReportJson: null,
+                        implementationPlan: null,
+                    },
+                ]),
+            },
+        } as unknown as ArtifactDB;
+
+        const mgr = new SessionManager(
+            path.join(tmpDir, '.coogent'),
+            '',
+            undefined,
+            mockDB,
+        );
+
+        const sessions = await mgr.listSessions();
+
+        expect(sessions.length).toBe(1);
+        expect(sessions[0].hasImplementationPlan).toBe(false);
     });
 });

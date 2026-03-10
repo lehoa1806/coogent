@@ -62,6 +62,7 @@ function makeOnReset(
             sessionDir: newDir,
             ...(newStateManager ? { newStateManager } : {}),
         });
+        svc.sidebarMenu?.refresh();
     };
 }
 

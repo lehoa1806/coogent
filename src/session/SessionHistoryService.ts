@@ -113,6 +113,40 @@ export class SessionHistoryService {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    //  Consolidation Report
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Retrieve the consolidation report for a past session.
+     *
+     * @param sessionDirName  Directory name identifying the session.
+     * @returns The report data, or `null` if no report is available.
+     */
+    async getConsolidationReport(
+        sessionDirName: string,
+    ): Promise<{ markdown: string | null; json: string | null } | null> {
+        log.info(`[SessionHistoryService] Getting consolidation report for: ${sessionDirName}`);
+        return this.sessionManager.getConsolidationReport(sessionDirName);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Implementation Plan
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Retrieve the implementation plan for a past session.
+     *
+     * @param sessionDirName  Directory name identifying the session.
+     * @returns The plan markdown, or `null` if no plan is available.
+     */
+    async getImplementationPlan(
+        sessionDirName: string,
+    ): Promise<string | null> {
+        log.info(`[SessionHistoryService] Getting implementation plan for: ${sessionDirName}`);
+        return this.sessionManager.getImplementationPlan(sessionDirName);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     //  Delete
     // ─────────────────────────────────────────────────────────────────────────
 
