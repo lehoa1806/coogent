@@ -272,7 +272,7 @@ export class GitSandboxManager {
      * `${branchPrefix}${sanitized-taskSlug}`.
      *
      * @param options - Sandbox configuration including the task slug and
-     *                  optional branch prefix (defaults to `'coogent/'`).
+     *                  optional branch prefix (defaults to empty string — no prefix).
      * @returns A {@link GitSandboxResult} with the created branch name and
      *          the previous branch for later restoration.
      * @throws If the working tree is dirty (pre-flight check fails).
@@ -286,7 +286,7 @@ export class GitSandboxManager {
             }
 
             // Step 2: Compute sanitized branch name
-            const prefix = options.branchPrefix ?? 'coogent/';
+            const prefix = options.branchPrefix ?? '';
             const sanitizedSlug = options.taskSlug
                 .replace(/\s+/g, '-')           // spaces → hyphens
                 .replace(/[^a-zA-Z0-9\-/]/g, '') // strip non-alphanumeric (keep - and /)
@@ -459,7 +459,7 @@ export class GitSandboxManager {
      * `${branchPrefix}${sanitized-taskSlug}`.
      *
      * @param options - Sandbox configuration including the task slug and
-     *                  optional branch prefix (defaults to `'coogent/'`).
+     *                  optional branch prefix (defaults to empty string — no prefix).
      * @returns A {@link MultiRepoSandboxResult} with per-repo results.
      */
     async createSandboxBranchAll(options: SandboxOptions): Promise<MultiRepoSandboxResult> {
@@ -487,7 +487,7 @@ export class GitSandboxManager {
             }
 
             // Phase 2: Create branches across all repos
-            const prefix = options.branchPrefix ?? 'coogent/';
+            const prefix = options.branchPrefix ?? '';
             const sanitizedSlug = options.taskSlug
                 .replace(/\s+/g, '-')
                 .replace(/[^a-zA-Z0-9\-/]/g, '')

@@ -87,6 +87,6 @@ export interface PreFlightCheckResult {
 /** Options for creating a Git sandbox branch. */
 export interface SandboxOptions {
     taskSlug: string;
-    /** Branch name prefix (default concept: 'coogent/'). */
+    /** Branch name prefix (default: empty — no prefix). */
     branchPrefix?: string;
 }
