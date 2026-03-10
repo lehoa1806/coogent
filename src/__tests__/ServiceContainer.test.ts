@@ -3,6 +3,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { ServiceContainer } from '../ServiceContainer.js';
+import {
+    createOpaqueStub,
+    createMockSessionManager,
+    createMockMcpServer,
+    createMockPlannerAgent,
+    ASSIGNABLE_SERVICE_KEYS,
+} from './factories/mockServiceContainer.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  ServiceContainer
@@ -47,23 +54,12 @@ describe('ServiceContainer', () => {
 
     // ── releaseAll() ───────────────────────────────────────────────────
     it('releaseAll() nullifies all service references', () => {
-        // Assign dummy values to verify they get cleared
-        svc.stateManager = {} as any;
-        svc.engine = {} as any;
-        svc.adkController = {} as any;
-        svc.contextScoper = {} as any;
-        svc.logger = {} as any;
-        svc.gitManager = {} as any;
-        svc.gitSandbox = {} as any;
-        svc.outputRegistry = {} as any;
-        svc.plannerAgent = {} as any;
-        svc.sessionManager = {} as any;
-        svc.handoffExtractor = {} as any;
-        svc.consolidationAgent = {} as any;
+        // Assign typed stubs to verify they get cleared
+        for (const key of ASSIGNABLE_SERVICE_KEYS) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Dynamic key assignment requires escape hatch
+            (svc as any)[key] = createOpaqueStub(key);
+        }
         svc.currentSessionDir = '/tmp/test';
-        svc.mcpServer = {} as any;
-        svc.mcpBridge = {} as any;
-        svc.sidebarMenu = {} as any;
 
         svc.releaseAll();
 
@@ -104,7 +100,7 @@ describe('ServiceContainer', () => {
     });
 
     it('releaseAll() is idempotent — calling twice does not throw', () => {
-        svc.engine = {} as any;
+        svc.engine = createOpaqueStub('engine');
         svc.releaseAll();
         expect(() => svc.releaseAll()).not.toThrow();
     });
@@ -128,23 +124,23 @@ describe('ServiceContainer', () => {
 
     // ── isRegistered() / resolve() / getActiveServices() ───────────────
     it('resolve() returns the instance after direct assignment', () => {
-        const mockEngine = { fake: 'engine' } as any;
+        const mockEngine = createOpaqueStub('engine');
         svc.engine = mockEngine;
         expect(svc.resolve('engine')).toBe(mockEngine);
     });
 
     it('isRegistered() returns false before and true after direct assignment', () => {
         expect(svc.isRegistered('engine')).toBe(false);
-        svc.engine = {} as any;
+        svc.engine = createOpaqueStub('engine');
         expect(svc.isRegistered('engine')).toBe(true);
     });
 
     it('getActiveServices() lists only initialised services', () => {
         expect(svc.getActiveServices()).toEqual([]);
 
-        svc.stateManager = {} as any;
-        svc.engine = {} as any;
-        svc.adkController = {} as any;
+        svc.stateManager = createOpaqueStub('stateManager');
+        svc.engine = createOpaqueStub('engine');
+        svc.adkController = createOpaqueStub('adkController');
 
         const active = svc.getActiveServices();
         expect(active).toContain('stateManager');
@@ -154,7 +150,7 @@ describe('ServiceContainer', () => {
     });
 
     it('releaseAll() clears getActiveServices()', () => {
-        svc.engine = {} as any;
+        svc.engine = createOpaqueStub('engine');
         expect(svc.getActiveServices()).toHaveLength(1);
 
         svc.releaseAll();
@@ -162,27 +158,22 @@ describe('ServiceContainer', () => {
     });
 
     it('direct assignment works again after releaseAll()', () => {
-        svc.engine = {} as any;
+        svc.engine = createOpaqueStub('engine');
         svc.releaseAll();
 
-        const newEngine = { fresh: true } as any;
+        const newEngine = createOpaqueStub('engine');
         svc.engine = newEngine;
         expect(svc.resolve('engine')).toBe(newEngine);
     });
 
     // ── switchSession() ArtifactDB re-wiring (regression) ──────────────
     it('switchSession() re-wires ArtifactDB on SessionManager from mcpServer', () => {
-        const mockArtifactDB = {} as any;
-        const mockSessionManager = {
-            setCurrentSessionId: jest.fn(),
-            setArtifactDB: jest.fn(),
-        } as any;
-        const mockMcpServer = {
+        const mockArtifactDB = createOpaqueStub('stateManager'); // opaque stand-in for ArtifactDB
+        const mockSessionManager = createMockSessionManager();
+        const mockMcpServer = createMockMcpServer({
             getArtifactDB: jest.fn().mockReturnValue(mockArtifactDB),
-        } as any;
-        const mockPlannerAgent = {
-            setMasterTaskId: jest.fn(),
-        } as any;
+        });
+        const mockPlannerAgent = createMockPlannerAgent();
 
         svc.sessionManager = mockSessionManager;
         svc.mcpServer = mockMcpServer;
@@ -194,19 +185,14 @@ describe('ServiceContainer', () => {
 
         svc.switchSession({ sessionId, sessionDirName, sessionDir });
 
-        expect(mockSessionManager.setCurrentSessionId).toHaveBeenCalledWith(sessionId, sessionDirName);
-        expect(mockMcpServer.getArtifactDB).toHaveBeenCalled();
-        expect(mockSessionManager.setArtifactDB).toHaveBeenCalledWith(mockArtifactDB);
+        expect((mockSessionManager as unknown as { setCurrentSessionId: jest.Mock }).setCurrentSessionId).toHaveBeenCalledWith(sessionId, sessionDirName);
+        expect((mockMcpServer as unknown as { getArtifactDB: jest.Mock }).getArtifactDB).toHaveBeenCalled();
+        expect((mockSessionManager as unknown as { setArtifactDB: jest.Mock }).setArtifactDB).toHaveBeenCalledWith(mockArtifactDB);
     });
 
     it('switchSession() does not call setArtifactDB when mcpServer is undefined', () => {
-        const mockSessionManager = {
-            setCurrentSessionId: jest.fn(),
-            setArtifactDB: jest.fn(),
-        } as any;
-        const mockPlannerAgent = {
-            setMasterTaskId: jest.fn(),
-        } as any;
+        const mockSessionManager = createMockSessionManager();
+        const mockPlannerAgent = createMockPlannerAgent();
 
         svc.sessionManager = mockSessionManager;
         svc.mcpServer = undefined;
@@ -218,7 +204,7 @@ describe('ServiceContainer', () => {
 
         svc.switchSession({ sessionId, sessionDirName, sessionDir });
 
-        expect(mockSessionManager.setCurrentSessionId).toHaveBeenCalledWith(sessionId, sessionDirName);
-        expect(mockSessionManager.setArtifactDB).not.toHaveBeenCalled();
+        expect((mockSessionManager as unknown as { setCurrentSessionId: jest.Mock }).setCurrentSessionId).toHaveBeenCalledWith(sessionId, sessionDirName);
+        expect((mockSessionManager as unknown as { setArtifactDB: jest.Mock }).setArtifactDB).not.toHaveBeenCalled();
     });
 });

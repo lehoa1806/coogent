@@ -5,7 +5,6 @@
 // Controllers: PlanningController, PhaseController, EvaluationOrchestrator,
 //              SessionController, DispatchController.
 
-import { EventEmitter } from 'node:events';
 import * as path from 'node:path';
 import log from '../logger/log.js';
 import {
@@ -28,12 +27,13 @@ import { EvaluationOrchestrator } from './EvaluationOrchestrator.js';
 import { SessionController } from './SessionController.js';
 import { DispatchController, type DispatchControllerOptions } from './DispatchController.js';
 import type { EngineInternals } from './EngineInternals.js';
+import { TypedEventEmitter } from './TypedEventEmitter.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Engine Events — typed EventEmitter
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export interface EngineEvents {
+export type EngineEvents = {
     /** Fired on every state transition. */
     'state:changed': (from: EngineState, to: EngineState, event: EngineEvent) => void;
     /** Fired when a message should be sent to the Webview. */
@@ -66,11 +66,8 @@ export interface EngineEvents {
     'engine:listener-error': (sourceEvent: string, error: unknown) => void;
 }
 
-// Typed EventEmitter helper
-export declare interface Engine {
-    on<K extends keyof EngineEvents>(event: K, listener: EngineEvents[K]): this;
-    emit<K extends keyof EngineEvents>(event: K, ...args: Parameters<EngineEvents[K]>): boolean;
-}
+// NOTE: Typed on()/emit()/once()/off() are provided by TypedEventEmitter<EngineEvents>.
+// The `declare interface Engine` merge hack is no longer needed.
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Engine — the brain
@@ -95,13 +92,12 @@ export declare interface Engine {
  *
  * See ARCHITECTURE.md § State Machine for the transition diagram.
  */
-export class Engine extends EventEmitter implements EngineInternals {
+export class Engine extends TypedEventEmitter<EngineEvents> implements EngineInternals {
     private state: EngineState = EngineState.IDLE;
     private runbook: Runbook | null = null;
     private pauseRequested = false;
 
-    /** Guard against recursive emit when the error handler itself throws. */
-    private emittingError = false;
+    // NOTE: Listener error fencing is now handled by the TypedEventEmitter base class.
 
     /**
      * Number of concurrently active workers.
@@ -140,28 +136,7 @@ export class Engine extends EventEmitter implements EngineInternals {
             workspaceRoot?: string;
         }
     ) {
-        super();
-
-        // Override emit() to fence listener errors
-        const origEmit = super.emit.bind(this);
-        (this as any).emit = <K extends keyof EngineEvents>(
-            event: K,
-            ...args: Parameters<EngineEvents[K]>
-        ): boolean => {
-            try {
-                return origEmit(event, ...args);
-            } catch (err) {
-                log.error(`[Engine] Listener error on '${String(event)}':`, err);
-                if (!this.emittingError) {
-                    this.emittingError = true;
-                    try {
-                        origEmit('engine:listener-error', String(event), err);
-                    } catch { /* swallow recursive error */ }
-                    this.emittingError = false;
-                }
-                return true;
-            }
-        };
+        super(); // TypedEventEmitter handles listener error fencing
 
         this.scheduler = options?.scheduler ?? new Scheduler();
         this.healer = options?.healer ?? new SelfHealingController();

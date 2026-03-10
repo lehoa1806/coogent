@@ -13,6 +13,12 @@ import type { ServiceContainer } from './ServiceContainer.js';
 import { ContextAssemblyAdapter } from './engine/ContextAssemblyAdapter.js';
 import { WorkerLauncher } from './engine/WorkerLauncher.js';
 import { WorkerResultProcessor } from './engine/WorkerResultProcessor.js';
+import {
+    asResultProcessorEngine, asResultProcessorMCPServer,
+    asResultProcessorHandoffExtractor, asResultProcessorMCPBridge,
+    asContextScoper, asAssemblyLogger,
+    asWorkerLauncherADK, asWorkerLauncherLogger,
+} from './engine/wiring-contracts.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  wireEngine — connects Engine, ADK, MCP, and Consolidation events
@@ -207,11 +213,11 @@ export function wireEngine(
 
     // ── Build WorkerResultProcessor for worker lifecycle delegation ────
     const resultProcessor = new WorkerResultProcessor(
-        engine as unknown as import('./engine/WorkerResultProcessor.js').ResultProcessorEngine,
+        asResultProcessorEngine(engine),
         getSessionDirName,
-        mcpServer as unknown as import('./engine/WorkerResultProcessor.js').ResultProcessorMCPServer | undefined,
-        handoffExtractor as unknown as import('./engine/WorkerResultProcessor.js').ResultProcessorHandoffExtractor | undefined,
-        mcpBridge as unknown as import('./engine/WorkerResultProcessor.js').ResultProcessorMCPBridge | undefined,
+        asResultProcessorMCPServer(mcpServer),
+        asResultProcessorHandoffExtractor(handoffExtractor),
+        asResultProcessorMCPBridge(mcpBridge),
     );
 
     // ── ADK → Engine (worker lifecycle) ────────────────────────────────
@@ -402,8 +408,8 @@ async function executePhase(
 
     // ── Step 1: Assemble context (delegated to ContextAssemblyAdapter) ──
     const assembler = new ContextAssemblyAdapter(
-        contextScoper as unknown as import('./engine/ContextAssemblyAdapter.js').ContextScoperLike,
-        logger as unknown as import('./engine/ContextAssemblyAdapter.js').ContextAssemblyLogger,
+        asContextScoper(contextScoper),
+        asAssemblyLogger(logger),
     );
     const assemblyResult = await assembler.assembleContext(phase, workspaceRoot, workspaceRoots);
     if (!assemblyResult.ok) {
@@ -413,8 +419,8 @@ async function executePhase(
 
     // ── Step 2: Build prompt + launch worker (delegated to WorkerLauncher) ──
     const launcher = new WorkerLauncher(
-        adkController as unknown as import('./engine/WorkerLauncher.js').WorkerLauncherADK,
-        logger as unknown as import('./engine/WorkerLauncher.js').WorkerLauncherLogger,
+        asWorkerLauncherADK(adkController),
+        asWorkerLauncherLogger(logger),
     );
     await launcher.launch(phase, timeoutMs, masterTaskId, svc, workspaceRoots);
 }

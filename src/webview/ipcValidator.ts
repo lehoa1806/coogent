@@ -10,6 +10,16 @@ const VALID_TYPES_NO_PAYLOAD = new Set(['CMD_START', 'CMD_ABORT', 'CMD_REQUEST_S
 const VALID_TYPES_WITH_PHASEID = new Set(['CMD_RETRY', 'CMD_SKIP_PHASE', 'CMD_PAUSE_PHASE', 'CMD_STOP_PHASE', 'CMD_RESTART_PHASE', 'CMD_REVIEW_DIFF']);
 
 /**
+ * Extract and narrow the `payload` property from an unvalidated message.
+ * Centralises the `Record<string, unknown>` cast that was previously
+ * repeated 11 times across each message-type branch.
+ */
+function extractPayload(msg: Record<string, unknown>): Record<string, unknown> | undefined {
+    const p = msg.payload;
+    return typeof p === 'object' && p !== null ? p as Record<string, unknown> : undefined;
+}
+
+/**
  * Runtime validation for Webview → Host IPC messages.
  * Ensures the `type` discriminator exists and payload shapes match.
  */
@@ -21,67 +31,67 @@ export function isValidWebviewMessage(raw: unknown): raw is WebviewToHostMessage
     if (VALID_TYPES_NO_PAYLOAD.has(msg.type)) return true;
 
     if (VALID_TYPES_WITH_PHASEID.has(msg.type)) {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        return typeof payload === 'object' && payload !== null && typeof payload.phaseId === 'number';
+        const p = extractPayload(msg);
+        return p !== undefined && typeof p.phaseId === 'number';
     }
 
     if (msg.type === 'CMD_EDIT_PHASE') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        return typeof payload === 'object' && payload !== null
-            && typeof payload.phaseId === 'number'
-            && typeof payload.patch === 'object' && payload.patch !== null;
+        const p = extractPayload(msg);
+        return p !== undefined
+            && typeof p.phaseId === 'number'
+            && typeof p.patch === 'object' && p.patch !== null;
     }
 
     if (msg.type === 'CMD_LOAD_RUNBOOK') {
         // Allow without payload (webview button sends no filePath; Engine.loadRunbook() accepts undefined)
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        if (!payload) return true;
-        return typeof payload === 'object' && typeof payload.filePath === 'string';
+        const p = extractPayload(msg);
+        if (!p) return true;
+        return typeof p.filePath === 'string';
     }
 
     if (msg.type === 'CMD_PLAN_REQUEST') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        return typeof payload === 'object' && payload !== null && typeof payload.prompt === 'string';
+        const p = extractPayload(msg);
+        return p !== undefined && typeof p.prompt === 'string';
     }
 
     if (msg.type === 'CMD_PLAN_REJECT') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        return typeof payload === 'object' && payload !== null && typeof payload.feedback === 'string';
+        const p = extractPayload(msg);
+        return p !== undefined && typeof p.feedback === 'string';
     }
 
     if (msg.type === 'CMD_PLAN_EDIT_DRAFT') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        return typeof payload === 'object' && payload !== null && typeof payload.draft === 'object';
+        const p = extractPayload(msg);
+        return p !== undefined && typeof p.draft === 'object';
     }
 
     if (msg.type === 'CMD_SET_CONVERSATION_MODE') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        if (typeof payload !== 'object' || payload === null || typeof payload.mode !== 'string') return false;
-        return ['isolated', 'continuous', 'smart'].includes(payload.mode as string);
+        const p = extractPayload(msg);
+        if (!p || typeof p.mode !== 'string') return false;
+        return ['isolated', 'continuous', 'smart'].includes(p.mode as string);
     }
 
     if (msg.type === 'MCP_FETCH_RESOURCE') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        return typeof payload === 'object' && payload !== null
-            && typeof payload.uri === 'string'
-            && payload.uri.startsWith('coogent://') // W-9: Validate URI scheme
-            && typeof payload.requestId === 'string';
+        const p = extractPayload(msg);
+        return p !== undefined
+            && typeof p.uri === 'string'
+            && p.uri.startsWith('coogent://') // W-9: Validate URI scheme
+            && typeof p.requestId === 'string';
     }
 
     // Session management messages
     if (msg.type === 'CMD_SEARCH_SESSIONS') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        return typeof payload === 'object' && payload !== null && typeof payload.query === 'string';
+        const p = extractPayload(msg);
+        return p !== undefined && typeof p.query === 'string';
     }
 
     if (msg.type === 'CMD_LOAD_SESSION') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        return typeof payload === 'object' && payload !== null && typeof payload.sessionId === 'string';
+        const p = extractPayload(msg);
+        return p !== undefined && typeof p.sessionId === 'string';
     }
 
     if (msg.type === 'CMD_DELETE_SESSION') {
-        const payload = msg.payload as Record<string, unknown> | undefined;
-        return typeof payload === 'object' && payload !== null && typeof payload.sessionId === 'string';
+        const p = extractPayload(msg);
+        return p !== undefined && typeof p.sessionId === 'string';
     }
 
     return false;

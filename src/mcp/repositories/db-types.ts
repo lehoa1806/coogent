@@ -13,6 +13,13 @@ export interface Database {
 export interface Statement {
     bind(params?: unknown[]): boolean;
     step(): boolean;
+    /** Return current row as a plain object, keyed by column name. */
     getAsObject(): Record<string, unknown>;
+    /**
+     * Typed convenience overload — callers supply the expected row shape `T`.
+     * @internal Runtime return type is still `Record<string, unknown>`;
+     * the generic parameter provides compile-time narrowing only.
+     */
+    getAsObject<T extends Record<string, unknown>>(): T;
     free(): void;
 }

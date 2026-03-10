@@ -4,6 +4,22 @@
 
 import type { Database } from './db-types.js';
 
+/**
+ * Raw SQL row as returned by `getAsObject()` — column names match the
+ * `context_manifests` table definition in ArtifactDB.
+ * @internal Used only for typed deserialization inside this repository.
+ */
+interface ContextManifestDbRow {
+    [key: string]: unknown;
+    manifest_id: string;
+    session_id: string;
+    task_id: string;
+    phase_id: string;
+    workspace_folder: string | null;
+    payload_json: string;
+    created_at: number;
+}
+
 /** Shape of a context manifest row. */
 export interface ContextManifestRow {
     manifestId: string;
@@ -60,17 +76,17 @@ export class ContextManifestRepository {
         );
         stmt.bind([manifestId]);
         if (!stmt.step()) { stmt.free(); return undefined; }
-        const row = stmt.getAsObject() as Record<string, unknown>;
+        const row = stmt.getAsObject<ContextManifestDbRow>();
         stmt.free();
 
         return {
-            manifestId: row.manifest_id as string,
-            sessionId: row.session_id as string,
-            taskId: row.task_id as string,
-            phaseId: row.phase_id as string,
-            workspaceFolder: (row.workspace_folder as string) || undefined,
-            payloadJson: row.payload_json as string,
-            createdAt: row.created_at as number,
+            manifestId: row.manifest_id,
+            sessionId: row.session_id,
+            taskId: row.task_id,
+            phaseId: row.phase_id,
+            workspaceFolder: row.workspace_folder || undefined,
+            payloadJson: row.payload_json,
+            createdAt: row.created_at,
         };
     }
 
@@ -86,15 +102,15 @@ export class ContextManifestRepository {
 
         const results: ContextManifestRow[] = [];
         while (stmt.step()) {
-            const row = stmt.getAsObject() as Record<string, unknown>;
+            const row = stmt.getAsObject<ContextManifestDbRow>();
             results.push({
-                manifestId: row.manifest_id as string,
-                sessionId: row.session_id as string,
-                taskId: row.task_id as string,
-                phaseId: row.phase_id as string,
-                workspaceFolder: (row.workspace_folder as string) || undefined,
-                payloadJson: row.payload_json as string,
-                createdAt: row.created_at as number,
+                manifestId: row.manifest_id,
+                sessionId: row.session_id,
+                taskId: row.task_id,
+                phaseId: row.phase_id,
+                workspaceFolder: row.workspace_folder || undefined,
+                payloadJson: row.payload_json,
+                createdAt: row.created_at,
             });
         }
         stmt.free();

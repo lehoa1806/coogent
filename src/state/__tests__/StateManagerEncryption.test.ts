@@ -6,7 +6,8 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { StateManager, type SecretStorageLike } from '../StateManager.js';
-import { RUNBOOK_FILENAME, type Runbook, type EngineState } from '../../types/index.js';
+import { type Runbook, type EngineState } from '../../types/index.js';
+import { RUNBOOK_FILE } from '../../constants/paths.js';
 
 const ENCRYPTED_PREFIX = 'ENC:';
 
@@ -57,7 +58,7 @@ describe('StateManager — Encryption', () => {
         await mgr.saveRunbook(runbook, 'EXECUTING' as EngineState);
 
         // Verify on-disk content is encrypted
-        const raw = await fs.readFile(path.join(tmpDir, RUNBOOK_FILENAME), 'utf-8');
+        const raw = await fs.readFile(path.join(tmpDir, RUNBOOK_FILE), 'utf-8');
         expect(raw.startsWith(ENCRYPTED_PREFIX)).toBe(true);
 
         // Verify load decrypts correctly
@@ -73,7 +74,7 @@ describe('StateManager — Encryption', () => {
 
         await mgr.saveRunbook(runbook, 'EXECUTING' as EngineState);
 
-        const raw = await fs.readFile(path.join(tmpDir, RUNBOOK_FILENAME), 'utf-8');
+        const raw = await fs.readFile(path.join(tmpDir, RUNBOOK_FILE), 'utf-8');
         expect(raw.startsWith(ENCRYPTED_PREFIX)).toBe(false);
         const parsed = JSON.parse(raw);
         expect(parsed.project_id).toBe('test-project');
@@ -131,7 +132,7 @@ describe('StateManager — Encryption', () => {
 
         await mgr.saveRunbook(runbook, 'EXECUTING' as EngineState);
 
-        const raw = await fs.readFile(path.join(tmpDir, RUNBOOK_FILENAME), 'utf-8');
+        const raw = await fs.readFile(path.join(tmpDir, RUNBOOK_FILE), 'utf-8');
         expect(raw.startsWith(ENCRYPTED_PREFIX)).toBe(true);
 
         // Same instance can decrypt
@@ -155,8 +156,8 @@ describe('StateManager — Encryption', () => {
             await mgr2.saveRunbook(makeRunbook(), 'EXECUTING' as EngineState);
 
             // Different random keys means different ciphertext
-            const raw1 = await fs.readFile(path.join(dir1, RUNBOOK_FILENAME), 'utf-8');
-            const raw2 = await fs.readFile(path.join(dir2, RUNBOOK_FILENAME), 'utf-8');
+            const raw1 = await fs.readFile(path.join(dir1, RUNBOOK_FILE), 'utf-8');
+            const raw2 = await fs.readFile(path.join(dir2, RUNBOOK_FILE), 'utf-8');
             expect(raw1).not.toEqual(raw2);
         } finally {
             await fs.rm(dir1, { recursive: true, force: true });

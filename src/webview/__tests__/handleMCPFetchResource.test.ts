@@ -2,65 +2,60 @@
 // handleMCPFetchResource.test.ts — Regression tests for stale task guard
 //
 // After CMD_RESET, the webview may still have in-flight MCP_FETCH_RESOURCE
-// requests for the old (purged) task ID. The guard added to
-// handleMCPFetchResource() should reject these with an error response
-// instead of forwarding them to the MCP client bridge.
+// requests for the old (purged) task ID. The guard in routeWebviewMessage()
+// should reject these with an error response instead of forwarding them to
+// the MCP client bridge.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { MissionControlPanel } from '../MissionControlPanel.js';
+import { routeWebviewMessage, type MessageRouterDeps } from '../messageRouter.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Minimal mock construction
-//
-//  MissionControlPanel has a private constructor, so we can't instantiate it
-//  normally. Instead, we create a bare object with the MissionControlPanel
-//  prototype and manually wire the fields that handleMCPFetchResource reads:
-//    - this.engine.getSessionDirName() → deriveMasterTaskId()
-//    - this.panel.webview.postMessage()  → sendToWebview()
-//    - this.mcpClientBridge?.readResource()
+//  Minimal mock construction via MessageRouterDeps
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function createMockPanel(opts: {
+function createMockDeps(opts: {
     currentSessionDirName?: string;
     mcpClientBridge?: { readResource: jest.Mock } | null;
-}) {
+}): { deps: MessageRouterDeps; postMessageMock: jest.Mock } {
     const postMessageMock = jest.fn();
 
-    // Use Object.create to get prototype methods without calling the private constructor
-    const instance = Object.create(MissionControlPanel.prototype) as Record<string, any>;
-
-    // Wire private fields the method depends on
-    instance.panel = {
-        webview: { postMessage: postMessageMock },
+    const deps: MessageRouterDeps = {
+        engine: {
+            getSessionDirName: jest.fn(() => opts.currentSessionDirName),
+        } as any,
+        sendToWebview: postMessageMock,
+        isPanelAlive: () => true,
+        getSkipSandboxBranch: () => false,
+        setSkipSandboxBranch: jest.fn(),
+        sessionManager: undefined,
+        adkController: undefined,
+        preFlightGitCheck: undefined,
+        onReset: undefined,
+        mcpServer: undefined,
+        mcpClientBridge: (opts.mcpClientBridge ?? undefined) as any,
+        agentRegistry: undefined,
+        coogentDir: undefined,
     };
-    instance.engine = {
-        getSessionDirName: jest.fn(() => opts.currentSessionDirName),
-    };
-    instance.mcpClientBridge = opts.mcpClientBridge ?? undefined;
 
-    return { instance, postMessageMock };
+    return { deps, postMessageMock };
 }
 
-describe('MissionControlPanel.handleMCPFetchResource — stale task guard', () => {
+describe('routeWebviewMessage — MCP_FETCH_RESOURCE stale task guard', () => {
     const CURRENT_TASK_ID = '20260310-220000-a1b2c3d4-e5f6-7890-abcd-ef1234567890';
     const STALE_TASK_ID = '20260310-200030-c992afc5-cd37-4b50-8a75-f06c30f5b157';
 
-    afterEach(() => {
-        // Cleanup static state
-        (MissionControlPanel as any).currentPanel = undefined;
-    });
-
-    it('rejects MCP_FETCH_RESOURCE when URI task ID differs from current session', () => {
+    it('rejects MCP_FETCH_RESOURCE when URI task ID differs from current session', async () => {
         const readResourceMock = jest.fn();
-        const { instance, postMessageMock } = createMockPanel({
+        const { deps, postMessageMock } = createMockDeps({
             currentSessionDirName: CURRENT_TASK_ID,
             mcpClientBridge: { readResource: readResourceMock },
         });
 
-        // Call the private method via bracket notation
-        instance.handleMCPFetchResource(`coogent://tasks/${STALE_TASK_ID}/plan`, 'req-001');
+        await routeWebviewMessage(
+            { type: 'MCP_FETCH_RESOURCE', payload: { uri: `coogent://tasks/${STALE_TASK_ID}/plan`, requestId: 'req-001' } },
+            deps
+        );
 
-        // Should send an error response, NOT call mcpClientBridge.readResource
         expect(postMessageMock).toHaveBeenCalledWith({
             type: 'MCP_RESOURCE_DATA',
             payload: {
@@ -72,24 +67,22 @@ describe('MissionControlPanel.handleMCPFetchResource — stale task guard', () =
         expect(readResourceMock).not.toHaveBeenCalled();
     });
 
-    it('allows MCP_FETCH_RESOURCE when URI task ID matches current session', () => {
+    it('allows MCP_FETCH_RESOURCE when URI task ID matches current session', async () => {
         const readResourceMock = jest.fn().mockResolvedValue('{"plan":"data"}');
-        const { instance, postMessageMock } = createMockPanel({
+        const { deps, postMessageMock } = createMockDeps({
             currentSessionDirName: CURRENT_TASK_ID,
             mcpClientBridge: { readResource: readResourceMock },
         });
 
-        // Set static currentPanel so the .then() handler doesn't bail
-        (MissionControlPanel as any).currentPanel = instance;
+        await routeWebviewMessage(
+            { type: 'MCP_FETCH_RESOURCE', payload: { uri: `coogent://tasks/${CURRENT_TASK_ID}/plan`, requestId: 'req-002' } },
+            deps
+        );
 
-        instance.handleMCPFetchResource(`coogent://tasks/${CURRENT_TASK_ID}/plan`, 'req-002');
-
-        // Should NOT send a stale-task error — should call mcpClientBridge.readResource
         expect(readResourceMock).toHaveBeenCalledWith(
             `coogent://tasks/${CURRENT_TASK_ID}/plan`,
         );
 
-        // The initial error response for stale task should NOT be present
         const staleErrorCalls = postMessageMock.mock.calls.filter(
             (call: any[]) =>
                 call[0]?.type === 'MCP_RESOURCE_DATA' &&
@@ -98,27 +91,31 @@ describe('MissionControlPanel.handleMCPFetchResource — stale task guard', () =
         expect(staleErrorCalls).toHaveLength(0);
     });
 
-    it('rejects stale request and does NOT invoke mcpClientBridge at all', () => {
+    it('rejects stale request and does NOT invoke mcpClientBridge at all', async () => {
         const readResourceMock = jest.fn();
-        const { instance } = createMockPanel({
+        const { deps } = createMockDeps({
             currentSessionDirName: CURRENT_TASK_ID,
             mcpClientBridge: { readResource: readResourceMock },
         });
 
-        instance.handleMCPFetchResource(`coogent://tasks/${STALE_TASK_ID}/report`, 'req-003');
+        await routeWebviewMessage(
+            { type: 'MCP_FETCH_RESOURCE', payload: { uri: `coogent://tasks/${STALE_TASK_ID}/report`, requestId: 'req-003' } },
+            deps
+        );
 
-        // The critical assertion: mcpClientBridge.readResource must NOT be invoked
-        // for stale task IDs — this prevents errors from accessing purged data.
         expect(readResourceMock).not.toHaveBeenCalled();
     });
 
-    it('sends "MCP Client Bridge not available" when no bridge and URI matches', () => {
-        const { instance, postMessageMock } = createMockPanel({
+    it('sends "MCP Client Bridge not available" when no bridge and URI matches', async () => {
+        const { deps, postMessageMock } = createMockDeps({
             currentSessionDirName: CURRENT_TASK_ID,
-            mcpClientBridge: null, // No bridge
+            mcpClientBridge: null,
         });
 
-        instance.handleMCPFetchResource(`coogent://tasks/${CURRENT_TASK_ID}/plan`, 'req-004');
+        await routeWebviewMessage(
+            { type: 'MCP_FETCH_RESOURCE', payload: { uri: `coogent://tasks/${CURRENT_TASK_ID}/plan`, requestId: 'req-004' } },
+            deps
+        );
 
         expect(postMessageMock).toHaveBeenCalledWith({
             type: 'MCP_RESOURCE_DATA',

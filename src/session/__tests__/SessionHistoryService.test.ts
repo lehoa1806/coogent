@@ -34,6 +34,8 @@ const MOCK_SESSIONS: SessionSummary[] = [
         createdAt: Date.now() - 1000,
         firstPrompt: 'Build feature X',
         isActive: false,
+        hasConsolidationReport: false,
+        hasImplementationPlan: false,
     },
     {
         sessionId: 'def-456',
@@ -44,6 +46,8 @@ const MOCK_SESSIONS: SessionSummary[] = [
         createdAt: Date.now() - 2000,
         firstPrompt: 'Fix bug Y',
         isActive: false,
+        hasConsolidationReport: false,
+        hasImplementationPlan: false,
     },
 ];
 

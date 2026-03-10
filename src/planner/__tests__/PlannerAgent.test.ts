@@ -29,6 +29,7 @@ jest.mock('../../prompt-compiler/index.js', () => {
 });
 
 import { PlannerAgent } from '../PlannerAgent.js';
+import { RunbookParser } from '../RunbookParser.js';
 import type { AgentBackendProvider } from '../../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle, ADKSessionOptions } from '../../adk/ADKController.js';
 import type { WorkspaceScanner } from '../WorkspaceScanner.js';
@@ -110,22 +111,25 @@ describe('PlannerAgent', () => {
     });
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  extractRunbook() — basic parsing sanity
+    //  RunbookParser.parse() — basic parsing sanity
     // ═══════════════════════════════════════════════════════════════════════
 
     it('should extract a valid runbook from fenced JSON output', () => {
-        const result = agent.extractRunbook(validRunbookOutput);
+        const parser = new RunbookParser();
+        const result = parser.parse(validRunbookOutput);
         expect(result).not.toBeNull();
         expect(result!.project_id).toBe('test-project');
         expect(result!.phases).toHaveLength(1);
     });
 
     it('should return null for empty output', () => {
-        expect(agent.extractRunbook('')).toBeNull();
+        const parser = new RunbookParser();
+        expect(parser.parse('')).toBeNull();
     });
 
     it('should return null for invalid JSON', () => {
-        expect(agent.extractRunbook('```json\n{invalid}\n```')).toBeNull();
+        const parser = new RunbookParser();
+        expect(parser.parse('```json\n{invalid}\n```')).toBeNull();
     });
 
     // ═══════════════════════════════════════════════════════════════════════

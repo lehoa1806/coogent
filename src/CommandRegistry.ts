@@ -11,7 +11,8 @@ import { getSessionDir } from './constants/paths.js';
 import type { ServiceContainer } from './ServiceContainer.js';
 import { StateManager } from './state/StateManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
-import { formatSessionDirName, generateUUIDv7 } from './session/SessionManager.js';
+import { formatSessionDirName } from './session/session-utils.js';
+import { generateUUIDv7 } from './session/SessionManager.js';
 import { asPhaseId, asTimestamp } from './types/index.js';
 import log from './logger/log.js';
 

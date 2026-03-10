@@ -201,6 +201,20 @@ describe('PolicyEngine', () => {
     });
 
     // ─────────────────────────────────────────────────────────────────────────
+    //  no-pipe-output policy (universal)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    it('should always apply no-pipe-output policy', () => {
+        const fp = makeFingerprint();
+        const spec = makeTaskSpec();
+
+        const result = engine.evaluate(fp, spec);
+
+        expect(result.appliedPolicies).toContain('no-pipe-output');
+        expect(result.promptBlocks.some(b => b.includes('no-pipe-output'))).toBe(true);
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
     //  Result structure
     // ─────────────────────────────────────────────────────────────────────────
 

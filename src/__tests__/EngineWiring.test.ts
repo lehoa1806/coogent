@@ -13,12 +13,18 @@ jest.mock('vscode', () => ({
 import { wireEngine } from '../EngineWiring.js';
 import { ServiceContainer } from '../ServiceContainer.js';
 import { EventEmitter } from 'events';
+import {
+    createMockHandoffExtractor,
+    createMockMcpBridge,
+    createMockMcpServer,
+} from './factories/mockServiceContainer.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Mock factories
 // ═══════════════════════════════════════════════════════════════════════════════
 
 function createMockEngine(): EventEmitter & { getRunbook: jest.Mock; getState: jest.Mock; onWorkerExited: jest.Mock; onWorkerFailed: jest.Mock } {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Extending EventEmitter with mock methods requires dynamic property assignment
     const engine = new EventEmitter() as any;
     engine.getRunbook = jest.fn().mockReturnValue(null);
     engine.getState = jest.fn().mockReturnValue('EXECUTING_WORKER');
@@ -28,6 +34,7 @@ function createMockEngine(): EventEmitter & { getRunbook: jest.Mock; getState: j
 }
 
 function createMockADK(): EventEmitter & { spawnWorker: jest.Mock } {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Extending EventEmitter with mock methods requires dynamic property assignment
     const adk = new EventEmitter() as any;
     adk.spawnWorker = jest.fn().mockResolvedValue(undefined);
     return adk;
@@ -47,8 +54,8 @@ describe('wireEngine', () => {
         svc.currentSessionDirName = 'session-001';
         engine = createMockEngine();
         adk = createMockADK();
-        svc.engine = engine as any;
-        svc.adkController = adk as any;
+        svc.engine = engine as unknown as ServiceContainer['engine'];
+        svc.adkController = adk as unknown as ServiceContainer['adkController'];
     });
 
     it('does not throw when engine and adkController are present', () => {
@@ -175,8 +182,14 @@ describe('wireEngine', () => {
             }),
         };
 
-        svc.handoffExtractor = mockHandoffExtractor as any;
-        svc.mcpBridge = mockMcpBridge as any;
+        svc.handoffExtractor = createMockHandoffExtractor({
+            extractHandoff: mockHandoffExtractor.extractHandoff,
+            generateDistillationPrompt: mockHandoffExtractor.generateDistillationPrompt,
+            buildNextContext: mockHandoffExtractor.buildNextContext,
+        });
+        svc.mcpBridge = createMockMcpBridge({
+            submitPhaseHandoff: mockMcpBridge.submitPhaseHandoff,
+        });
         svc.currentSessionDir = '/workspace/.coogent/ipc/session-001';
 
         // Provide a runbook with a phase that has an mcpPhaseId
@@ -207,7 +220,11 @@ describe('wireEngine', () => {
             buildNextContext: jest.fn().mockResolvedValue(''),
         };
 
-        svc.handoffExtractor = mockHandoffExtractor as any;
+        svc.handoffExtractor = createMockHandoffExtractor({
+            extractHandoff: mockHandoffExtractor.extractHandoff,
+            generateDistillationPrompt: mockHandoffExtractor.generateDistillationPrompt,
+            buildNextContext: mockHandoffExtractor.buildNextContext,
+        });
         svc.currentSessionDir = '/workspace/.coogent/ipc/session-001';
 
         wireEngine(svc, '/workspace', 60000);
@@ -237,8 +254,16 @@ describe('wireEngine', () => {
             submitImplementationPlan: jest.fn().mockResolvedValue(undefined),
         };
 
-        svc.handoffExtractor = mockHandoffExtractor as any;
-        svc.mcpBridge = mockMcpBridge as any;
+        svc.handoffExtractor = createMockHandoffExtractor({
+            extractHandoff: mockHandoffExtractor.extractHandoff,
+            extractImplementationPlan: mockHandoffExtractor.extractImplementationPlan,
+            generateDistillationPrompt: mockHandoffExtractor.generateDistillationPrompt,
+            buildNextContext: mockHandoffExtractor.buildNextContext,
+        });
+        svc.mcpBridge = createMockMcpBridge({
+            submitPhaseHandoff: mockMcpBridge.submitPhaseHandoff,
+            submitImplementationPlan: mockMcpBridge.submitImplementationPlan,
+        });
         svc.currentSessionDir = '/workspace/.coogent/ipc/session-001';
 
         engine.getRunbook.mockReturnValue({
@@ -281,7 +306,9 @@ describe('wireEngine', () => {
             const mockMcpServer = {
                 upsertWorkerOutput: jest.fn(),
             };
-            svc.mcpServer = mockMcpServer as any;
+            svc.mcpServer = createMockMcpServer({
+                upsertWorkerOutput: mockMcpServer.upsertWorkerOutput,
+            });
 
             // Provide a runbook with a phase that has an mcpPhaseId
             engine.getRunbook.mockReturnValue({

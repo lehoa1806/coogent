@@ -9,7 +9,8 @@
 // active session ID after a successful restore).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { type SessionManager, type SessionSummary, stripSessionDirPrefix } from './SessionManager.js';
+import { type SessionManager, type SessionSummary } from './SessionManager.js';
+import { stripSessionDirPrefix } from './session-utils.js';
 import type { SessionRestoreService, SessionRestoreResult } from './SessionRestoreService.js';
 import type { SessionDeleteService, SessionDeleteResult } from './SessionDeleteService.js';
 

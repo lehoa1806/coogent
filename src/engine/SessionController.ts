@@ -7,9 +7,9 @@
 import {
     EngineState,
     EngineEvent,
-    RUNBOOK_FILENAME,
     asTimestamp,
 } from '../types/index.js';
+import { RUNBOOK_FILE } from '../constants/paths.js';
 import type { EngineInternals } from './EngineInternals.js';
 import type { StateManager } from '../state/StateManager.js';
 
@@ -39,7 +39,7 @@ export class SessionController {
                     type: 'ERROR',
                     payload: {
                         code: 'RUNBOOK_NOT_FOUND',
-                        message: `No ${RUNBOOK_FILENAME} found in the session directory (.coogent/ipc/).`,
+                        message: `No ${RUNBOOK_FILE} found in the session directory (.coogent/ipc/).`,
                     },
                 });
                 return;

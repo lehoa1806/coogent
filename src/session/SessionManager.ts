@@ -10,6 +10,14 @@ import { StateManager } from '../state/StateManager.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import { IPC_DIR } from '../constants/paths.js';
 import log from '../logger/log.js';
+import {
+    extractUUIDv7Timestamp,
+    formatSessionDirName,
+    stripSessionDirPrefix,
+} from './session-utils.js';
+
+// Re-export utilities so existing consumers don't break
+export { extractUUIDv7Timestamp, formatSessionDirName, stripSessionDirPrefix };
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Types
@@ -39,45 +47,17 @@ export interface SessionSummary {
     hasImplementationPlan: boolean;
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  UUIDv7 Timestamp Extraction
-// ═══════════════════════════════════════════════════════════════════════════════
-
-/**
- * Extract the millisecond timestamp embedded in a UUIDv7.
- * Handles both raw UUIDs and prefixed directory names (YYYYMMDD-HHMMSS-<uuid>).
- * UUIDv7 format: `TTTTTTTT-TTTT-7xxx-yxxx-xxxxxxxxxxxx`
- * The first 48 bits (12 hex chars across the first two segments) encode Unix ms.
- */
-export function extractUUIDv7Timestamp(dirNameOrUuid: string): number {
-    // Strip YYYYMMDD-HHMMSS- prefix if present (Bug 2)
-    const uuid = stripSessionDirPrefix(dirNameOrUuid);
-    const parts = uuid.split('-');
-    if (parts.length < 2) return 0;
-    const hex = parts[0] + parts[1]; // 8 + 4 = 12 hex chars = 48 bits
-    return parseInt(hex, 16) || 0;
-}
-
-/**
- * Format a session directory name as `YYYYMMDD-HHMMSS-<uuid>` (Bug 2).
- */
-export function formatSessionDirName(uuid: string, now = new Date()): string {
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const ts = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-`
-        + `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-    return `${ts}-${uuid}`;
-}
-
-
-
-/**
- * Strip the `YYYYMMDD-HHMMSS-` prefix from a session directory name to get the raw UUID.
- * Returns the input unchanged if no prefix is present.
- */
-export function stripSessionDirPrefix(dirName: string): string {
-    // Prefix format: 8 digits + dash + 6 digits + dash = 16 chars
-    const prefixMatch = dirName.match(/^\d{8}-\d{6}-(.+)$/);
-    return prefixMatch ? prefixMatch[1] : dirName;
+/** Shape of a row returned by `SessionRepository.list()`. */
+interface SessionRow {
+    sessionDirName: string;
+    sessionId: string;
+    prompt: string;
+    createdAt: number;
+    runbookJson: string | null;
+    status: string | null;
+    consolidationReport: string | null;
+    consolidationReportJson: string | null;
+    implementationPlan: string | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -106,9 +86,6 @@ export class SessionManager {
     /** Optional ArtifactDB reference for DB-first session queries. */
     private db?: ArtifactDB;
 
-    /** Track whether setArtifactDB deprecation has been logged. */
-    private setArtifactDBWarned = false;
-
     constructor(
         storageBase: string,
         currentSessionId: string,
@@ -127,13 +104,14 @@ export class SessionManager {
      * Wire the ArtifactDB for DB-first session listing.
      * After calling this, `listSessions()` queries the DB with IPC fallback.
      *
-     * @deprecated Prefer passing `artifactDB` via the constructor instead.
+     * Prefer passing `artifactDB` via the constructor when possible.
+     *
+     * @deprecated Prefer constructor injection. Three runtime callers remain
+     * (`ServiceContainer.switchSession`, `PlannerWiring`, `activation.ts`)
+     * that require an ArtifactDB lifecycle refactor to eliminate.
+     * TODO: Remove once ArtifactDB is fully constructor-injected.
      */
     public setArtifactDB(db: ArtifactDB): void {
-        if (!this.setArtifactDBWarned) {
-            log.warn('[SessionManager] setArtifactDB() is deprecated — pass artifactDB via the constructor.');
-            this.setArtifactDBWarned = true;
-        }
         this.db = db;
     }
 
@@ -147,8 +125,6 @@ export class SessionManager {
     public getCurrentSessionDirName(): string {
         return this.currentSessionDirName;
     }
-
-
 
     // ─────────────────────────────────────────────────────────────────────────
     //  Public API
@@ -198,7 +174,7 @@ export class SessionManager {
         }
 
         try {
-            const rows = this.db.sessions.list();
+            const rows: SessionRow[] = this.db.sessions.list();
             for (const row of rows) {
                 const isActive = Boolean(
                     (this.currentSessionDirName && row.sessionDirName === this.currentSessionDirName) ||
@@ -275,7 +251,8 @@ export class SessionManager {
                     this.db.deleteSessionFromDB(row.sessionDirName);
                     log.info(`[SessionManager] Pruned old session: ${row.sessionDirName}`);
                 } catch {
-                    // Best-effort: skip if deletion fails
+                    // Best-effort pruning: individual session deletion may fail
+                    // if files are locked or already removed — safe to skip.
                 }
             }
         } catch (err) {
@@ -315,7 +292,7 @@ export class SessionManager {
         if (!this.db) return results;
 
         try {
-            const rows = this.db.sessions.list();
+            const rows: SessionRow[] = this.db.sessions.list();
             for (const row of rows) {
                 const isActive = Boolean(this.currentSessionDirName && row.sessionDirName === this.currentSessionDirName);
 
@@ -357,7 +334,7 @@ export class SessionManager {
         if (!this.db) return null;
 
         try {
-            const rows = this.db.sessions.list();
+            const rows: SessionRow[] = this.db.sessions.list();
             const match = rows.find(r =>
                 stripSessionDirPrefix(r.sessionDirName) === sessionId ||
                 r.sessionId === sessionId
@@ -438,7 +415,9 @@ export class SessionManager {
                 if (match) {
                     return path.join(this.ipcDir, match.sessionDirName);
                 }
-            } catch { /* fall through */ }
+            } catch {
+                // DB lookup failure is non-fatal — fall through to raw ID path
+            }
         }
 
         // Last resort: use the raw ID as directory name
@@ -455,7 +434,8 @@ export class SessionManager {
             await fs.rm(dir, { recursive: true, force: true });
             log.info(`[SessionManager] Deleted session: ${sessionId}`);
         } catch {
-            // Best-effort: skip if deletion fails
+            // Best-effort filesystem deletion — fs.rm with force:true
+            // already handles most failures; skip to continue with DB cleanup
         }
 
         // Also remove the corresponding rows from the database
