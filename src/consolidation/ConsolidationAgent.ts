@@ -255,7 +255,7 @@ export class ConsolidationAgent {
         report: ConsolidationReport,
         mcpBridge?: MCPClientBridge,
         masterTaskId?: string,
-        storageBase?: string,
+        coogentDir?: string,
     ): Promise<void> {
         const markdown = this.formatAsMarkdown(report);
 
@@ -275,9 +275,9 @@ export class ConsolidationAgent {
             log.warn('[ConsolidationAgent] No MCP bridge available — report NOT persisted.');
         }
 
-        // F-4 audit fix: Write debug clone outside IPC tree to <storageBase>/debug/<masterTaskId>/
-        if (sessionDir && masterTaskId && storageBase) {
-            const debugDir = getDebugDir(storageBase, masterTaskId);
+        // F-4 audit fix: Write debug clone outside IPC tree to <coogentDir>/debug/<masterTaskId>/
+        if (sessionDir && masterTaskId && coogentDir) {
+            const debugDir = getDebugDir(coogentDir, masterTaskId);
             fs.mkdir(debugDir, { recursive: true })
                 .then(() => fs.writeFile(path.join(debugDir, 'consolidation-report.md'), markdown, 'utf-8'))
                 .catch(err => log.warn('[ConsolidationAgent] Debug clone (report) failed (non-fatal):', err));

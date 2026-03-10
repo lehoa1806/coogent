@@ -45,14 +45,8 @@ export function wirePlanner(
                 const { sessionId, sessionDirName, sessionDir } = svc.initSession();
                 log.info(`[PlannerWiring] Deferred session created: ${sessionDirName}`);
 
-                // Late-bind StateManager to real session dir
-                svc.stateManager?.setSessionDir(sessionDir);
-
-                // Late-bind SessionManager
-                svc.sessionManager?.setCurrentSessionId(sessionId, sessionDirName);
-
-                // Late-bind PlannerAgent master task ID
-                plannerAgent.setMasterTaskId(sessionDirName);
+                // Atomically switch all session state
+                svc.switchSession({ sessionId, sessionDirName, sessionDir });
 
                 // Late-bind ArtifactDB
                 if (mcpServer) {
@@ -95,8 +89,8 @@ export function wirePlanner(
             }
 
             // F-4 audit fix: Write debug clones outside IPC tree to .coogent/debug/<sessionDirName>/
-            if (svc.stateManager && svc.storageBase) {
-                const debugDir = getDebugDir(svc.storageBase, getSessionDirName());
+            if (svc.stateManager && svc.coogentDir) {
+                const debugDir = getDebugDir(svc.coogentDir, getSessionDirName());
                 fs.mkdir(debugDir, { recursive: true })
                     .then(() => fs.writeFile(path.join(debugDir, 'prompt.md'), prompt, 'utf-8'))
                     .catch(err => log.warn('[PlannerWiring] Debug clone (prompt) failed (non-fatal):', err));
@@ -216,8 +210,8 @@ export function wirePlanner(
                 .catch(err => log.error('[Coogent] Failed to store implementation plan in MCP:', err));
 
             // F-4 audit fix: Write debug clones outside IPC tree
-            if (svc.storageBase) {
-                const debugDir = getDebugDir(svc.storageBase, getSessionDirName());
+            if (svc.coogentDir) {
+                const debugDir = getDebugDir(svc.coogentDir, getSessionDirName());
                 fs.mkdir(debugDir, { recursive: true })
                     .then(() => fs.writeFile(path.join(debugDir, 'implementation-plan.md'), implPlanContent, 'utf-8'))
                     .catch(err => log.warn('[PlannerWiring] Debug clone (impl plan) failed (non-fatal):', err));

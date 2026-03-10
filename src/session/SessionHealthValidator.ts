@@ -3,17 +3,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // Validates whether a persisted session has the required backing state to
-// be safely loaded.  Checks three layers:
+// be safely loaded.  Checks two layers (DB-only):
 //   1. Metadata existence in ArtifactDB  (SessionRepository)
-//   2. Session directory existence on disk
-//   3. Runbook availability  (file on disk OR `runbook_json` in tasks table)
+//   2. Runbook availability  (`runbook_json` in tasks table)
+//
+// No disk checks are performed — the DB is the single source of truth.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
-import { getSessionDir, RUNBOOK_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -26,7 +23,6 @@ export interface SessionHealthResult {
     status: SessionHealthStatus;
     sessionDirName: string;
     hasMetadata: boolean;
-    hasSnapshot: boolean;
     hasRunbookInDB: boolean;
     errors: string[];
 }
@@ -36,13 +32,14 @@ export interface SessionHealthResult {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Validates whether a session is safe to load by checking the three
- * persistence layers (DB metadata, disk snapshot, DB runbook).
+ * Validates whether a session is safe to load by checking the
+ * ArtifactDB persistence layers (metadata + runbook).
+ *
+ * No filesystem checks — the DB is the single source of truth.
  */
 export class SessionHealthValidator {
     constructor(
         private readonly artifactDB: ArtifactDB,
-        private readonly storageBase: string,
     ) { }
 
     /**
@@ -64,22 +61,11 @@ export class SessionHealthValidator {
             errors.push(`No session metadata found in DB for "${sessionDirName}"`);
         }
 
-        // ── 2. Session directory / snapshot check ────────────────────────
-        const sessionDir = getSessionDir(this.storageBase, sessionDirName);
-        const hasSnapshot = fs.existsSync(sessionDir);
-
-        if (!hasSnapshot) {
-            errors.push(`Session directory does not exist: ${sessionDir}`);
-        }
-
-        // ── 3. Runbook availability ──────────────────────────────────────
-        //    Accept either on-disk runbook file OR a runbook_json in the DB.
-        const runbookPath = path.join(sessionDir, RUNBOOK_FILE);
-        const hasRunbookOnDisk = hasSnapshot && fs.existsSync(runbookPath);
+        // ── 2. Runbook availability ──────────────────────────────────────
         const hasRunbookInDB = meta?.runbookJson != null && meta.runbookJson !== '';
 
-        if (!hasRunbookOnDisk && !hasRunbookInDB) {
-            errors.push(`No runbook found (checked disk: ${runbookPath}, DB runbook_json: absent)`);
+        if (hasMetadata && !hasRunbookInDB) {
+            errors.push(`No runbook found in DB for "${sessionDirName}"`);
         }
 
         // ── Derive status ────────────────────────────────────────────────
@@ -87,7 +73,7 @@ export class SessionHealthValidator {
 
         if (!hasMetadata) {
             status = 'invalid';
-        } else if (hasRunbookOnDisk || hasRunbookInDB) {
+        } else if (hasRunbookInDB) {
             status = 'healthy';
         } else {
             status = 'degraded';
@@ -97,7 +83,6 @@ export class SessionHealthValidator {
             status,
             sessionDirName,
             hasMetadata,
-            hasSnapshot,
             hasRunbookInDB,
             errors,
         };

@@ -278,7 +278,7 @@
     function autoResize() {
         if (!textareaEl) return;
         textareaEl.style.height = "auto";
-        textareaEl.style.height = `${Math.min(textareaEl.scrollHeight, 160)}px`;
+        textareaEl.style.height = `${Math.min(textareaEl.scrollHeight, 480)}px`;
     }
 
     function handleInput() {
@@ -320,7 +320,7 @@
                     bind:this={textareaEl}
                     bind:value={prompt}
                     {placeholder}
-                    rows="1"
+                    rows="3"
                     onkeydown={handleKeydown}
                     oninput={handleInput}
                     disabled={isPlanning}
@@ -436,8 +436,8 @@
         padding: 8px 10px;
         resize: none;
         overflow-y: auto;
-        min-height: 36px;
-        max-height: 160px;
+        min-height: 108px;
+        max-height: 480px;
         line-height: 1.45;
         transition: border-color 0.15s ease;
     }
@@ -504,8 +504,8 @@
 
     .preview-pane {
         flex: 1;
-        min-height: 36px;
-        max-height: 160px;
+        min-height: 108px;
+        max-height: 480px;
         overflow-y: auto;
         padding: 8px 10px;
         border: 1px solid

@@ -45,7 +45,6 @@ function makeHealthResult(
         status,
         sessionDirName,
         hasMetadata: status !== 'invalid',
-        hasSnapshot: status !== 'invalid',
         hasRunbookInDB: status === 'healthy',
         errors,
     };
@@ -94,7 +93,7 @@ function createMockMCPServer(
 // ── Test Suite ───────────────────────────────────────────────────────────────
 
 describe('SessionRestoreService', () => {
-    const STORAGE_BASE = '/tmp/coogent-test';
+    const COOGENT_DIR = '/tmp/coogent-test';
     const SESSION_DIR_NAME = 'test-session-restore-001';
 
     afterEach(() => {
@@ -109,7 +108,7 @@ describe('SessionRestoreService', () => {
         const engine = createMockEngine();
         const mcpServer = createMockMCPServer();
 
-        const service = new SessionRestoreService(engine, mcpServer, STORAGE_BASE);
+        const service = new SessionRestoreService(engine, mcpServer, COOGENT_DIR);
         const result = await service.restore(SESSION_DIR_NAME);
 
         expect(result.success).toBe(true);
@@ -136,7 +135,7 @@ describe('SessionRestoreService', () => {
         const engine = createMockEngine();
         const mcpServer = createMockMCPServer();
 
-        const service = new SessionRestoreService(engine, mcpServer, STORAGE_BASE);
+        const service = new SessionRestoreService(engine, mcpServer, COOGENT_DIR);
         const result = await service.restore(SESSION_DIR_NAME);
 
         expect(result.success).toBe(false);
@@ -160,7 +159,7 @@ describe('SessionRestoreService', () => {
         const engine = createMockEngine();
         const mcpServer = createMockMCPServer();
 
-        const service = new SessionRestoreService(engine, mcpServer, STORAGE_BASE);
+        const service = new SessionRestoreService(engine, mcpServer, COOGENT_DIR);
         const result = await service.restore(SESSION_DIR_NAME);
 
         // Degraded is non-fatal — restore proceeds
@@ -182,7 +181,7 @@ describe('SessionRestoreService', () => {
         } as unknown as Partial<Engine>);
         const mcpServer = createMockMCPServer();
 
-        const service = new SessionRestoreService(engine, mcpServer, STORAGE_BASE);
+        const service = new SessionRestoreService(engine, mcpServer, COOGENT_DIR);
         const result = await service.restore(SESSION_DIR_NAME);
 
         expect(result.success).toBe(false);
@@ -202,7 +201,7 @@ describe('SessionRestoreService', () => {
         const engine = createMockEngine();
         const mcpServer = createMockMCPServer();
 
-        const service = new SessionRestoreService(engine, mcpServer, STORAGE_BASE);
+        const service = new SessionRestoreService(engine, mcpServer, COOGENT_DIR);
 
         const result1 = await service.restore(SESSION_DIR_NAME);
         const result2 = await service.restore(SESSION_DIR_NAME);

@@ -11,7 +11,7 @@ import { getSessionDir } from './constants/paths.js';
 import type { ServiceContainer } from './ServiceContainer.js';
 import { StateManager } from './state/StateManager.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
-import { SessionManager, formatSessionDirName, generateUUIDv7 } from './session/SessionManager.js';
+import { formatSessionDirName, generateUUIDv7 } from './session/SessionManager.js';
 import { asPhaseId, asTimestamp } from './types/index.js';
 import log from './logger/log.js';
 
@@ -54,13 +54,14 @@ function generateSessionId(): string {
 function makeOnReset(
     svc: ServiceContainer,
     _sessionDirName: string
-): (newDir: string, newDirName: string) => void {
-    return (newDir, newDirName) => {
-        svc.currentSessionDir = newDir;
-        svc.plannerAgent?.setMasterTaskId(newDirName);
-        svc.sessionManager?.setCurrentSessionId(
-            newDirName.replace(/^\d{8}-\d{6}-/, ''), newDirName
-        );
+): (newDir: string, newDirName: string, newStateManager?: StateManager) => void {
+    return (newDir, newDirName, newStateManager) => {
+        svc.switchSession({
+            sessionId: newDirName.replace(/^\d{8}-\d{6}-/, ''),
+            sessionDirName: newDirName,
+            sessionDir: newDir,
+            ...(newStateManager ? { newStateManager } : {}),
+        });
     };
 }
 
@@ -83,7 +84,7 @@ function showMissionControl(
         svc.mcpServer,
         svc.mcpBridge,
         svc.agentRegistry,
-        svc.storageBase
+        svc.coogentDir
     );
 }
 
@@ -125,14 +126,12 @@ export function registerAllCommands(
             if (workspaceRoot) {
                 const newId = generateSessionId();
                 const newDirName = formatSessionDirName(newId);
-                const newDir = getSessionDir(svc.storageBase!, newDirName);
+                const newDir = getSessionDir(svc.coogentDir!, newDirName);
                 svc.workerOutputAccumulator.clear();
                 svc.sandboxBranchCreatedForSession.clear();
-                svc.currentSessionDir = newDir;
                 const newSM = new StateManager(newDir);
                 await svc.engine.reset(newSM);
-                svc.sessionManager = new SessionManager(workspaceRoot, newId, newDirName);
-                svc.plannerAgent?.setMasterTaskId(newDirName);
+                svc.switchSession({ sessionId: newId, sessionDirName: newDirName, sessionDir: newDir, newStateManager: newSM });
             } else {
                 await svc.engine.reset();
             }
@@ -160,8 +159,7 @@ export function registerAllCommands(
                     vscode.window.showErrorMessage(`Coogent: Session load failed — ${result.errors.join('; ')}`);
                     return;
                 }
-                svc.currentSessionDir = sessionDir;
-                svc.plannerAgent?.setMasterTaskId(sessionDirName);
+                svc.switchSession({ sessionId: sessionId, sessionDirName, sessionDir });
                 showMissionControl(context.extensionUri, svc);
 
                 // Hydrate UI with restored worker outputs
@@ -294,14 +292,12 @@ export function registerAllCommands(
                 if (workspaceRoot) {
                     const newId = generateSessionId();
                     const newDirName = formatSessionDirName(newId);
-                    const newDir = getSessionDir(svc.storageBase!, newDirName);
+                    const newDir = getSessionDir(svc.coogentDir!, newDirName);
                     svc.workerOutputAccumulator.clear();
                     svc.sandboxBranchCreatedForSession.clear();
-                    svc.currentSessionDir = newDir;
                     const newSM = new StateManager(newDir);
                     await svc.engine.reset(newSM);
-                    svc.sessionManager = new SessionManager(workspaceRoot, newId, newDirName);
-                    svc.plannerAgent?.setMasterTaskId(newDirName);
+                    svc.switchSession({ sessionId: newId, sessionDirName: newDirName, sessionDir: newDir, newStateManager: newSM });
                 } else {
                     await svc.engine.reset();
                 }

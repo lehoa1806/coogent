@@ -9,16 +9,11 @@
 // ## Storage Model
 //
 // ### Workspace-Level  (workspaceRoot / .coogent /)
-//   User-visible data in the workspace. Includes logs, config, plugins,
-//   and currently the database. Must be gitignored. Survives extension
-//   updates but is workspace-scoped.
+//   All data lives here: logs, config, plugins, session/IPC data,
+//   the database, and backups. Must be gitignored.
+//   This keeps everything local for easy debugging.
 //
-// ### Session / Runtime  (storageBase from context.storageUri)
-//   Short-lived data tied to a single extension activation. May be
-//   deleted between sessions. Lives under VS Code extension-managed
-//   storage, NOT in the user's workspace tree.
-//
-// ### IPC  (storageBase / ipc / <sessionDirName> /)
+// ### IPC  (workspaceRoot / .coogent / ipc / <sessionDirName> /)
 //   Transient exchange files for master↔worker communication. Must NOT
 //   be treated as durable state. Cleaned up via TTL.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,7 +27,7 @@ import * as path from 'node:path';
 /** Top-level workspace directory for Coogent data. NOT for IPC sessions. */
 export const COOGENT_DIR = '.coogent';
 
-/** Session IPC exchange directory. Rooted under storageBase. */
+/** Session IPC exchange directory. Rooted under workspaceRoot/.coogent/. */
 export const IPC_DIR = 'ipc';
 
 /** Worker PID registry directory. Rooted under workspaceRoot/.coogent/. Runtime-only. */
@@ -41,7 +36,7 @@ export const PID_DIR = 'pid';
 /** Telemetry JSONL run directories. Rooted under workspaceRoot/.coogent/. */
 export const LOG_DIR = 'logs';
 
-/** Debug clone output (prompts, plans). Rooted under storageBase. Deletable cache. */
+/** Debug clone output (prompts, plans). Rooted under workspaceRoot/.coogent/. Deletable cache. */
 export const DEBUG_DIR = 'debug';
 
 /** MCP plugin directories. Rooted under workspaceRoot/.coogent/. User-facing config. */
@@ -67,9 +62,7 @@ export const LOCK_FILE = '.lock';
 /**
  * SQLite persistent database filename.
  *
- * ⚠️ Currently stored under workspaceRoot/.coogent/ which puts it in the
- * user's repo tree. Future direction: move to context.storageUri or
- * extensionPath so durable state doesn't pollute workspace repos.
+ * Stored under `<workspaceRoot>/.coogent/` for local debug visibility.
  */
 export const DATABASE_FILE = 'artifacts.db';
 
@@ -103,10 +96,10 @@ export function getCoogentDir(workspaceRoot: string): string {
 
 /**
  * Absolute path to the SQLite database file.
- * Currently workspace-scoped (`<workspaceRoot>/.coogent/artifacts.db`).
+ * Lives under `<coogentDir>/artifacts.db` for local debug visibility.
  */
-export function getDatabasePath(workspaceRoot: string): string {
-    return path.join(workspaceRoot, COOGENT_DIR, DATABASE_FILE);
+export function getDatabasePath(coogentDir: string): string {
+    return path.join(coogentDir, DATABASE_FILE);
 }
 
 /** Absolute path to the main log file (`<workspaceRoot>/.coogent/coogent.log`). */
@@ -136,22 +129,22 @@ export function getWorkersConfigPath(workspaceRoot: string): string {
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Session-Level Path Builders
-//  Root: storageBase (from context.storageUri)
+//  Root: workspaceRoot / .coogent /
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Absolute path to the IPC root directory (`<storageBase>/ipc/`). */
-export function getIpcRoot(storageBase: string): string {
-    return path.join(storageBase, IPC_DIR);
+/** Absolute path to the IPC root directory (`<coogentDir>/ipc/`). */
+export function getIpcRoot(coogentDir: string): string {
+    return path.join(coogentDir, IPC_DIR);
 }
 
-/** Absolute path to a specific session's IPC directory (`<storageBase>/ipc/<dirName>/`). */
-export function getSessionDir(storageBase: string, sessionDirName: string): string {
-    return path.join(storageBase, IPC_DIR, sessionDirName);
+/** Absolute path to a specific session's IPC directory (`<coogentDir>/ipc/<dirName>/`). */
+export function getSessionDir(coogentDir: string, sessionDirName: string): string {
+    return path.join(coogentDir, IPC_DIR, sessionDirName);
 }
 
-/** Absolute path to the debug output directory for a session (`<storageBase>/debug/<dirName>/`). */
-export function getDebugDir(storageBase: string, sessionDirName: string): string {
-    return path.join(storageBase, DEBUG_DIR, sessionDirName);
+/** Absolute path to the debug output directory for a session (`<coogentDir>/debug/<dirName>/`). */
+export function getDebugDir(coogentDir: string, sessionDirName: string): string {
+    return path.join(coogentDir, DEBUG_DIR, sessionDirName);
 }
 
 /** Absolute path to the runbook file within a session directory. */

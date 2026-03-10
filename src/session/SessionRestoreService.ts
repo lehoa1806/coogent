@@ -55,7 +55,7 @@ export interface SessionRestoreResult {
  *
  * Usage:
  * ```ts
- * const restorer = new SessionRestoreService(engine, mcpServer, storageBase);
+ * const restorer = new SessionRestoreService(engine, mcpServer, coogentDir);
  * const result = await restorer.restore(sessionDirName);
  * if (!result.success) { … handle errors … }
  * ```
@@ -66,11 +66,10 @@ export class SessionRestoreService {
     constructor(
         private readonly engine: Engine,
         private readonly mcpServer: CoogentMCPServer,
-        private readonly storageBase: string,
+        private readonly coogentDir: string,
     ) {
         this.healthValidator = new SessionHealthValidator(
             mcpServer.getArtifactDB(),
-            storageBase,
         );
     }
 
@@ -128,7 +127,7 @@ export class SessionRestoreService {
         // ── Step 2: Resolve session directory ─────────────────────────────
         let sessionDir: string;
         try {
-            sessionDir = getSessionDir(this.storageBase, sessionDirName);
+            sessionDir = getSessionDir(this.coogentDir, sessionDirName);
             log.info(`[SessionRestoreService] Session directory resolved: ${sessionDir}`);
         } catch (err: unknown) {
             const msg = `Failed to resolve session directory: ${err instanceof Error ? err.message : String(err)}`;

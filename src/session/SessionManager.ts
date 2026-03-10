@@ -1,11 +1,11 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/session/SessionManager.ts — Discovers, searches, and loads past sessions
+// src/session/SessionManager.ts — DB-only session management
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as crypto from 'node:crypto';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { RUNBOOK_FILENAME, type Runbook, type RunbookStatus } from '../types/index.js';
+import { type Runbook, type RunbookStatus } from '../types/index.js';
 import { StateManager } from '../state/StateManager.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import { IPC_DIR } from '../constants/paths.js';
@@ -31,6 +31,8 @@ export interface SessionSummary {
     createdAt: number;
     /** First phase prompt, truncated for display. */
     firstPrompt: string;
+    /** Whether this is the currently active session. */
+    isActive: boolean;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -62,8 +64,7 @@ export function formatSessionDirName(uuid: string, now = new Date()): string {
     return `${ts}-${uuid}`;
 }
 
-/** Regex matching the new session dir format: YYYYMMDD-HHMMSS-<uuid> */
-const SESSION_DIR_REGEX = /^\d{8}-\d{6}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 
 /**
  * Strip the `YYYYMMDD-HHMMSS-` prefix from a session directory name to get the raw UUID.
@@ -79,15 +80,14 @@ export function stripSessionDirPrefix(dirName: string): string {
 //  SessionManager
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const MAX_SESSIONS = 50;
 const MAX_PROMPT_LENGTH = 120;
 
 /**
- * Discovers and manages past Coogent sessions.
+ * Manages past Coogent sessions.
  *
- * Sessions are stored under `<storageBase>/ipc/YYYYMMDD-HHMMSS-<uuid>/`,
- * each containing a `.task-runbook.json`. This class scans those directories,
- * extracts metadata, and supports full-text search across phase prompts.
+ * All session data is read exclusively from the ArtifactDB.
+ * The IPC directories on disk are only used for creating new sessions
+ * and deleting old ones — never for discovery or listing.
  */
 export class SessionManager {
     /** Absolute path to `<storageBase>/ipc/`. */
@@ -102,17 +102,34 @@ export class SessionManager {
     /** Optional ArtifactDB reference for DB-first session queries. */
     private db?: ArtifactDB;
 
-    constructor(storageBase: string, currentSessionId: string, currentSessionDirName?: string) {
+    /** Track whether setArtifactDB deprecation has been logged. */
+    private setArtifactDBWarned = false;
+
+    constructor(
+        storageBase: string,
+        currentSessionId: string,
+        currentSessionDirName?: string,
+        artifactDB?: ArtifactDB,
+    ) {
         this.ipcDir = path.join(storageBase, IPC_DIR);
         this.currentSessionId = currentSessionId;
         this.currentSessionDirName = currentSessionDirName ?? currentSessionId;
+        if (artifactDB) {
+            this.db = artifactDB;
+        }
     }
 
     /**
      * Wire the ArtifactDB for DB-first session listing.
      * After calling this, `listSessions()` queries the DB with IPC fallback.
+     *
+     * @deprecated Prefer passing `artifactDB` via the constructor instead.
      */
     public setArtifactDB(db: ArtifactDB): void {
+        if (!this.setArtifactDBWarned) {
+            log.warn('[SessionManager] setArtifactDB() is deprecated — pass artifactDB via the constructor.');
+            this.setArtifactDBWarned = true;
+        }
         this.db = db;
     }
 
@@ -163,76 +180,68 @@ export class SessionManager {
     }
 
     /**
-     * List all past sessions, sorted by most recent first.
-     * Excludes the currently active session.
+     * List all sessions, sorted by most recent first.
+     * Includes the current session, tagged with `isActive: true`.
      *
-     * DB-first: queries ArtifactDB if available, falling back to IPC
-     * directory scan for legacy sessions not yet in the database.
+     * All data comes exclusively from the ArtifactDB.
      */
     public async listSessions(): Promise<SessionSummary[]> {
-        const seenDirNames = new Set<string>();
         const summaries: SessionSummary[] = [];
 
-        // ── Primary: DB query ────────────────────────────────────────
-        if (this.db) {
-            try {
-                const rows = this.db.sessions.list();
-                for (const row of rows) {
-                    // Exclude current active session
-                    if (row.sessionDirName === this.currentSessionDirName) continue;
-                    if (row.sessionId === this.currentSessionId) continue;
-
-                    seenDirNames.add(row.sessionDirName);
-
-                    // Try to build summary from runbook JSON if present
-                    if (row.runbookJson) {
-                        try {
-                            const runbook = JSON.parse(row.runbookJson) as Runbook;
-                            if (runbook && runbook.project_id && Array.isArray(runbook.phases)) {
-                                summaries.push(this.runbookToSummary(
-                                    stripSessionDirPrefix(row.sessionDirName),
-                                    runbook,
-                                    row.createdAt,
-                                ));
-                                continue;
-                            }
-                        } catch { /* fall through to prompt-only summary */ }
-                    }
-
-                    // Minimal summary from session row (no runbook available yet)
-                    summaries.push({
-                        sessionId: row.sessionId || stripSessionDirPrefix(row.sessionDirName),
-                        projectId: '(pending)',
-                        status: (row.status as RunbookStatus) || 'idle',
-                        phaseCount: 0,
-                        completedPhases: 0,
-                        createdAt: row.createdAt,
-                        firstPrompt: row.prompt
-                            ? (row.prompt.length > MAX_PROMPT_LENGTH
-                                ? row.prompt.slice(0, MAX_PROMPT_LENGTH) + '…'
-                                : row.prompt)
-                            : '(empty)',
-                    });
-                }
-            } catch (err) {
-                log.warn('[SessionManager] DB listSessions failed, using IPC fallback:', err);
-            }
+        if (!this.db) {
+            log.warn('[SessionManager] No ArtifactDB wired — returning empty session list');
+            return summaries;
         }
 
-        // ── Fallback: IPC directory scan (legacy sessions not in DB) ──
-        const dirs = await this.discoverSessionDirs();
-        for (const dir of dirs) {
-            const dirName = path.basename(dir);
-            if (seenDirNames.has(dirName)) continue; // already from DB
-            const summary = await this.readSessionSummary(dir);
-            if (summary) summaries.push(summary);
+        try {
+            const rows = this.db.sessions.list();
+            for (const row of rows) {
+                const isActive = Boolean(
+                    (this.currentSessionDirName && row.sessionDirName === this.currentSessionDirName) ||
+                    (this.currentSessionId && row.sessionId === this.currentSessionId)
+                );
+
+                // Try to build summary from runbook JSON if present
+                if (row.runbookJson) {
+                    try {
+                        const runbook = JSON.parse(row.runbookJson) as Runbook;
+                        if (runbook && runbook.project_id && Array.isArray(runbook.phases)) {
+                            const summary = this.runbookToSummary(
+                                stripSessionDirPrefix(row.sessionDirName),
+                                runbook,
+                                row.createdAt,
+                            );
+                            summary.isActive = isActive;
+                            summaries.push(summary);
+                            continue;
+                        }
+                    } catch { /* fall through to prompt-only summary */ }
+                }
+
+                // Minimal summary from session row (no runbook available yet)
+                summaries.push({
+                    sessionId: row.sessionId || stripSessionDirPrefix(row.sessionDirName),
+                    projectId: row.prompt
+                        ? (row.prompt.length > 60 ? row.prompt.slice(0, 60) + '…' : row.prompt)
+                        : 'New session',
+                    status: (row.status as RunbookStatus) || 'idle',
+                    phaseCount: 0,
+                    completedPhases: 0,
+                    createdAt: row.createdAt,
+                    firstPrompt: row.prompt
+                        ? (row.prompt.length > MAX_PROMPT_LENGTH
+                            ? row.prompt.slice(0, MAX_PROMPT_LENGTH) + '…'
+                            : row.prompt)
+                        : '(empty)',
+                    isActive,
+                });
+            }
+        } catch (err) {
+            log.error('[SessionManager] DB listSessions failed:', err);
         }
 
         // Sort by createdAt descending (most recent first)
         summaries.sort((a, b) => b.createdAt - a.createdAt);
-
-        // Prune excess sessions asynchronously (non-blocking)
-        this.pruneSessions(MAX_SESSIONS).catch(() => { /* best-effort */ });
 
         return summaries;
     }
@@ -240,33 +249,36 @@ export class SessionManager {
     /**
      * Delete the oldest sessions that exceed `maxCount`.
      * Keeps the most recent `maxCount` sessions.
+     * Uses the DB as the source of truth for session list.
      */
     public async pruneSessions(maxCount: number): Promise<void> {
-        const dirs = await this.discoverSessionDirs();
-        if (dirs.length <= maxCount) return;
+        if (!this.db) return;
 
-        // Extract timestamps and sort oldest-first
-        const withTimestamp = dirs.map(dir => ({
-            dir,
-            ts: extractUUIDv7Timestamp(path.basename(dir)),
-        }));
-        withTimestamp.sort((a, b) => a.ts - b.ts);
+        try {
+            const rows = this.db.sessions.list(); // already sorted by createdAt DESC
+            if (rows.length <= maxCount) return;
 
-        // Delete oldest (beyond maxCount)
-        const toDelete = withTimestamp.slice(0, withTimestamp.length - maxCount);
-        for (const { dir } of toDelete) {
-            try {
-                await fs.rm(dir, { recursive: true, force: true });
-                log.info(`[SessionManager] Pruned old session: ${path.basename(dir)}`);
-            } catch {
-                // Best-effort: skip if deletion fails
+            // Delete oldest (beyond maxCount) — rows are newest-first
+            const toDelete = rows.slice(maxCount);
+            for (const row of toDelete) {
+                try {
+                    const dir = path.join(this.ipcDir, row.sessionDirName);
+                    await fs.rm(dir, { recursive: true, force: true });
+                    this.db.deleteSessionFromDB(row.sessionDirName);
+                    log.info(`[SessionManager] Pruned old session: ${row.sessionDirName}`);
+                } catch {
+                    // Best-effort: skip if deletion fails
+                }
             }
+        } catch (err) {
+            log.warn('[SessionManager] pruneSessions failed:', err);
         }
     }
 
     /**
      * Search past sessions by query string.
-     * Matches against `project_id` and all phase prompts (case-insensitive).
+     * Matches against `project_id`, first prompt, and session ID (case-insensitive).
+     * All data comes exclusively from the ArtifactDB.
      */
     public async searchSessions(query: string): Promise<SessionSummary[]> {
         if (!query.trim()) return this.listSessions();
@@ -284,67 +296,45 @@ export class SessionManager {
     /**
      * Deep search — also searches across ALL phase prompts for a session.
      * More expensive than `searchSessions()` since it reads full runbooks.
-     *
-     * DB-first: uses DB runbook JSON when available, IPC fallback for legacy sessions.
+     * All data comes exclusively from the ArtifactDB.
      */
     public async deepSearchSessions(query: string): Promise<SessionSummary[]> {
         if (!query.trim()) return this.listSessions();
 
         const q = query.toLowerCase();
         const results: SessionSummary[] = [];
-        const seenDirNames = new Set<string>();
 
-        // ── Primary: DB search ───────────────────────────────────────
-        if (this.db) {
-            try {
-                const rows = this.db.sessions.list();
-                for (const row of rows) {
-                    if (row.sessionDirName === this.currentSessionDirName) continue;
-                    seenDirNames.add(row.sessionDirName);
+        if (!this.db) return results;
 
-                    if (!row.runbookJson) continue;
-                    try {
-                        const runbook = JSON.parse(row.runbookJson) as Runbook;
-                        if (!runbook || !runbook.project_id || !Array.isArray(runbook.phases)) continue;
+        try {
+            const rows = this.db.sessions.list();
+            for (const row of rows) {
+                const isActive = Boolean(this.currentSessionDirName && row.sessionDirName === this.currentSessionDirName);
 
-                        const matchesProject = runbook.project_id.toLowerCase().includes(q);
-                        const matchesPrompt = runbook.phases.some(p =>
-                            p.prompt.toLowerCase().includes(q)
+                if (!row.runbookJson) continue;
+                try {
+                    const runbook = JSON.parse(row.runbookJson) as Runbook;
+                    if (!runbook || !runbook.project_id || !Array.isArray(runbook.phases)) continue;
+
+                    const matchesProject = runbook.project_id.toLowerCase().includes(q);
+                    const matchesPrompt = runbook.phases.some(p =>
+                        p.prompt.toLowerCase().includes(q)
+                    );
+                    const matchesSessionPrompt = (row.prompt || '').toLowerCase().includes(q);
+
+                    if (matchesProject || matchesPrompt || matchesSessionPrompt) {
+                        const summary = this.runbookToSummary(
+                            stripSessionDirPrefix(row.sessionDirName),
+                            runbook,
+                            row.createdAt,
                         );
-                        const matchesSessionPrompt = (row.prompt || '').toLowerCase().includes(q);
-
-                        if (matchesProject || matchesPrompt || matchesSessionPrompt) {
-                            results.push(this.runbookToSummary(
-                                stripSessionDirPrefix(row.sessionDirName),
-                                runbook,
-                                row.createdAt,
-                            ));
-                        }
-                    } catch { /* skip malformed runbook */ }
-                }
-            } catch (err) {
-                log.warn('[SessionManager] DB deepSearch failed, using IPC fallback:', err);
+                        summary.isActive = isActive;
+                        results.push(summary);
+                    }
+                } catch { /* skip malformed runbook */ }
             }
-        }
-
-        // ── Fallback: IPC directory scan (legacy) ────────────────────
-        const dirs = await this.discoverSessionDirs();
-        for (const dir of dirs) {
-            const dirName = path.basename(dir);
-            if (seenDirNames.has(dirName)) continue;
-
-            const runbook = await this.readRunbook(dir);
-            if (!runbook) continue;
-
-            const sessionId = path.basename(dir);
-            const matchesProject = runbook.project_id.toLowerCase().includes(q);
-            const matchesPrompt = runbook.phases.some(p =>
-                p.prompt.toLowerCase().includes(q)
-            );
-
-            if (matchesProject || matchesPrompt) {
-                results.push(this.runbookToSummary(sessionId, runbook));
-            }
+        } catch (err) {
+            log.error('[SessionManager] DB deepSearch failed:', err);
         }
 
         results.sort((a, b) => b.createdAt - a.createdAt);
@@ -353,48 +343,56 @@ export class SessionManager {
 
     /**
      * Load the full runbook for a specific session.
-     * DB-first: reads from tasks.runbook_json, IPC fallback.
+     * Reads exclusively from the ArtifactDB.
      */
     public async getSessionRunbook(sessionId: string): Promise<Runbook | null> {
-        // Try DB first via session dir name lookup
+        if (!this.db) return null;
+
+        try {
+            const rows = this.db.sessions.list();
+            const match = rows.find(r =>
+                stripSessionDirPrefix(r.sessionDirName) === sessionId ||
+                r.sessionId === sessionId
+            );
+            if (match?.runbookJson) {
+                const runbook = JSON.parse(match.runbookJson) as Runbook;
+                if (runbook && runbook.project_id && Array.isArray(runbook.phases)) {
+                    return runbook;
+                }
+            }
+        } catch (err) {
+            log.warn('[SessionManager] getSessionRunbook failed:', err);
+        }
+
+        return null;
+    }
+
+    /**
+     * Get the absolute session directory path for a given session ID or dir name.
+     * Pure path builder — does not scan the filesystem.
+     */
+    public getSessionDir(sessionIdOrDirName: string): string {
+        // If it's already a full dir name (YYYYMMDD-HHMMSS-<uuid>), use directly
+        if (/^\d{8}-\d{6}-.+$/.test(sessionIdOrDirName)) {
+            return path.join(this.ipcDir, sessionIdOrDirName);
+        }
+
+        // Try to look up the full dir name from the DB
         if (this.db) {
             try {
                 const rows = this.db.sessions.list();
                 const match = rows.find(r =>
-                    stripSessionDirPrefix(r.sessionDirName) === sessionId ||
-                    r.sessionId === sessionId
+                    r.sessionId === sessionIdOrDirName ||
+                    stripSessionDirPrefix(r.sessionDirName) === sessionIdOrDirName
                 );
-                if (match?.runbookJson) {
-                    const runbook = JSON.parse(match.runbookJson) as Runbook;
-                    if (runbook && runbook.project_id && Array.isArray(runbook.phases)) {
-                        return runbook;
-                    }
+                if (match) {
+                    return path.join(this.ipcDir, match.sessionDirName);
                 }
-            } catch { /* fall through to IPC */ }
+            } catch { /* fall through */ }
         }
 
-        const dir = this.getSessionDir(sessionId);
-        return this.readRunbook(dir);
-    }
-
-    /**
-     * Get the absolute session directory path for a given session ID.
-     * Scans the ipcDir for a directory ending in the UUID (handles prefixed names).
-     */
-    public getSessionDir(sessionId: string): string {
-        // Fast path: try prefixed lookup by scanning
-        try {
-            const nodeFs = require('node:fs') as typeof import('node:fs'); // eslint-disable-line @typescript-eslint/no-require-imports
-            const entries = nodeFs.readdirSync(this.ipcDir, { withFileTypes: true });
-            for (const e of entries) {
-                if (e.isDirectory() && e.name.endsWith(sessionId)) {
-                    return path.join(this.ipcDir, e.name);
-                }
-            }
-        } catch {
-            // Fall through to default
-        }
-        return path.join(this.ipcDir, sessionId);
+        // Last resort: use the raw ID as directory name
+        return path.join(this.ipcDir, sessionIdOrDirName);
     }
 
     /**
@@ -426,55 +424,6 @@ export class SessionManager {
     //  Internals
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** Discover session directories, excluding the current active one. */
-    private async discoverSessionDirs(): Promise<string[]> {
-        // Bug 2: Match new YYYYMMDD-HHMMSS-<uuid> format only
-        try {
-            const entries = await fs.readdir(this.ipcDir, { withFileTypes: true });
-            return entries
-                .filter(e => {
-                    if (!e.isDirectory()) return false;
-                    // Exclude current session (check if dir name ends with current ID)
-                    if (e.name === this.currentSessionId || e.name.endsWith(this.currentSessionId)) return false;
-                    return SESSION_DIR_REGEX.test(e.name);
-                })
-                .map(e => path.join(this.ipcDir, e.name));
-        } catch {
-            // ipc directory may not exist yet
-            return [];
-        }
-    }
-
-    /** Read and parse a runbook from a session directory. */
-    private async readRunbook(sessionDir: string): Promise<Runbook | null> {
-        const runbookPath = path.join(sessionDir, RUNBOOK_FILENAME);
-        try {
-            const raw = await fs.readFile(runbookPath, 'utf-8');
-            const parsed = JSON.parse(raw);
-
-            // #45: Validate JSON shape instead of blind `as Runbook` cast
-            if (!parsed || typeof parsed !== 'object') return null;
-            if (typeof parsed.project_id !== 'string') return null;
-            if (typeof parsed.status !== 'string') return null;
-            if (!Array.isArray(parsed.phases)) return null;
-
-            return parsed as Runbook;
-        } catch {
-            return null;
-        }
-    }
-
-    /** Read a session directory and extract a summary. */
-    private async readSessionSummary(sessionDir: string): Promise<SessionSummary | null> {
-        const runbook = await this.readRunbook(sessionDir);
-        if (!runbook) return null;
-
-        const dirName = path.basename(sessionDir);
-        // Extract the UUID portion from the directory name
-        const sessionId = stripSessionDirPrefix(dirName);
-        return this.runbookToSummary(sessionId, runbook);
-    }
-
     /**
      * Convert a runbook + session ID into a SessionSummary.
      * If `overrideCreatedAt` is provided, it is used instead of extracting from the UUID.
@@ -491,6 +440,7 @@ export class SessionManager {
             firstPrompt: firstPrompt.length > MAX_PROMPT_LENGTH
                 ? firstPrompt.slice(0, MAX_PROMPT_LENGTH) + '…'
                 : firstPrompt,
+            isActive: false,
         };
     }
 }

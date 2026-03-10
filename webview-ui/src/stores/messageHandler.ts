@@ -73,6 +73,10 @@ function handleMessage(msg: HostToWebviewMessage): void {
             // as they would produce malformed coogent:// URIs in PhaseDetails.svelte.
             if (isValidMasterTaskId(masterTaskId)) {
                 appState.masterTaskId = masterTaskId;
+            } else {
+                // Clear stale masterTaskId on reset so PhaseDetails.svelte doesn't
+                // fire MCP_FETCH_RESOURCE requests for a purged task.
+                appState.masterTaskId = undefined;
             }
             // Merge phases: preserve runtime fields (mcpPhaseId) that the
             // Extension Host doesn't include in the runbook snapshot.

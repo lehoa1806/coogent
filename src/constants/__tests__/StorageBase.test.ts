@@ -1,77 +1,87 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// StorageBase.test.ts — Unit tests for the StorageBase abstraction
+// StorageBase.test.ts — Unit tests for the single-root StorageBase abstraction
 // ─────────────────────────────────────────────────────────────────────────────
-// P1.2: Validates that all derived paths honour the storageUri / workspace
-// fallback logic and produce normalised, cross-platform paths.
+// Validates that ALL data (DB, backups, IPC, logs, sessions) routes to
+// <workspaceRoot>/.coogent/ regardless of whether storageUri is provided.
 
 import * as path from 'node:path';
 import { StorageBase, createStorageBase } from '../StorageBase.js';
 
 const WORKSPACE = '/home/user/project';
 const STORAGE_URI = '/tmp/vscode-storage/coogent';
+const COOGENT_BASE = path.join(WORKSPACE, '.coogent');
 
-// ─── storageUri provided ─────────────────────────────────────────────────────
+// ─── storageUri provided (ignored — everything goes to .coogent/) ────────────
 
 describe('StorageBase — storageUri provided', () => {
     const sb = new StorageBase(STORAGE_URI, WORKSPACE);
 
-    it('getBase() returns storageUri as-is', () => {
-        expect(sb.getBase()).toBe(STORAGE_URI);
+    it('getDurableBase() returns .coogent/ (storageUri is ignored)', () => {
+        expect(sb.getDurableBase()).toBe(COOGENT_BASE);
     });
 
-    it('getDBPath() derives from storageUri', () => {
-        expect(sb.getDBPath()).toBe(path.join(STORAGE_URI, 'artifacts.db'));
+    it('getWorkspaceBase() returns <workspaceRoot>/.coogent', () => {
+        expect(sb.getWorkspaceBase()).toBe(COOGENT_BASE);
     });
 
-    it('getLogsDir() derives from storageUri', () => {
-        expect(sb.getLogsDir()).toBe(path.join(STORAGE_URI, 'logs'));
+    // ── All paths derive from .coogent/ ──────────────────────────────────
+
+    it('getDBPath() derives from .coogent/', () => {
+        expect(sb.getDBPath()).toBe(path.join(COOGENT_BASE, 'artifacts.db'));
     });
 
-    it('getSessionDir() derives from storageUri', () => {
+    it('getBackupDir() derives from .coogent/', () => {
+        expect(sb.getBackupDir()).toBe(path.join(COOGENT_BASE, 'backups'));
+    });
+
+    it('getLogsDir() derives from .coogent/', () => {
+        expect(sb.getLogsDir()).toBe(path.join(COOGENT_BASE, 'logs'));
+    });
+
+    it('getSessionDir() derives from .coogent/', () => {
         expect(sb.getSessionDir('abc-123')).toBe(
-            path.join(STORAGE_URI, 'sessions', 'abc-123'),
+            path.join(COOGENT_BASE, 'sessions', 'abc-123'),
         );
     });
 
-    it('getBackupDir() derives from storageUri', () => {
-        expect(sb.getBackupDir()).toBe(path.join(STORAGE_URI, 'backups'));
-    });
-
-    it('getIPCDir() derives from storageUri', () => {
-        expect(sb.getIPCDir()).toBe(path.join(STORAGE_URI, 'ipc'));
+    it('getIPCDir() derives from .coogent/', () => {
+        expect(sb.getIPCDir()).toBe(path.join(COOGENT_BASE, 'ipc'));
     });
 });
 
-// ─── storageUri undefined (workspace fallback) ───────────────────────────────
+// ─── storageUri undefined (same behaviour) ───────────────────────────────────
 
 describe('StorageBase — storageUri undefined', () => {
     const sb = new StorageBase(undefined, WORKSPACE);
-    const expectedBase = path.join(WORKSPACE, '.coogent');
 
-    it('getBase() falls back to <workspaceRoot>/.coogent', () => {
-        expect(sb.getBase()).toBe(expectedBase);
+    it('getDurableBase() returns <workspaceRoot>/.coogent', () => {
+        expect(sb.getDurableBase()).toBe(COOGENT_BASE);
     });
 
-    it('getDBPath() falls back to workspace .coogent', () => {
-        expect(sb.getDBPath()).toBe(path.join(expectedBase, 'artifacts.db'));
+    it('getWorkspaceBase() returns <workspaceRoot>/.coogent', () => {
+        expect(sb.getWorkspaceBase()).toBe(COOGENT_BASE);
     });
 
-    it('getLogsDir() falls back to workspace .coogent', () => {
-        expect(sb.getLogsDir()).toBe(path.join(expectedBase, 'logs'));
+    it('getDBPath() derives from .coogent/', () => {
+        expect(sb.getDBPath()).toBe(path.join(COOGENT_BASE, 'artifacts.db'));
     });
 
-    it('getSessionDir() falls back to workspace .coogent', () => {
+    it('getBackupDir() derives from .coogent/', () => {
+        expect(sb.getBackupDir()).toBe(path.join(COOGENT_BASE, 'backups'));
+    });
+
+    it('getLogsDir() stays under .coogent/', () => {
+        expect(sb.getLogsDir()).toBe(path.join(COOGENT_BASE, 'logs'));
+    });
+
+    it('getSessionDir() stays under .coogent/', () => {
         expect(sb.getSessionDir('sess-001')).toBe(
-            path.join(expectedBase, 'sessions', 'sess-001'),
+            path.join(COOGENT_BASE, 'sessions', 'sess-001'),
         );
     });
 
-    it('getBackupDir() falls back to workspace .coogent', () => {
-        expect(sb.getBackupDir()).toBe(path.join(expectedBase, 'backups'));
-    });
-
-    it('getIPCDir() falls back to workspace .coogent', () => {
-        expect(sb.getIPCDir()).toBe(path.join(expectedBase, 'ipc'));
+    it('getIPCDir() stays under .coogent/', () => {
+        expect(sb.getIPCDir()).toBe(path.join(COOGENT_BASE, 'ipc'));
     });
 });
 
@@ -80,15 +90,15 @@ describe('StorageBase — storageUri undefined', () => {
 describe('StorageBase — path normalisation', () => {
     it('produces no double separators when storageUri has trailing slash', () => {
         const sb = new StorageBase('/storage/', WORKSPACE);
-        // path.join normalises trailing separators
-        expect(sb.getDBPath()).toBe(path.join('/storage', 'artifacts.db'));
+        // storageUri is ignored — DB comes from .coogent/
+        expect(sb.getDBPath()).toBe(path.join(COOGENT_BASE, 'artifacts.db'));
         expect(sb.getDBPath()).not.toMatch(/\/\//);
     });
 
     it('produces no double separators when workspaceRoot has trailing slash', () => {
         const sb = new StorageBase(undefined, '/workspace/');
-        expect(sb.getBase()).toBe(path.join('/workspace', '.coogent'));
-        expect(sb.getBase()).not.toMatch(/\/\//);
+        expect(sb.getDurableBase()).toBe(path.join('/workspace', '.coogent'));
+        expect(sb.getDurableBase()).not.toMatch(/\/\//);
     });
 });
 
@@ -99,21 +109,20 @@ describe('StorageBase — getSessionDir formats', () => {
 
     it('handles UUID-style session IDs', () => {
         const id = '7f888e30-9ddf-4e5e-9a3d-ea683bdc38b9';
-        expect(sb.getSessionDir(id)).toBe(path.join(STORAGE_URI, 'sessions', id));
+        expect(sb.getSessionDir(id)).toBe(path.join(COOGENT_BASE, 'sessions', id));
     });
 
     it('handles timestamp-prefixed session IDs', () => {
         const id = '20260309-105927-7f888e30';
-        expect(sb.getSessionDir(id)).toBe(path.join(STORAGE_URI, 'sessions', id));
+        expect(sb.getSessionDir(id)).toBe(path.join(COOGENT_BASE, 'sessions', id));
     });
 
     it('handles simple numeric session IDs', () => {
-        expect(sb.getSessionDir('42')).toBe(path.join(STORAGE_URI, 'sessions', '42'));
+        expect(sb.getSessionDir('42')).toBe(path.join(COOGENT_BASE, 'sessions', '42'));
     });
 
     it('handles empty string session ID (edge case)', () => {
-        // path.join strips trailing sep; result is just sessions dir
-        expect(sb.getSessionDir('')).toBe(path.join(STORAGE_URI, 'sessions'));
+        expect(sb.getSessionDir('')).toBe(path.join(COOGENT_BASE, 'sessions'));
     });
 });
 
@@ -123,12 +132,13 @@ describe('createStorageBase factory', () => {
     it('returns a StorageBase instance with storageUri', () => {
         const sb = createStorageBase(STORAGE_URI, WORKSPACE);
         expect(sb).toBeInstanceOf(StorageBase);
-        expect(sb.getBase()).toBe(STORAGE_URI);
+        // storageUri is ignored — durable base is always .coogent/
+        expect(sb.getDurableBase()).toBe(COOGENT_BASE);
     });
 
     it('returns a StorageBase instance without storageUri', () => {
         const sb = createStorageBase(undefined, WORKSPACE);
         expect(sb).toBeInstanceOf(StorageBase);
-        expect(sb.getBase()).toBe(path.join(WORKSPACE, '.coogent'));
+        expect(sb.getDurableBase()).toBe(COOGENT_BASE);
     });
 });

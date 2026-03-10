@@ -31,7 +31,7 @@
 |---|---|
 | **[ARCHITECTURE.md](ARCHITECTURE.md)** | System architecture: FSM, DAG scheduling, MCP server, context pipeline, evaluators, persistence, decomposition patterns, plugin system, error codes, and tech stack |
 | **[USER_GUIDE.md](USER_GUIDE.md)** | Installation, all 18 configuration settings, usage workflows, multi-root workspace support |
-| **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)** | Local development, full project structure, debugging, 75-file test suite reference, build commands, code conventions, and contribution guidelines |
+| **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)** | Local development, full project structure, debugging, 79-file test suite reference, build commands, code conventions, and contribution guidelines |
 | **[API_REFERENCE.md](API_REFERENCE.md)** | MCP URIs, MCP tools, IPC message contracts, data model schemas, and branded types |
 | **[OPERATIONS.md](OPERATIONS.md)** | Packaging, deployment, migration runbook, troubleshooting guide, backup/recovery, and log locations |
 

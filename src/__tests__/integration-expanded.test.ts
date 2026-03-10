@@ -765,18 +765,18 @@ function buildMockEngine() {
 }
 
 describe('Session History Integration', () => {
-    let storageBase: string;
+    let coogentDir: string;
 
     beforeEach(async () => {
-        storageBase = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-session-int-'));
-        const ipcDir = path.join(storageBase, IPC_DIR);
+        coogentDir = await fs.mkdtemp(path.join(os.tmpdir(), 'coogent-session-int-'));
+        const ipcDir = path.join(coogentDir, IPC_DIR);
         await fs.mkdir(ipcDir, { recursive: true });
     });
 
     afterEach(async () => {
         await new Promise(r => setTimeout(r, 50));
         try {
-            await fs.rm(storageBase, { recursive: true, force: true });
+            await fs.rm(coogentDir, { recursive: true, force: true });
         } catch {
             // Best-effort cleanup
         }
@@ -788,7 +788,7 @@ describe('Session History Integration', () => {
 
     it('loads a valid session end-to-end via SessionRestoreService', async () => {
         const sessionDirName = 'test-valid-session';
-        const sessionDir = path.join(storageBase, IPC_DIR, sessionDirName);
+        const sessionDir = path.join(coogentDir, IPC_DIR, sessionDirName);
         await fs.mkdir(sessionDir, { recursive: true });
 
         // Create runbook file on disk
@@ -811,7 +811,7 @@ describe('Session History Integration', () => {
         const restoreService = new SessionRestoreService(
             mockEngine as any,
             mockMCP as any,
-            storageBase,
+            coogentDir,
         );
 
         const result = await restoreService.restore(sessionDirName);
@@ -834,7 +834,7 @@ describe('Session History Integration', () => {
         const restoreService = new SessionRestoreService(
             mockEngine as any,
             mockMCP as any,
-            storageBase,
+            coogentDir,
         );
 
         const result = await restoreService.restore('nonexistent-session-dir');
@@ -885,8 +885,8 @@ describe('Session History Integration', () => {
         // Create two session directories
         const sessionA = 'session-a';
         const sessionB = 'session-b';
-        const sessionDirA = path.join(storageBase, IPC_DIR, sessionA);
-        const sessionDirB = path.join(storageBase, IPC_DIR, sessionB);
+        const sessionDirA = path.join(coogentDir, IPC_DIR, sessionA);
+        const sessionDirB = path.join(coogentDir, IPC_DIR, sessionB);
         await fs.mkdir(sessionDirA, { recursive: true });
         await fs.mkdir(sessionDirB, { recursive: true });
 
@@ -918,7 +918,7 @@ describe('Session History Integration', () => {
         const restoreService = new SessionRestoreService(
             mockEngine as any,
             mockMCP as any,
-            storageBase,
+            coogentDir,
         );
 
         // Load session A
@@ -975,23 +975,22 @@ describe('Session History Integration', () => {
 
     it('SessionHealthValidator returns healthy for a complete session', async () => {
         const sessionDirName = 'test-healthy-session';
-        const sessionDir = path.join(storageBase, IPC_DIR, sessionDirName);
-        await fs.mkdir(sessionDir, { recursive: true });
-        await fs.writeFile(path.join(sessionDir, RUNBOOK_FILE), '{}');
 
         const mockDB = buildMockArtifactDB();
         mockDB.sessions.upsert(sessionDirName, 'uuid-h', 'Healthy', Date.now());
+        // Add runbook_json to make it healthy
+        const sessionRow = mockDB.sessionsRows.find(s => s.sessionDirName === sessionDirName);
+        if (sessionRow) sessionRow.runbookJson = '{"phases":[]}';
 
         const validator = new SessionHealthValidator(
             mockDB as unknown as ArtifactDB,
-            storageBase,
         );
 
         const result = validator.validate(sessionDirName);
 
         expect(result.status).toBe('healthy');
         expect(result.hasMetadata).toBe(true);
-        expect(result.hasSnapshot).toBe(true);
+        expect(result.hasRunbookInDB).toBe(true);
         expect(result.errors).toHaveLength(0);
     }, 5_000);
 
@@ -1013,7 +1012,7 @@ describe('Session History Integration', () => {
         const restoreService = new SessionRestoreService(
             mockEngine as any,
             mockMCP as any,
-            storageBase,
+            coogentDir,
         );
         const deleteService = new SessionDeleteService(
             mockMCP as any,

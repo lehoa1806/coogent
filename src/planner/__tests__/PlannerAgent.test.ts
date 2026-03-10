@@ -2,12 +2,36 @@ jest.mock('vscode', () => ({
     commands: { registerCommand: jest.fn() },
     window: { showWarningMessage: jest.fn(), showErrorMessage: jest.fn(), showInformationMessage: jest.fn() },
     workspace: { workspaceFolders: [] },
-    Uri: { file: jest.fn() },
+    Uri: { file: jest.fn((p: string) => ({ fsPath: p, scheme: 'file' })) },
 }), { virtual: true });
+
+// Mock RepoFingerprinter so plan() doesn't hit the filesystem
+jest.mock('../../prompt-compiler/index.js', () => {
+    const actual = jest.requireActual('../../prompt-compiler/index.js');
+    return {
+        ...actual,
+        RepoFingerprinter: jest.fn().mockImplementation(() => ({
+            getEffectiveRoot: jest.fn(async () => '/tmp/test-workspace'),
+            fingerprint: jest.fn(async () => ({})),
+        })),
+        PlannerPromptCompiler: jest.fn().mockImplementation(() => ({
+            compile: jest.fn(async () => ({
+                text: 'mock-system-prompt',
+                manifest: {
+                    taskFamily: 'planning',
+                    templateId: 'mock',
+                    appliedPolicies: [],
+                    fingerprintHash: 'abc123',
+                },
+            })),
+        })),
+    };
+});
 
 import { PlannerAgent } from '../PlannerAgent.js';
 import type { AgentBackendProvider } from '../../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle, ADKSessionOptions } from '../../adk/ADKController.js';
+import type { WorkspaceScanner } from '../WorkspaceScanner.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Mock ADK Adapter
@@ -24,6 +48,12 @@ function createMockAdapter(): AgentBackendProvider {
         })),
         terminateSession: jest.fn(async () => { }),
     };
+}
+
+function createMockScanner(): WorkspaceScanner {
+    return {
+        scan: jest.fn(async () => ['src/index.ts', 'package.json']),
+    } as unknown as WorkspaceScanner;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -57,7 +87,7 @@ describe('PlannerAgent', () => {
             workspaceRoot: '/tmp/test-workspace',
             maxTreeDepth: 1,
             maxTreeChars: 100,
-        });
+        }, { scanner: createMockScanner() });
     });
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -66,6 +96,17 @@ describe('PlannerAgent', () => {
 
     it('should return null from getLastManifest() before any compilation', () => {
         expect(agent.getLastManifest()).toBeNull();
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  newConversation isolation — planner must always start fresh
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('should always start a new conversation when planning', async () => {
+        await agent.plan('Build a todo app');
+        expect(adapter.createSession).toHaveBeenCalledWith(
+            expect.objectContaining({ newConversation: true }),
+        );
     });
 
     // ═══════════════════════════════════════════════════════════════════════

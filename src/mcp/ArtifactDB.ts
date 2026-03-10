@@ -183,7 +183,7 @@ CREATE INDEX IF NOT EXISTS idx_ctx_manifest_phase ON context_manifests(task_id, 
 `;
 
 /** Current schema version — bump this when adding new migrations. */
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 8;
 
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -396,6 +396,14 @@ export class ArtifactDB {
                 db.run('ALTER TABLE plan_revisions ADD COLUMN compilation_manifest TEXT');
             } catch { /* Column already exists */ }
 
+            // v6: Backfill tasks columns that may be missing in older DBs
+            try { db.run('ALTER TABLE tasks ADD COLUMN created_at INTEGER NOT NULL DEFAULT 0'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE tasks ADD COLUMN runbook_json TEXT'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE tasks ADD COLUMN consolidation_report_json TEXT'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE tasks ADD COLUMN status TEXT NOT NULL DEFAULT \'running\''); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE tasks ADD COLUMN updated_at INTEGER'); } catch { /* already exists */ }
+            try { db.run('ALTER TABLE tasks ADD COLUMN completed_at INTEGER'); } catch { /* already exists */ }
+
             // Plan requirement detection: add plan_required flag to phases
             try {
                 db.run('ALTER TABLE phases ADD COLUMN plan_required INTEGER');
@@ -411,10 +419,13 @@ export class ArtifactDB {
             try { db.run('ALTER TABLE handoffs ADD COLUMN workspace_folder TEXT'); } catch { /* already exists */ }
             try { db.run('ALTER TABLE handoffs ADD COLUMN symbols_touched TEXT'); } catch { /* already exists */ }
 
+            // v8: Backfill worker_outputs.stderr for older DBs
+            try { db.run('ALTER TABLE worker_outputs ADD COLUMN stderr TEXT NOT NULL DEFAULT \'\''); } catch { /* already exists */ }
+
             // Record the new schema version
             db.run(
                 'INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)',
-                [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: richer handoff columns, context_manifests table`]
+                [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: backfill worker_outputs.stderr, tasks columns, richer handoff columns, context_manifests table`]
             );
             log.info(`[ArtifactDB] Schema migrated to v${SCHEMA_VERSION}.`);
         }

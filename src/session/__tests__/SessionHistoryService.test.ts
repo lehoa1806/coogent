@@ -33,6 +33,7 @@ const MOCK_SESSIONS: SessionSummary[] = [
         completedPhases: 3,
         createdAt: Date.now() - 1000,
         firstPrompt: 'Build feature X',
+        isActive: false,
     },
     {
         sessionId: 'def-456',
@@ -42,6 +43,7 @@ const MOCK_SESSIONS: SessionSummary[] = [
         completedPhases: 2,
         createdAt: Date.now() - 2000,
         firstPrompt: 'Fix bug Y',
+        isActive: false,
     },
 ];
 
@@ -188,6 +190,29 @@ describe('SessionHistoryService', () => {
         expect(result.errors).toContain('Session is invalid');
         expect(restoreService.restore).toHaveBeenCalledWith(SESSION_DIR_NAME);
         // setCurrentSessionId should NOT be called on failure
+        expect(sessionManager.setCurrentSessionId).not.toHaveBeenCalled();
+    });
+
+    // ── 4b. loadSession skips restore for the active session ─────────────
+
+    it('returns early without calling restore when target is the active session', async () => {
+        const sessionManager = createMockSessionManager();
+        // getCurrentSessionDirName already returns '20260309-105927-current-uuid'
+        const activeDir = '20260309-105927-current-uuid';
+        const restoreService = createMockRestoreService(makeRestoreResult(activeDir, true));
+        const deleteService = createMockDeleteService(makeDeleteResult(activeDir, true));
+
+        const service = new SessionHistoryService(
+            sessionManager, restoreService, deleteService,
+        );
+
+        const result = await service.loadSession(activeDir);
+
+        expect(result.success).toBe(true);
+        expect(result.sessionDirName).toBe(activeDir);
+        // restore should NOT have been called — the active session is already loaded
+        expect(restoreService.restore).not.toHaveBeenCalled();
+        // setCurrentSessionId should NOT be called either
         expect(sessionManager.setCurrentSessionId).not.toHaveBeenCalled();
     });
 

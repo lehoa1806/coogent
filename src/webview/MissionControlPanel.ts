@@ -27,7 +27,7 @@ const MCP_FETCH_TIMEOUT_MS = 15_000;
 type PreFlightGitCheckFn = () => Promise<{ blocked: true; message: string } | { blocked: false }>;
 
 /** Callback invoked when CMD_RESET creates a new session. */
-type OnResetFn = (newSessionDir: string, newSessionDirName: string) => void;
+type OnResetFn = (newSessionDir: string, newSessionDirName: string, newStateManager?: StateManager) => void;
 
 /**
  * Manages the Mission Control Webview panel.
@@ -74,7 +74,7 @@ export class MissionControlPanel {
     mcpServer?: CoogentMCPServer,
     mcpClientBridge?: MCPClientBridge,
     agentRegistry?: AgentRegistry,
-    storageBase?: string
+    coogentDir?: string
   ): void {
     const column = vscode.window.activeTextEditor?.viewColumn;
 
@@ -105,7 +105,7 @@ export class MissionControlPanel {
       mcpServer,
       mcpClientBridge,
       agentRegistry,
-      storageBase
+      coogentDir
     );
   }
 
@@ -124,7 +124,7 @@ export class MissionControlPanel {
     private readonly mcpServer?: CoogentMCPServer,
     private readonly mcpClientBridge?: MCPClientBridge,
     private readonly agentRegistry?: AgentRegistry,
-    private readonly storageBase?: string
+    private readonly coogentDir?: string
   ) {
     this.panel = panel;
     this.panel.webview.html = this.getHtmlForWebview();
@@ -341,24 +341,41 @@ export class MissionControlPanel {
         // Create a fresh session so loadRunbook() won't reload the old data
         const newSessionId = randomUUID();
         const newSessionDirName = formatSessionDirName(newSessionId);
-        if (!this.storageBase) {
-          // storageBase unavailable — fall back to vanilla reset without session dir
+        if (!this.coogentDir) {
+          // coogentDir unavailable — fall back to vanilla reset without session dir
           this.engine.reset().catch(err => this.handleError(err));
           break;
         }
         {
-          const newSessionDir = getSessionDir(this.storageBase, newSessionDirName);
+          const newSessionDir = getSessionDir(this.coogentDir, newSessionDirName);
           // ERR-04: Purge the old MCP task before switching so the in-memory store
           // doesn't grow unboundedly across session resets.
           const oldTaskId = this.engine.getSessionDirName();
+          // Belt-and-suspenders: persist outgoing session state before switching.
+          // This ensures the previous session's runbook is saved even if the
+          // PlannerWiring upsert was somehow missed.
+          if (oldTaskId && this.mcpServer) {
+            const runbook = this.engine.getRunbook();
+            if (runbook) {
+              try {
+                this.mcpServer.getArtifactDB()?.tasks.upsert(oldTaskId, {
+                  runbookJson: JSON.stringify(runbook),
+                });
+                log.info(`[MissionControl] CMD_RESET: persisted outgoing session runbook for ${oldTaskId}`);
+              } catch (err) {
+                log.warn('[MissionControl] CMD_RESET: failed to persist outgoing session:', err);
+              }
+            }
+          }
           if (oldTaskId) {
             this.mcpServer?.purgeTask(oldTaskId);
           }
           const freshStateManager = new StateManager(newSessionDir);
           this.engine.reset(freshStateManager).catch(err => this.handleError(err));
-          this.sessionManager?.setCurrentSessionId(newSessionId, newSessionDirName);
-          // Notify extension.ts to update currentSessionDir and plannerAgent
-          this.onReset?.(newSessionDir, newSessionDirName);
+          // Delegate all session-state updates to onReset → svc.switchSession().
+          // Pass freshStateManager so switchSession replaces svc.stateManager
+          // instead of re-binding the stale one.
+          this.onReset?.(newSessionDir, newSessionDirName, freshStateManager);
         }
         break;
       }
@@ -470,6 +487,20 @@ export class MissionControlPanel {
    */
   private handleMCPFetchResource(uri: string, requestId: string): void {
     log.info(`[MissionControl] MCP_FETCH_RESOURCE: uri = ${uri}, requestId = ${requestId} `);
+
+    // Guard against stale resource requests for purged tasks.
+    // After CMD_RESET, the webview may still have in-flight or queued
+    // MCP_FETCH_RESOURCE requests for the old task ID.
+    const currentTaskId = this.deriveMasterTaskId();
+    const taskIdMatch = uri.match(/coogent:\/\/tasks\/([^/]+)/);
+    if (taskIdMatch && currentTaskId && taskIdMatch[1] !== currentTaskId) {
+      log.info(`[MissionControl] MCP_FETCH_RESOURCE: rejecting stale request for ${taskIdMatch[1]} (current: ${currentTaskId})`);
+      this.sendToWebview({
+        type: 'MCP_RESOURCE_DATA',
+        payload: { requestId, data: '', error: 'Session has been reset. Resource no longer available.' },
+      });
+      return;
+    }
 
     if (!this.mcpClientBridge) {
       this.sendToWebview({
