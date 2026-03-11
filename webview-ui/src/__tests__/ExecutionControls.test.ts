@@ -59,10 +59,16 @@ describe('ExecutionControls', () => {
         expect(screen.getByTitle('View Report')).toBeInTheDocument();
     });
 
-    it('hides report button when not COMPLETED', () => {
-        patchState({ engineState: 'READY' });
+    it('hides report button when not COMPLETED and no report', () => {
+        patchState({ engineState: 'READY', consolidationReport: null });
         render(ExecutionControls);
         expect(screen.queryByTitle('View Report')).not.toBeInTheDocument();
+    });
+
+    it('shows report button when consolidationReport is set even if not COMPLETED', () => {
+        patchState({ engineState: 'READY', consolidationReport: '# Consolidation Report\n\nTest content' });
+        render(ExecutionControls);
+        expect(screen.getByTitle('View Report')).toBeInTheDocument();
     });
 
     it('shows plan button when phases exist', () => {

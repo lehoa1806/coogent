@@ -29,6 +29,7 @@
     let isIdle = $derived(appState.engineState === "IDLE");
     let isCompleted = $derived(appState.engineState === "COMPLETED");
     let hasPhases = $derived(appState.phases.length > 0);
+    let hasReport = $derived(appState.consolidationReport != null);
 
     // Timer management — using plain var avoids $effect loop caused by $state timerInterval
     $effect(() => {
@@ -68,6 +69,11 @@
         postMessage({ type: "CMD_ABORT" });
     }
     function handleViewReport() {
+        // Open the modal immediately (data is already in appState from a
+        // previous fetch).  Also ask the host for a fresh copy so MCP-backed
+        // data stays up-to-date — when the host replies, messageHandler sets
+        // consolidationReport + reportModalOpen again (harmless if already open).
+        appState.reportModalOpen = true;
         postMessage({ type: "CMD_REQUEST_REPORT" });
     }
     function handleViewPlan() {
@@ -93,7 +99,7 @@
 
     <span class="controls-spacer"></span>
 
-    {#if isCompleted}
+    {#if isCompleted || hasReport}
         <button class="btn-icon" onclick={handleViewReport} title="View Report"
             >📊</button
         >

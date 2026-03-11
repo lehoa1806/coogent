@@ -35,10 +35,13 @@
 
     /**
      * Determine show/hide from either legacy push data or MCP store data.
+     * Visibility is driven by `appState.reportModalOpen` (shared flag) AND
+     * the presence of data.  Data is never cleared on close so the button
+     * in ExecutionControls stays visible for re-opening.
      */
     let showReport = $derived(legacyReport != null);
     let showPlan = $derived(legacyPlan != null && !showReport);
-    let visible = $derived(showReport || showPlan);
+    let visible = $derived(appState.reportModalOpen && (showReport || showPlan));
     let title = $derived(
         showReport ? "📊 Consolidation Report" : "📋 Implementation Plan",
     );
@@ -97,12 +100,9 @@
         reportData = { loading: false, data: null, error: null };
         planMcpData = { loading: false, data: null, error: null };
 
-        // Clear legacy appState
-        if (showReport) {
-            patchState({ consolidationReport: null });
-        } else {
-            patchState({ implementationPlan: null });
-        }
+        // Just hide the modal — do NOT clear appState data so the
+        // button in ExecutionControls remains visible for re-opening.
+        patchState({ reportModalOpen: false });
     }
 
     function handleOverlayClick(e: MouseEvent) {

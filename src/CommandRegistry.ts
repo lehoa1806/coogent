@@ -176,6 +176,19 @@ export function registerAllCommands(
                     }
                 }
 
+                // Hydrate consolidation report if available
+                try {
+                    const report = await svc.sessionHistoryService.getConsolidationReport(sessionDirName);
+                    if (report?.markdown) {
+                        MissionControlPanel.broadcast({
+                            type: 'CONSOLIDATION_REPORT',
+                            payload: { report: report.markdown },
+                        });
+                    }
+                } catch (err) {
+                    log.warn('[Coogent] Failed to load consolidation report for session:', err);
+                }
+
                 // Broadcast last prompt if available
                 if (svc.mcpServer) {
                     const taskState = svc.mcpServer.getTaskState(sessionDirName);

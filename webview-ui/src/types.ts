@@ -139,6 +139,8 @@ export interface AppState {
     error: { code: ErrorCode; message: string } | null;
     terminalOutput: string;
     consolidationReport: string | null;
+    /** Whether the report/plan modal is open. */
+    reportModalOpen: boolean;
     implementationPlan: string | null;
     conversationMode: ConversationMode;
     planStatus: { status: string; message?: string } | null;
@@ -174,6 +176,7 @@ export const DEFAULT_APP_STATE: AppState = {
     error: null,
     terminalOutput: '',
     consolidationReport: null,
+    reportModalOpen: false,
     implementationPlan: null,
     conversationMode: 'isolated',
     planStatus: null,
