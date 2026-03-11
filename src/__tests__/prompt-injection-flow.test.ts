@@ -175,7 +175,7 @@ describe('Prompt Injection Flow — Integration', () => {
     // ─────────────────────────────────────────────────────────────────────
 
     describe('planner → fallback mode', () => {
-        it('prompt includes response.md write instructions', async () => {
+        it('planner prompt is identical to primary — adapter handles response.md', async () => {
             const adapter = createAdapter('fallback');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
@@ -191,8 +191,12 @@ describe('Prompt Injection Flow — Integration', () => {
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
             expect(prompt).toContain('integration-test-system-prompt');
-            expect(prompt).toContain('## Output');
-            expect(prompt).toContain('Write your COMPLETE response to the response.md');
+
+            // The planner no longer appends response.md instructions —
+            // the adapter layer handles that during createFileIpcSession.
+            // With a mock adapter the raw prompt is just the system prompt.
+            expect(prompt).not.toContain('## Output');
+            expect(prompt).not.toContain('Write your COMPLETE response to the response.md');
         });
     });
 
@@ -250,8 +254,8 @@ describe('Prompt Injection Flow — Integration', () => {
     // ─────────────────────────────────────────────────────────────────────
 
     describe('response.md contract', () => {
-        it('response.md write instructions appear only in fallback planner prompt', async () => {
-            // Test both modes in sequence to confirm the contract
+        it('planner prompt never contains response.md instructions — adapter handles it', async () => {
+            // Test both modes in sequence to confirm the planner is clean
             const primaryAdapter = createAdapter('primary');
             const primaryAgent = new PlannerAgent(primaryAdapter, {
                 workspaceRoot: '/tmp/test-workspace',
@@ -271,11 +275,10 @@ describe('Prompt Injection Flow — Integration', () => {
             const primaryPrompt = ((primaryAdapter.createSession as jest.Mock).mock.calls[0][0] as ADKSessionOptions).initialPrompt;
             const fallbackPrompt = ((fallbackAdapter.createSession as jest.Mock).mock.calls[0][0] as ADKSessionOptions).initialPrompt;
 
-            // Primary: no response.md file write instructions
+            // Neither mode includes response.md instructions in the planner
+            // prompt — the adapter layer appends them during session creation.
             expect(primaryPrompt).not.toContain('Write your COMPLETE response to the response.md');
-
-            // Fallback: response.md file write instructions present
-            expect(fallbackPrompt).toContain('Write your COMPLETE response to the response.md');
+            expect(fallbackPrompt).not.toContain('Write your COMPLETE response to the response.md');
         });
     });
 
@@ -322,8 +325,8 @@ describe('Prompt Injection Flow — Integration', () => {
     //  Regression: Fallback mode writes request.md (meta-prompt)
     // ─────────────────────────────────────────────────────────────────────
 
-    describe('fallback mode → request.md meta-prompt', () => {
-        it('prompt includes instructions to read request.md and write response.md', async () => {
+    describe('fallback mode → no request.md, adapter handles response.md', () => {
+        it('planner prompt in fallback is clean — adapter appends response.md instructions', async () => {
             const adapter = createAdapter('fallback');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
@@ -339,9 +342,11 @@ describe('Prompt Injection Flow — Integration', () => {
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
 
-            // Fallback mode: must include filesystem instructions for response.md
-            expect(prompt).toContain('## Output');
-            expect(prompt).toContain('Write your COMPLETE response to the response.md');
+            // Planner prompt does NOT contain filesystem instructions;
+            // the adapter layer appends them during createFileIpcSession.
+            expect(prompt).toContain('integration-test-system-prompt');
+            expect(prompt).not.toContain('request.md');
+            expect(prompt).not.toContain('## Output');
         });
     });
 
@@ -416,9 +421,11 @@ describe('Prompt Injection Flow — Integration', () => {
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
 
-            // Fallback mode: should include response.md filesystem instructions
-            expect(prompt).toContain('## Output');
-            expect(prompt).toContain('Write your COMPLETE response to the response.md');
+            // Even in fallback mode, the planner prompt is clean —
+            // the adapter layer appends response.md instructions.
+            expect(prompt).toContain('integration-test-system-prompt');
+            expect(prompt).not.toContain('## Output');
+            expect(prompt).not.toContain('Write your COMPLETE response to the response.md');
         });
 
         it('worker launcher defaults to fallback when ADK lacks getExecutionMode', async () => {
@@ -468,7 +475,7 @@ describe('Prompt Injection Flow — Integration', () => {
             expect(prompt).not.toContain('## Output');
         });
 
-        it('fallback mode: prompt always instructs write to response.md', async () => {
+        it('fallback mode: planner prompt does not contain response.md (adapter handles it)', async () => {
             const adapter = createAdapter('fallback');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
@@ -481,8 +488,9 @@ describe('Prompt Injection Flow — Integration', () => {
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
 
-            expect(prompt).toContain('## Output');
-            expect(prompt).toContain('Write your COMPLETE response to the response.md');
+            // Adapter appends response.md instructions — planner stays clean
+            expect(prompt).not.toContain('## Output');
+            expect(prompt).not.toContain('Write your COMPLETE response to the response.md');
         });
 
         it('worker in both modes: executionMode is always propagated to spawnWorker', async () => {

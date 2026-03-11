@@ -225,14 +225,9 @@ export class PlannerAgent extends EventEmitter {
             this.lastExecutionMode = executionMode;
             log.info(`[PlannerAgent] Execution mode resolved: ${executionMode}`);
 
-            // Step 3b: In fallback mode, the adapter writes the prompt to request.md
-            // and uses a meta-prompt to tell the agent to read it. The agent must then
-            // write its output to response.md for the FileStabilityWatcher to pick up.
-            // In primary mode, the prompt is injected directly into the conversation
-            // and the response streams back via vscode.lm — no filesystem involved.
-            if (executionMode === 'fallback') {
-                systemPrompt += '\n\n## Output\nWrite your COMPLETE response to the response.md file in the IPC directory.\nOutput ONLY the JSON runbook — no explanation, no markdown code fences wrapping the file write.';
-            }
+            // Note: In both primary and fallback modes, the output/response.md
+            // instructions are now appended by the adapter layer — no need to
+            // modify the prompt here.
 
             // Step 4: Spawn the planner worker
             this.emit('plan:status', 'generating', 'AI agent is creating your plan...');
