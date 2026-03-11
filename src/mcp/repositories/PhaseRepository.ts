@@ -12,20 +12,21 @@ export class PhaseRepository {
     constructor(
         private readonly db: Database,
         private readonly scheduleFlush: () => void,
+        private readonly workspaceId: string = '',
     ) { }
 
     /** Insert or update a phase-level implementation plan. */
     upsertPlan(masterTaskId: string, phaseId: string, plan: string): void {
         this.db.run(
-            'INSERT OR IGNORE INTO tasks (master_task_id) VALUES (?)',
-            [masterTaskId]
+            'INSERT OR IGNORE INTO tasks (master_task_id, workspace_id) VALUES (?, ?)',
+            [masterTaskId, this.workspaceId]
         );
         this.db.run(
-            `INSERT INTO phases (master_task_id, phase_id, implementation_plan)
-             VALUES (?, ?, ?)
+            `INSERT INTO phases (master_task_id, phase_id, workspace_id, implementation_plan)
+             VALUES (?, ?, ?, ?)
              ON CONFLICT(master_task_id, phase_id)
              DO UPDATE SET implementation_plan = excluded.implementation_plan`,
-            [masterTaskId, phaseId, plan]
+            [masterTaskId, phaseId, this.workspaceId, plan]
         );
         this.scheduleFlush();
     }
@@ -45,15 +46,15 @@ export class PhaseRepository {
     /** Set whether an implementation plan is required for a phase. */
     upsertPlanRequired(masterTaskId: string, phaseId: string, required: boolean): void {
         this.db.run(
-            'INSERT OR IGNORE INTO tasks (master_task_id) VALUES (?)',
-            [masterTaskId]
+            'INSERT OR IGNORE INTO tasks (master_task_id, workspace_id) VALUES (?, ?)',
+            [masterTaskId, this.workspaceId]
         );
         this.db.run(
-            `INSERT INTO phases (master_task_id, phase_id, plan_required)
-             VALUES (?, ?, ?)
+            `INSERT INTO phases (master_task_id, phase_id, workspace_id, plan_required)
+             VALUES (?, ?, ?, ?)
              ON CONFLICT(master_task_id, phase_id)
              DO UPDATE SET plan_required = excluded.plan_required`,
-            [masterTaskId, phaseId, required ? 1 : 0]
+            [masterTaskId, phaseId, this.workspaceId, required ? 1 : 0]
         );
         this.scheduleFlush();
     }
@@ -76,15 +77,15 @@ export class PhaseRepository {
     /** Persist accumulated worker output for a phase. */
     upsertOutput(masterTaskId: string, phaseId: string, output: string, stderr: string = ''): void {
         this.db.run(
-            'INSERT OR IGNORE INTO tasks (master_task_id) VALUES (?)',
-            [masterTaskId]
+            'INSERT OR IGNORE INTO tasks (master_task_id, workspace_id) VALUES (?, ?)',
+            [masterTaskId, this.workspaceId]
         );
         this.db.run(
-            `INSERT INTO worker_outputs (master_task_id, phase_id, output, stderr)
-             VALUES (?, ?, ?, ?)
+            `INSERT INTO worker_outputs (master_task_id, phase_id, workspace_id, output, stderr)
+             VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(master_task_id, phase_id)
              DO UPDATE SET output = excluded.output, stderr = excluded.stderr`,
-            [masterTaskId, phaseId, output, stderr]
+            [masterTaskId, phaseId, this.workspaceId, output, stderr]
         );
         this.scheduleFlush();
     }
@@ -120,8 +121,8 @@ export class PhaseRepository {
         this.db.run('BEGIN');
         try {
             this.db.run(
-                'INSERT OR IGNORE INTO phase_logs (master_task_id, phase_id) VALUES (?, ?)',
-                [masterTaskId, phaseId]
+                'INSERT OR IGNORE INTO phase_logs (master_task_id, phase_id, workspace_id) VALUES (?, ?, ?)',
+                [masterTaskId, phaseId, this.workspaceId]
             );
             if (fields.prompt !== undefined) {
                 this.db.run('UPDATE phase_logs SET prompt = ? WHERE master_task_id = ? AND phase_id = ?', [fields.prompt, masterTaskId, phaseId]);

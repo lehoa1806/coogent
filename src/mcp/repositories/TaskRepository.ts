@@ -14,6 +14,7 @@ export class TaskRepository {
     constructor(
         private readonly db: Database,
         private readonly scheduleFlush: () => void,
+        private readonly workspaceId: string = '',
     ) { }
 
     /**
@@ -33,8 +34,8 @@ export class TaskRepository {
         this.db.run('BEGIN');
         try {
             this.db.run(
-                'INSERT OR IGNORE INTO tasks (master_task_id, created_at) VALUES (?, ?)',
-                [masterTaskId, Date.now()]
+                'INSERT OR IGNORE INTO tasks (master_task_id, workspace_id, created_at) VALUES (?, ?, ?)',
+                [masterTaskId, this.workspaceId, Date.now()]
             );
 
             if (fields.summary !== undefined) {
@@ -239,12 +240,18 @@ export class TaskRepository {
         this.scheduleFlush();
     }
 
-    /** List all master task IDs in the database. */
+    /** List all master task IDs in the database, scoped to the current workspace. */
     listIds(): string[] {
-        const results = this.db.exec('SELECT master_task_id FROM tasks ORDER BY master_task_id');
-        if (results.length === 0) {
-            return [];
+        const stmt = this.db.prepare(
+            'SELECT master_task_id FROM tasks WHERE workspace_id = ? ORDER BY master_task_id'
+        );
+        stmt.bind([this.workspaceId]);
+        const ids: string[] = [];
+        while (stmt.step()) {
+            const row = stmt.getAsObject() as { master_task_id: string };
+            ids.push(row.master_task_id);
         }
-        return results[0].values.map((row: unknown[]) => row[0] as string);
+        stmt.free();
+        return ids;
     }
 }

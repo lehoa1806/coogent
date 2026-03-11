@@ -40,6 +40,7 @@ export interface Statement {
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS tasks (
   master_task_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT '',
   summary TEXT,
   implementation_plan TEXT,
   consolidation_report TEXT,
@@ -54,6 +55,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS phases (
   phase_id TEXT NOT NULL,
   master_task_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT '',
   implementation_plan TEXT,
   PRIMARY KEY (master_task_id, phase_id),
   FOREIGN KEY (master_task_id) REFERENCES tasks(master_task_id) ON DELETE CASCADE
@@ -62,6 +64,7 @@ CREATE TABLE IF NOT EXISTS phases (
 CREATE TABLE IF NOT EXISTS handoffs (
   phase_id TEXT NOT NULL,
   master_task_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT '',
   decisions TEXT NOT NULL,
   modified_files TEXT NOT NULL,
   blockers TEXT NOT NULL,
@@ -74,6 +77,7 @@ CREATE TABLE IF NOT EXISTS handoffs (
 CREATE TABLE IF NOT EXISTS worker_outputs (
   master_task_id TEXT NOT NULL,
   phase_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT '',
   output TEXT NOT NULL DEFAULT '',
   stderr TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (master_task_id, phase_id),
@@ -84,6 +88,7 @@ CREATE TABLE IF NOT EXISTS evaluation_results (
   master_task_id TEXT NOT NULL,
   phase_id TEXT NOT NULL,
   attempt INTEGER NOT NULL DEFAULT 1,
+  workspace_id TEXT NOT NULL DEFAULT '',
   passed INTEGER NOT NULL,
   reason TEXT NOT NULL DEFAULT '',
   retry_prompt TEXT,
@@ -97,6 +102,7 @@ CREATE TABLE IF NOT EXISTS healing_attempts (
   master_task_id TEXT NOT NULL,
   phase_id TEXT NOT NULL,
   attempt_number INTEGER NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT '',
   exit_code INTEGER,
   stderr_tail TEXT,
   augmented_prompt TEXT,
@@ -108,6 +114,7 @@ CREATE TABLE IF NOT EXISTS healing_attempts (
 CREATE TABLE IF NOT EXISTS sessions (
   session_dir_name TEXT PRIMARY KEY,
   session_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT '',
   prompt TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (session_dir_name) REFERENCES tasks(master_task_id) ON DELETE CASCADE
@@ -116,6 +123,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS phase_logs (
   master_task_id TEXT NOT NULL,
   phase_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT '',
   prompt TEXT NOT NULL DEFAULT '',
   request_context TEXT NOT NULL DEFAULT '',
   response TEXT NOT NULL DEFAULT '',  -- Reserved for future use. Worker output is stored in worker_outputs table.
@@ -129,6 +137,7 @@ CREATE TABLE IF NOT EXISTS phase_logs (
 CREATE TABLE IF NOT EXISTS plan_revisions (
   master_task_id TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1,
+  workspace_id TEXT NOT NULL DEFAULT '',
   feedback TEXT,
   draft_json TEXT NOT NULL,
   implementation_plan_md TEXT,
@@ -140,6 +149,7 @@ CREATE TABLE IF NOT EXISTS plan_revisions (
 
 CREATE TABLE IF NOT EXISTS selection_audits (
   subtask_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT '',
   subtask_spec TEXT NOT NULL,
   candidate_agents TEXT NOT NULL,
   selected_agent TEXT NOT NULL,
@@ -165,6 +175,7 @@ CREATE INDEX IF NOT EXISTS idx_selection_audits_session ON selection_audits(sess
 
 CREATE TABLE IF NOT EXISTS context_manifests (
   manifest_id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL DEFAULT '',
   session_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
   phase_id TEXT NOT NULL,
@@ -174,10 +185,19 @@ CREATE TABLE IF NOT EXISTS context_manifests (
 );
 CREATE INDEX IF NOT EXISTS idx_ctx_manifest_phase ON context_manifests(task_id, phase_id);
 
+-- v9-10: Tenant indexes for workspace-scoped queries
+CREATE INDEX IF NOT EXISTS idx_tasks_workspace ON tasks(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_eval_workspace ON evaluation_results(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_heal_workspace ON healing_attempts(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_plan_revisions_workspace ON plan_revisions(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_selection_audits_workspace ON selection_audits(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_ctx_manifest_workspace ON context_manifests(workspace_id);
+
 `;
 
 /** Current schema version — bump this when adding new migrations. */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 10;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Schema Initialization
@@ -258,10 +278,19 @@ export function initializeSchema(db: Database): void {
         // v8: Backfill worker_outputs.stderr for older DBs
         try { db.run('ALTER TABLE worker_outputs ADD COLUMN stderr TEXT NOT NULL DEFAULT \'\''); } catch { /* already exists */ }
 
+        // v9-10: Add workspace_id column to all tenant-owned tables (backfill with empty string sentinel)
+        const tenantTables = [
+            'tasks', 'phases', 'handoffs', 'worker_outputs', 'sessions', 'phase_logs',
+            'evaluation_results', 'healing_attempts', 'plan_revisions', 'selection_audits', 'context_manifests',
+        ];
+        for (const table of tenantTables) {
+            try { db.run(`ALTER TABLE ${table} ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`); } catch { /* already exists */ }
+        }
+
         // Record the new schema version
         db.run(
             'INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)',
-            [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: backfill worker_outputs.stderr, tasks columns, richer handoff columns, context_manifests table`]
+            [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: workspace_id tenanting for all tenant-owned tables`]
         );
         log.info(`[ArtifactDB] Schema migrated to v${SCHEMA_VERSION}.`);
     }

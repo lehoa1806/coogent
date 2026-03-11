@@ -56,6 +56,7 @@ export class ArtifactDB {
 
     private db: Database;
     private readonly dbPath: string;
+    private readonly workspaceId: string;
 
     /** Path to the `.lock` file used for multi-instance protection. */
     private readonly lockFilePath: string;
@@ -89,37 +90,37 @@ export class ArtifactDB {
 
     /** Task aggregate repository. */
     get tasks(): TaskRepository {
-        return (this._tasks ??= new TaskRepository(this.db, () => this.scheduleFlush()));
+        return (this._tasks ??= new TaskRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
     }
 
     /** Phase aggregate repository (plans, outputs, logs). */
     get phases(): PhaseRepository {
-        return (this._phases ??= new PhaseRepository(this.db, () => this.scheduleFlush()));
+        return (this._phases ??= new PhaseRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
     }
 
     /** Handoff repository. */
     get handoffs(): HandoffRepository {
-        return (this._handoffs ??= new HandoffRepository(this.db, () => this.scheduleFlush()));
+        return (this._handoffs ??= new HandoffRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
     }
 
     /** Verdict repository (evaluations + healing attempts). */
     get verdicts(): VerdictRepository {
-        return (this._verdicts ??= new VerdictRepository(this.db, () => this.scheduleFlush()));
+        return (this._verdicts ??= new VerdictRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
     }
 
     /** Session repository. */
     get sessions(): SessionRepository {
-        return (this._sessions ??= new SessionRepository(this.db, () => this.scheduleFlush()));
+        return (this._sessions ??= new SessionRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
     }
 
     /** Audit repository (plan revisions + selection audits). */
     get audits(): AuditRepository {
-        return (this._audits ??= new AuditRepository(this.db, () => this.scheduleFlush()));
+        return (this._audits ??= new AuditRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
     }
 
     /** Context manifest repository. */
     get contextManifests(): ContextManifestRepository {
-        return (this._contextManifests ??= new ContextManifestRepository(this.db, () => this.scheduleFlush()));
+        return (this._contextManifests ??= new ContextManifestRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
     }
 
     /**
@@ -131,9 +132,10 @@ export class ArtifactDB {
     }
 
     // ── Private constructor — use ArtifactDB.create() ────────────────────
-    private constructor(db: Database, dbPath: string) {
+    private constructor(db: Database, dbPath: string, workspaceId: string) {
         this.db = db;
         this.dbPath = dbPath;
+        this.workspaceId = workspaceId;
         this.lockFilePath = dbPath + '.lock';
     }
 
@@ -147,8 +149,11 @@ export class ArtifactDB {
      *
      * The WASM binary is resolved relative to `__dirname` so it works after
      * esbuild bundles everything into `out/extension.js`.
+     *
+     * @param dbPath     Path to the SQLite database file.
+     * @param workspaceId  Tenant identifier for workspace-scoped queries (default: '').
      */
-    static async create(dbPath: string): Promise<ArtifactDB> {
+    static async create(dbPath: string, workspaceId: string = ''): Promise<ArtifactDB> {
         // ── H-1 P5: Acquire file lock for multi-instance protection ────────
         await ArtifactDB.acquireLock(dbPath);
 
@@ -188,7 +193,7 @@ export class ArtifactDB {
         initializeSchema(db);
 
 
-        const instance = new ArtifactDB(db, dbPath);
+        const instance = new ArtifactDB(db, dbPath, workspaceId);
 
         // Register process exit handler to clean up lock file on crash
         instance.exitHandler = () => instance.disposeLock();

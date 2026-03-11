@@ -18,6 +18,7 @@
 //   be treated as durable state. Cleaned up via TTL.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import * as os from 'node:os';
 import * as path from 'node:path';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -125,6 +126,44 @@ export function getPluginsDir(workspaceRoot: string): string {
 /** Absolute path to the workspace `workers.json` config file. */
 export function getWorkersConfigPath(workspaceRoot: string): string {
     return path.join(workspaceRoot, COOGENT_DIR, WORKERS_CONFIG_FILE);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Global Path Builders (ADR-001: Hybrid Storage Topology)
+//  Root: ~/Library/Application Support/Antigravity/coogent/  (macOS)
+//        %APPDATA%/Antigravity/coogent/                      (Windows)
+//        ~/.config/antigravity/coogent/                       (Linux)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/** Directory name under the Antigravity app-data root for Coogent global state. */
+export const GLOBAL_COOGENT_DIR = 'coogent';
+
+/** Backups subdirectory name (used for both global and workspace contexts). */
+export const BACKUPS_DIR = 'backups';
+
+/**
+ * Platform-aware global base directory for durable Coogent data.
+ *
+ * This is the single location for the ArtifactDB and its backups,
+ * shared across all workspaces on this machine.
+ */
+export function getGlobalCoogentDir(): string {
+    const appData = process.platform === 'darwin'
+        ? path.join(os.homedir(), 'Library', 'Application Support', 'Antigravity')
+        : process.platform === 'win32'
+            ? path.join(process.env['APPDATA'] ?? os.homedir(), 'Antigravity')
+            : path.join(os.homedir(), '.config', 'antigravity');
+    return path.join(appData, GLOBAL_COOGENT_DIR);
+}
+
+/** Global database path: `<globalCoogentDir>/artifacts.db`. */
+export function getGlobalDatabasePath(): string {
+    return path.join(getGlobalCoogentDir(), DATABASE_FILE);
+}
+
+/** Global backups directory: `<globalCoogentDir>/backups/`. */
+export function getGlobalBackupDir(): string {
+    return path.join(getGlobalCoogentDir(), BACKUPS_DIR);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

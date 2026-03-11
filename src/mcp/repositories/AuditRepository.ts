@@ -13,6 +13,7 @@ export class AuditRepository {
     constructor(
         private readonly db: Database,
         private readonly scheduleFlush: () => void,
+        private readonly workspaceId: string = '',
     ) { }
 
     /** Persist a plan revision with auto-incrementing version. */
@@ -23,7 +24,7 @@ export class AuditRepository {
             status?: string; rawLlmOutput?: string | undefined; compilationManifest?: string | undefined;
         }
     ): void {
-        this.db.run('INSERT OR IGNORE INTO tasks (master_task_id) VALUES (?)', [masterTaskId]);
+        this.db.run('INSERT OR IGNORE INTO tasks (master_task_id, workspace_id) VALUES (?, ?)', [masterTaskId, this.workspaceId]);
         const versionStmt = this.db.prepare(
             'SELECT COALESCE(MAX(version), 0) + 1 AS next_version FROM plan_revisions WHERE master_task_id = ?'
         );
@@ -33,9 +34,9 @@ export class AuditRepository {
         versionStmt.free();
 
         this.db.run(
-            `INSERT INTO plan_revisions (master_task_id, version, feedback, draft_json, implementation_plan_md, status, created_at, raw_llm_output, compilation_manifest)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [masterTaskId, nextVersion, fields.feedback ?? null, fields.draftJson,
+            `INSERT INTO plan_revisions (master_task_id, version, workspace_id, feedback, draft_json, implementation_plan_md, status, created_at, raw_llm_output, compilation_manifest)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [masterTaskId, nextVersion, this.workspaceId, fields.feedback ?? null, fields.draftJson,
                 fields.implementationPlanMd ?? null, fields.status ?? 'draft', Date.now(),
                 fields.rawLlmOutput ?? null, fields.compilationManifest ?? null]
         );
@@ -75,14 +76,15 @@ export class AuditRepository {
             `INSERT OR REPLACE INTO selection_audits
              (subtask_id, subtask_spec, candidate_agents, selected_agent,
               selection_rationale, compiled_prompt_id, fallback_agent,
-              worker_run_result, timestamp, session_id)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              worker_run_result, timestamp, session_id, workspace_id)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [record.subtask_id, JSON.stringify(record.subtask_spec),
             JSON.stringify(record.candidate_agents), record.selected_agent,
             JSON.stringify(record.selection_rationale), record.compiled_prompt_id,
             record.fallback_agent ?? null,
             record.worker_run_result ? JSON.stringify(record.worker_run_result) : null,
-            record.timestamp, (record as SelectionAuditRecord & { session_id?: string }).session_id ?? '']
+            record.timestamp, (record as SelectionAuditRecord & { session_id?: string }).session_id ?? '',
+            this.workspaceId]
         );
         this.scheduleFlush();
     }

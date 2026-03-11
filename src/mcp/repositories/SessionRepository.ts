@@ -12,22 +12,23 @@ export class SessionRepository {
     constructor(
         private readonly db: Database,
         private readonly scheduleFlush: () => void,
+        private readonly workspaceId: string = '',
     ) { }
 
     /** Insert or update a session record. */
     upsert(dirName: string, sessionId: string, prompt: string, createdAt: number): void {
         this.db.run(
-            'INSERT OR IGNORE INTO tasks (master_task_id, created_at) VALUES (?, ?)',
-            [dirName, createdAt]
+            'INSERT OR IGNORE INTO tasks (master_task_id, workspace_id, created_at) VALUES (?, ?, ?)',
+            [dirName, this.workspaceId, createdAt]
         );
         this.db.run(
-            `INSERT INTO sessions (session_dir_name, session_id, prompt, created_at)
-             VALUES (?, ?, ?, ?)
+            `INSERT INTO sessions (session_dir_name, session_id, workspace_id, prompt, created_at)
+             VALUES (?, ?, ?, ?, ?)
              ON CONFLICT(session_dir_name)
              DO UPDATE SET session_id = excluded.session_id,
                            prompt = excluded.prompt,
                            created_at = excluded.created_at`,
-            [dirName, sessionId, prompt, createdAt]
+            [dirName, sessionId, this.workspaceId, prompt, createdAt]
         );
         this.scheduleFlush();
     }
@@ -35,8 +36,9 @@ export class SessionRepository {
     /** Retrieve the most recently created session. */
     getLatest(): { dirName: string; sessionId: string; prompt: string; createdAt: number } | undefined {
         const stmt = this.db.prepare(
-            'SELECT session_dir_name, session_id, prompt, created_at FROM sessions ORDER BY created_at DESC LIMIT 1'
+            'SELECT session_dir_name, session_id, prompt, created_at FROM sessions WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 1'
         );
+        stmt.bind([this.workspaceId]);
         if (!stmt.step()) { stmt.free(); return undefined; }
         const row = stmt.getAsObject() as {
             session_dir_name: string; session_id: string; prompt: string; created_at: number;
@@ -69,8 +71,10 @@ export class SessionRepository {
                     t.implementation_plan
              FROM sessions s
              LEFT JOIN tasks t ON s.session_dir_name = t.master_task_id
+             WHERE s.workspace_id = ?
              ORDER BY s.created_at DESC`
         );
+        stmt.bind([this.workspaceId]);
         const results: Array<{
             sessionDirName: string; sessionId: string; prompt: string; createdAt: number;
             runbookJson: string | null; status: string | null;

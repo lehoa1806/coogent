@@ -60,6 +60,7 @@ function makeMockEngine(stateOverride: EngineState = EngineState.IDLE) {
         getActiveWorkerCount: jest.fn().mockReturnValue(0),
         incrementActiveWorkerCount: jest.fn(),
         getEvaluation: jest.fn(),
+        getSessionDirName: jest.fn().mockReturnValue('test-session-dir'),
     } as any;
 }
 
