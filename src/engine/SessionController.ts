@@ -83,11 +83,13 @@ export class SessionController {
             this.engine.setRunbook(runbook);
             this.engine.transition(EngineEvent.PARSE_SUCCESS);
 
+            const sessionId = this.engine.getSessionDirName();
             this.engine.emitUIMessage({
                 type: 'STATE_SNAPSHOT',
                 payload: {
                     runbook,
                     engineState: this.engine.getState(),
+                    ...(sessionId ? { masterTaskId: sessionId } : {}),
                 },
             });
         } catch (err: unknown) {

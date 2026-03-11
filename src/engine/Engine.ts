@@ -343,11 +343,13 @@ export class Engine extends TypedEventEmitter<EngineEvents> implements EngineInt
         this.activeWorkerCount = 0;
 
         if (this.runbook) {
+            const sessionId = this.getSessionDirName();
             this.emitUIMessage({
                 type: 'STATE_SNAPSHOT',
                 payload: {
                     runbook: this.runbook,
                     engineState: this.state,
+                    ...(sessionId ? { masterTaskId: sessionId } : {}),
                 },
             });
         }

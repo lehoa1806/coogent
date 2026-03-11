@@ -55,7 +55,7 @@
 
     {#if appState.masterTaskId}
         <span class="badge badge-session" title="Session ID: {appState.masterTaskId}">
-            🆔 {appState.masterTaskId.slice(0, 8)}
+            🆔 {appState.masterTaskId}
         </span>
     {/if}
 
@@ -334,5 +334,8 @@
         font-size: 9px;
         letter-spacing: 0.3px;
         cursor: default;
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 </style>

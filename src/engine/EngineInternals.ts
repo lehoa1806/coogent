@@ -79,6 +79,10 @@ export interface EngineInternals {
     /** Reset internal controller state (e.g., planning draft). */
     resetControllers(): void;
 
+    // ── Session Identity ──────────────────────────────────────────────────────
+    /** Get the active session directory basename (YYYYMMDD-HHMMSS-<uuid>). */
+    getSessionDirName(): string | undefined;
+
     // ── UI / Events ──────────────────────────────────────────────────────────
     /** Send a message to the webview UI. */
     emitUIMessage(message: HostToWebviewMessage): void;
