@@ -1,34 +1,46 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/constants/StorageBase.ts — Unified storage-base abstraction
+// src/constants/StorageBase.ts — Hybrid storage-base abstraction
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// Single-root storage model (local debug):
+// ADR-001 Hybrid Storage Topology:
 //
-//   All data lives under <workspaceRoot>/.coogent/:
-//     → artifacts.db, backups/, ipc/, debug/, pid/, logs/, sessions/
+//   ┌─ GLOBAL (durable, shared across workspaces) ──────────────────────────┐
+//   │  ~/Library/Application Support/Antigravity/coogent/                   │
+//   │    → artifacts.db          (tenant-scoped via workspace_id)           │
+//   │    → backups/              (rotating snapshot copies)                  │
+//   └────────────────────────────────────────────────────────────────────────┘
 //
-//   The storageUri parameter is accepted for API compatibility but ignored.
-//   Everything routes to the workspace .coogent/ directory.
+//   ┌─ LOCAL (workspace-scoped operational state) ──────────────────────────┐
+//   │  <workspaceRoot>/.coogent/                                            │
+//   │    → ipc/, pid/, logs/, sessions/, debug/, plugins/                   │
+//   │    → workers.json, coogent.log                                        │
+//   └────────────────────────────────────────────────────────────────────────┘
+//
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as path from 'node:path';
 
-import { COOGENT_DIR, DATABASE_FILE, IPC_DIR, LOG_DIR } from './paths.js';
-
-/** Directory name for periodic backup snapshots. */
-const BACKUPS_DIR = 'backups';
+import {
+    COOGENT_DIR,
+    IPC_DIR,
+    LOG_DIR,
+    getGlobalDatabasePath,
+    getGlobalBackupDir,
+    getGlobalCoogentDir,
+} from './paths.js';
 
 /** Directory name for session-scoped data. */
 const SESSIONS_DIR = 'sessions';
 
 /**
- * Unified storage-base abstraction.
+ * Hybrid storage-base abstraction.
  *
- * All data (DB, backups, IPC, logs, sessions) routes to
- * `<workspaceRoot>/.coogent/` for local debug visibility.
+ * Routes **durable artefacts** (DB, backups) to the global Antigravity
+ * directory and **operational state** (IPC, logs, sessions) to the
+ * workspace-local `.coogent/` directory.
  */
 export class StorageBase {
-    /** Workspace-local storage root for all data. */
+    /** Workspace-local storage root for operational data. */
     private readonly workspaceBase: string;
 
     constructor(
@@ -38,37 +50,41 @@ export class StorageBase {
         this.workspaceBase = path.join(workspaceRoot, COOGENT_DIR);
     }
 
-    /** Root directory for durable storage (DB, backups). Same as workspace base. */
+    // ── Global (durable) paths ─────────────────────────────────────────
+
+    /** Global base directory for durable storage (DB, backups). */
     getDurableBase(): string {
-        return this.workspaceBase;
+        return getGlobalCoogentDir();
     }
 
-    /** Root directory for workspace-local storage (IPC, logs, sessions). */
+    /** Absolute path to the global SQLite database file. */
+    getDBPath(): string {
+        return getGlobalDatabasePath();
+    }
+
+    /** Absolute path to the global backups directory. */
+    getBackupDir(): string {
+        return getGlobalBackupDir();
+    }
+
+    // ── Local (workspace-operational) paths ─────────────────────────────
+
+    /** Root directory for workspace-local operational storage (IPC, logs, sessions). */
     getWorkspaceBase(): string {
         return this.workspaceBase;
     }
 
-    /** Absolute path to the SQLite database file. */
-    getDBPath(): string {
-        return path.join(this.workspaceBase, DATABASE_FILE);
-    }
-
-    /** Absolute path to the backups directory. */
-    getBackupDir(): string {
-        return path.join(this.workspaceBase, BACKUPS_DIR);
-    }
-
-    /** Absolute path to the logs directory. */
+    /** Absolute path to the workspace logs directory. */
     getLogsDir(): string {
         return path.join(this.workspaceBase, LOG_DIR);
     }
 
-    /** Absolute path to a session-specific directory. */
+    /** Absolute path to a session-specific workspace directory. */
     getSessionDir(sessionId: string): string {
         return path.join(this.workspaceBase, SESSIONS_DIR, sessionId);
     }
 
-    /** Absolute path to the IPC root directory. */
+    /** Absolute path to the workspace IPC root directory. */
     getIPCDir(): string {
         return path.join(this.workspaceBase, IPC_DIR);
     }

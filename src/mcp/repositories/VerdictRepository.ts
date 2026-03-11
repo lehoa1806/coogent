@@ -12,6 +12,7 @@ export class VerdictRepository {
     constructor(
         private readonly db: Database,
         private readonly scheduleFlush: () => void,
+        private readonly workspaceId: string = '',
     ) { }
 
     /** Persist an evaluation result for a phase attempt. */
@@ -24,14 +25,15 @@ export class VerdictRepository {
         }
     ): void {
         const attempt = fields.attempt ?? 1;
+        this.db.run('INSERT OR IGNORE INTO tasks (master_task_id, workspace_id) VALUES (?, ?)', [masterTaskId, this.workspaceId]);
         this.db.run(
-            `INSERT INTO evaluation_results (master_task_id, phase_id, attempt, passed, reason, retry_prompt, evaluator_type, evaluated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO evaluation_results (master_task_id, phase_id, attempt, workspace_id, passed, reason, retry_prompt, evaluator_type, evaluated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(master_task_id, phase_id, attempt)
              DO UPDATE SET passed = excluded.passed, reason = excluded.reason,
                            retry_prompt = excluded.retry_prompt, evaluator_type = excluded.evaluator_type,
                            evaluated_at = excluded.evaluated_at`,
-            [masterTaskId, phaseId, attempt, fields.passed ? 1 : 0, fields.reason ?? '',
+            [masterTaskId, phaseId, attempt, this.workspaceId, fields.passed ? 1 : 0, fields.reason ?? '',
                 fields.retryPrompt ?? null, fields.evaluatorType ?? null, fields.evaluatedAt]
         );
         this.scheduleFlush();
@@ -71,13 +73,14 @@ export class VerdictRepository {
         masterTaskId: string, phaseId: string,
         fields: { attemptNumber: number; exitCode?: number; stderrTail?: string; augmentedPrompt?: string; createdAt: number; }
     ): void {
+        this.db.run('INSERT OR IGNORE INTO tasks (master_task_id, workspace_id) VALUES (?, ?)', [masterTaskId, this.workspaceId]);
         this.db.run(
-            `INSERT INTO healing_attempts (master_task_id, phase_id, attempt_number, exit_code, stderr_tail, augmented_prompt, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            `INSERT INTO healing_attempts (master_task_id, phase_id, attempt_number, workspace_id, exit_code, stderr_tail, augmented_prompt, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(master_task_id, phase_id, attempt_number)
              DO UPDATE SET exit_code = excluded.exit_code, stderr_tail = excluded.stderr_tail,
                            augmented_prompt = excluded.augmented_prompt, created_at = excluded.created_at`,
-            [masterTaskId, phaseId, fields.attemptNumber, fields.exitCode ?? null,
+            [masterTaskId, phaseId, fields.attemptNumber, this.workspaceId, fields.exitCode ?? null,
                 fields.stderrTail ?? null, fields.augmentedPrompt ?? null, fields.createdAt]
         );
         this.scheduleFlush();

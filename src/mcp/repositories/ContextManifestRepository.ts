@@ -39,6 +39,7 @@ export class ContextManifestRepository {
     constructor(
         private readonly db: Database,
         private readonly scheduleFlush: () => void,
+        private readonly workspaceId: string = '',
     ) { }
 
     /** Insert or update a context manifest. */
@@ -48,8 +49,8 @@ export class ContextManifestRepository {
         this.db.run('BEGIN');
         try {
             this.db.run(
-                `INSERT INTO context_manifests (manifest_id, session_id, task_id, phase_id, workspace_folder, payload_json, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                `INSERT INTO context_manifests (manifest_id, workspace_id, session_id, task_id, phase_id, workspace_folder, payload_json, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(manifest_id)
                  DO UPDATE SET session_id = excluded.session_id,
                                task_id = excluded.task_id,
@@ -57,7 +58,7 @@ export class ContextManifestRepository {
                                workspace_folder = excluded.workspace_folder,
                                payload_json = excluded.payload_json,
                                created_at = excluded.created_at`,
-                [manifestId, sessionId, taskId, phaseId, workspaceFolder ?? null, payloadJson, createdAt]
+                [manifestId, this.workspaceId, sessionId, taskId, phaseId, workspaceFolder ?? null, payloadJson, createdAt]
             );
             this.db.run('COMMIT');
         } catch (e) {

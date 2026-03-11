@@ -37,6 +37,7 @@ export class HandoffRepository {
     constructor(
         private readonly db: Database,
         private readonly scheduleFlush: () => void,
+        private readonly workspaceId: string = '',
     ) { }
 
     /** Insert or update a phase handoff. */
@@ -50,16 +51,16 @@ export class HandoffRepository {
 
         this.db.run('BEGIN');
         try {
-            this.db.run('INSERT OR IGNORE INTO tasks (master_task_id) VALUES (?)', [masterTaskId]);
-            this.db.run('INSERT OR IGNORE INTO phases (master_task_id, phase_id) VALUES (?, ?)', [masterTaskId, phaseId]);
+            this.db.run('INSERT OR IGNORE INTO tasks (master_task_id, workspace_id) VALUES (?, ?)', [masterTaskId, this.workspaceId]);
+            this.db.run('INSERT OR IGNORE INTO phases (master_task_id, phase_id, workspace_id) VALUES (?, ?, ?)', [masterTaskId, phaseId, this.workspaceId]);
             this.db.run(
                 `INSERT INTO handoffs (
-                    master_task_id, phase_id, decisions, modified_files, blockers,
+                    master_task_id, phase_id, workspace_id, decisions, modified_files, blockers,
                     completed_at, next_steps_context, summary, rationale,
                     remaining_work, constraints_json, warnings,
                     changed_files_json, workspace_folder, symbols_touched
                  )
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(master_task_id, phase_id)
                  DO UPDATE SET decisions = excluded.decisions,
                                modified_files = excluded.modified_files,
@@ -75,7 +76,7 @@ export class HandoffRepository {
                                workspace_folder = excluded.workspace_folder,
                                symbols_touched = excluded.symbols_touched`,
                 [
-                    masterTaskId, phaseId,
+                    masterTaskId, phaseId, this.workspaceId,
                     JSON.stringify(decisions), JSON.stringify(modifiedFiles),
                     JSON.stringify(blockers), completedAt, nextStepsContext ?? '',
                     summary ?? null, rationale ?? null,

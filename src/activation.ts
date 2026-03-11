@@ -10,6 +10,7 @@ import * as fsSync from 'node:fs';
 
 import { asPhaseId } from './types/index.js';
 import { RUNBOOK_FILE, getCoogentDir } from './constants/paths.js';
+import { deriveWorkspaceId } from './constants/WorkspaceIdentity.js';
 import { StateManager } from './state/StateManager.js';
 import { Engine } from './engine/Engine.js';
 import { ADKController } from './adk/ADKController.js';
@@ -186,7 +187,8 @@ export function startMCPServer(svc: ServiceContainer, primaryRoot: string): void
 
     svc.mcpServer = new CoogentMCPServer(primaryRoot);
     svc.mcpBridge = new MCPClientBridge(svc.mcpServer, primaryRoot);
-    svc.mcpReady = svc.mcpServer.init(coogentDir)
+    const workspaceId = deriveWorkspaceId(primaryRoot);
+    svc.mcpReady = svc.mcpServer.init(coogentDir, workspaceId)
         .then(async () => {
             log.info('[Coogent] ArtifactDB initialised.');
 
