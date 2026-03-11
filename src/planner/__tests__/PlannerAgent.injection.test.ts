@@ -94,7 +94,7 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
     // ─────────────────────────────────────────────────────────────────────
 
     describe('fallback mode', () => {
-        it('appends response.md write instructions in fallback mode', async () => {
+        it('planner prompt is clean in fallback mode — adapter handles response.md', async () => {
             const adapter = createMockAdapter('fallback');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
@@ -110,10 +110,11 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
             const passedOptions = createSession.mock.calls[0][0] as ADKSessionOptions;
             const prompt = passedOptions.initialPrompt;
 
-            // Must contain response.md instructions in fallback mode
-            expect(prompt).toContain('response.md');
-            expect(prompt).toContain('## Output');
-            expect(prompt).toContain('Write your COMPLETE response');
+            // Planner no longer appends response.md instructions —
+            // the adapter layer handles that during createFileIpcSession.
+            expect(prompt).toContain('mock-system-prompt-for-injection-test');
+            expect(prompt).not.toContain('## Output');
+            expect(prompt).not.toContain('Write your COMPLETE response');
         });
 
         it('preserves the compiled system prompt in fallback mode', async () => {
@@ -223,7 +224,10 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
 
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
-            expect(prompt).toContain('response.md');
+
+            // Planner prompt is clean — adapter handles response.md instructions.
+            expect(prompt).toContain('mock-system-prompt-for-injection-test');
+            expect(prompt).not.toContain('response.md');
         });
     });
 

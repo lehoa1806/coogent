@@ -176,12 +176,16 @@ describe('AntigravityADKAdapter — ExecutionMode', () => {
                 phaseNumber: 1,
             });
 
-            // Fallback path DOES write request.md
-            expect(mockWriteFile).toHaveBeenCalledWith(
+            // Fallback path NO LONGER writes request.md — prompts are injected
+            // directly into the chat panel. Only directory creation happens.
+            expect(mockWriteFile).not.toHaveBeenCalledWith(
                 expect.stringContaining('request.md'),
-                'Test prompt for fallback',
-                'utf-8',
+                expect.anything(),
+                expect.anything(),
             );
+
+            // Prompt is injected via vscode.commands.executeCommand
+            expect(vscode.commands.executeCommand).toHaveBeenCalled();
             expect(handle.sessionId).toBeDefined();
         });
 

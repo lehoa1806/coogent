@@ -11,7 +11,7 @@ import type { ADKSessionOptions, ADKSessionHandle } from './ADKController.js';
 import type { ConversationMode } from '../types/index.js';
 import { CharRatioEncoder, type TokenEncoder } from '../context/ContextScoper.js';
 import { FileStabilityWatcher } from './FileStabilityWatcher.js';
-import { COOGENT_DIR, IPC_DIR, IPC_REQUEST_FILE, IPC_RESPONSE_FILE } from '../constants/paths.js';
+import { COOGENT_DIR, IPC_DIR, IPC_RESPONSE_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -348,35 +348,31 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
         const subDir = options.masterTaskId
             ? path.join(this.ipcDir, options.masterTaskId, subTaskName)
             : path.join(this.ipcDir, subTaskName);
-        const requestFile = path.join(subDir, IPC_REQUEST_FILE);
         const responseFile = path.join(subDir, IPC_RESPONSE_FILE);
 
-        // ── Critical section: file-write + chat injection ────────────────────
+        // ── Critical section: chat injection ─────────────────────────────────
         // These steps MUST complete before the next session starts, otherwise
         // the next session's startNewConversation() replaces the active chat
-        // panel and this session's meta-prompt targets the wrong conversation.
+        // panel and this session's prompt targets the wrong conversation.
 
-        // Step 1: Ensure sub-task directory exists
+        // Step 1: Ensure sub-task directory exists (for response.md)
         await fs.mkdir(subDir, { recursive: true });
 
-        // Step 2: Write the prompt to the request file
-        await fs.writeFile(requestFile, options.initialPrompt, 'utf-8');
-        log.info(`[AntigravityADK] IPC request written: ${requestFile} (${options.initialPrompt.length} chars)`);
-
-        // Step 3: Build the meta-prompt for the chat agent
-        // Use ABSOLUTE paths — relative paths broke when the agent's
-        // working directory differed from the VS Code workspace root.
-        const metaPrompt = [
-            `Read the instructions from the file: ${requestFile}`,
-            `Follow those instructions carefully.`,
+        // Step 2: Build the injection prompt — the full task prompt + response.md write instruction.
+        // The prompt is injected directly into the chat conversation; no request.md is written.
+        // Only response.md serves as the file-based completion signal.
+        const injectionPrompt = [
+            options.initialPrompt,
+            '',
+            '## Output',
             `Write your COMPLETE response to the file: ${responseFile}`,
             `Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
             `Use the file editing tools to create/write to ${responseFile}.`,
         ].join('\n');
 
-        // Step 4: Inject the meta-prompt into the chat panel
-        log.info(`[AntigravityADK] Injecting meta-prompt into chat...`);
-        const injected = await this.injectIntoChatPanel(metaPrompt);
+        // Step 3: Inject the full prompt directly into the chat panel
+        log.info(`[AntigravityADK] Injecting prompt directly into chat (${injectionPrompt.length} chars)...`);
+        const injected = await this.injectIntoChatPanel(injectionPrompt);
         if (!injected) {
             // Return a dead handle — callbacks fire immediately on registration
             this.cleanupSession(sessionId);
