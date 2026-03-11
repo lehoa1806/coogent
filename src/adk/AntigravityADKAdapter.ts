@@ -15,6 +15,19 @@ import { COOGENT_DIR, IPC_DIR, IPC_REQUEST_FILE, IPC_RESPONSE_FILE } from '../co
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  Execution Mode
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Execution mode determines how prompts are delivered to the AI agent:
+ *   - `primary`: vscode.lm API is available — prompts are injected directly
+ *     into the conversation. No request.md is written.
+ *   - `fallback`: No vscode.lm model available — prompts are written to
+ *     request.md and a meta-prompt is injected telling the agent to read it.
+ */
+export type ExecutionMode = 'primary' | 'fallback';
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  Active Session Tracking (for cancellation)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -96,6 +109,9 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
     /** S3-3: Shared token encoder for consistent estimation across pipeline. */
     private readonly tokenEncoder: TokenEncoder;
 
+    /** Cached execution mode — resolved lazily on first query. */
+    private cachedExecutionMode: ExecutionMode | null = null;
+
     // ── Dispatch serialization ───────────────────────────────────────────────
     /**
      * Serialization lock: ensures `startNewConversation()` + `injectIntoChatPanel()`
@@ -111,6 +127,51 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
     constructor(workspaceRoot: string, tokenEncoder?: TokenEncoder) {
         this.ipcDir = path.join(workspaceRoot, IPC_DIR_NAME);
         this.tokenEncoder = tokenEncoder ?? new CharRatioEncoder();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Execution Mode Detection
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Determine the current execution mode.
+     *
+     * - `primary`: vscode.lm API is available — prompts go directly into the
+     *   conversation via LM streaming. No request.md needed.
+     * - `fallback`: No LM model found — uses file-based IPC (request.md + meta-prompt).
+     *
+     * Result is cached for the lifetime of the adapter instance to avoid
+     * repeated model enumeration during a single orchestration run.
+     */
+    public async getExecutionMode(): Promise<ExecutionMode> {
+        if (this.cachedExecutionMode) {
+            return this.cachedExecutionMode;
+        }
+
+        try {
+            const models = await vscode.lm.selectChatModels({});
+            if (models.length > 0) {
+                this.cachedExecutionMode = 'primary';
+                log.info(`[AntigravityADK] ExecutionMode resolved: primary (${models.length} LM model(s) available)`);
+            } else {
+                this.cachedExecutionMode = 'fallback';
+                log.info(`[AntigravityADK] ExecutionMode resolved: fallback (no LM models)`);
+            }
+        } catch {
+            this.cachedExecutionMode = 'fallback';
+            log.info(`[AntigravityADK] ExecutionMode resolved: fallback (vscode.lm unavailable)`);
+        }
+
+        log.info(`[AntigravityADKAdapter] ExecutionMode detected: ${this.cachedExecutionMode}`);
+        return this.cachedExecutionMode;
+    }
+
+    /**
+     * Synchronous getter for callers that need the mode after it has been resolved.
+     * Returns null if getExecutionMode() has not been called yet.
+     */
+    public getExecutionModeSync(): ExecutionMode | null {
+        return this.cachedExecutionMode;
     }
 
     async createSession(options: ADKSessionOptions): Promise<ADKSessionHandle> {

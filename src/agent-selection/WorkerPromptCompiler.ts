@@ -11,6 +11,7 @@ import type {
     Deliverable,
     AgentType,
 } from './types.js';
+import type { ExecutionMode } from '../adk/AntigravityADKAdapter.js';
 import {
     BASE_WORKER,
     PLANNER,
@@ -56,12 +57,16 @@ export class WorkerPromptCompiler {
      * @param spec - The subtask specification containing goals, constraints, and policies.
      * @param profile - The agent profile selected for this subtask.
      * @param contextPackage - Optional pre-scoped context lines to embed.
+     * @param executionMode - Determines IPC instructions: `'primary'` (default) injects
+     *   prompt directly (no request.md), `'fallback'` appends request.md read instructions.
+     *   Both modes append response.md write instructions.
      * @returns A {@link CompiledWorkerPrompt} ready for injection into a worker agent.
      */
     compile(
         spec: SubtaskSpec,
         profile: AgentProfile,
         contextPackage?: readonly string[],
+        executionMode: ExecutionMode = 'primary',
     ): CompiledWorkerPrompt {
         const values: Record<string, string> = {
             agent_type: profile.agent_type,
@@ -100,7 +105,10 @@ export class WorkerPromptCompiler {
 
         const interpolatedBase = this.interpolate(BASE_WORKER, values);
         const interpolatedAgent = this.interpolate(agentTemplate, values);
-        const text = `${interpolatedBase}\n${interpolatedAgent}`;
+
+        // Assemble IPC contract instructions based on execution mode
+        const ipcInstructions = this.buildIpcInstructions(executionMode);
+        const text = `${interpolatedBase}\n${interpolatedAgent}\n${ipcInstructions}`;
 
         const promptId = this.generatePromptId(
             spec.subtask_id,
@@ -215,5 +223,33 @@ export class WorkerPromptCompiler {
             return '_None._';
         }
         return items.map((item) => `- ${item}`).join('\n');
+    }
+
+    // ─── IPC Instructions ────────────────────────────────────────────────────
+
+    /**
+     * Build the IPC contract instructions appended to the worker prompt.
+     *
+     * - **Both modes**: Instruct the agent to write final output to `response.md`.
+     * - **Fallback only**: Also instruct the agent to read its task from `request.md`.
+     */
+    private buildIpcInstructions(executionMode: ExecutionMode): string {
+        const sections: string[] = [
+            '### IPC Contract',
+            '',
+        ];
+
+        if (executionMode === 'fallback') {
+            sections.push(
+                '1. **Read your task** from `request.md` in the current IPC directory.',
+            );
+        }
+
+        sections.push(
+            `${executionMode === 'fallback' ? '2' : '1'}. **Write your COMPLETE response** to \`response.md\` in the current IPC directory.`,
+            `${executionMode === 'fallback' ? '3' : '2'}. Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
+        );
+
+        return sections.join('\n');
     }
 }

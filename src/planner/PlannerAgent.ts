@@ -7,6 +7,7 @@ import type { Runbook } from '../types/index.js';
 import { PromptTemplateManager, type TechStackInfo } from '../context/PromptTemplateManager.js';
 import type { AgentBackendProvider } from '../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle } from '../adk/ADKController.js';
+import type { ExecutionMode } from '../adk/AntigravityADKAdapter.js';
 import log from '../logger/log.js';
 import { PlannerPromptCompiler, RepoFingerprinter, type CompilationManifest } from '../prompt-compiler/index.js';
 import { WorkspaceScanner } from './WorkspaceScanner.js';
@@ -101,6 +102,8 @@ export class PlannerAgent extends EventEmitter {
     private lastManifest: CompilationManifest | null = null;
     /** BL-5 audit fix: Last raw LLM output before JSON parsing (for audit trail). */
     private lastRawOutput: string | undefined;
+    /** Last resolved execution mode (observability). */
+    private lastExecutionMode: ExecutionMode | null = null;
 
     // ── Collaborators ────────────────────────────────────────────────────
     private readonly scanner: WorkspaceScanner;
@@ -141,6 +144,11 @@ export class PlannerAgent extends EventEmitter {
     /** BL-5 audit fix: Get the last raw LLM output before parsing. */
     getLastRawOutput(): string | undefined {
         return this.lastRawOutput;
+    }
+
+    /** Get the last resolved execution mode (observability). */
+    getLastExecutionMode(): ExecutionMode | null {
+        return this.lastExecutionMode;
     }
 
     /**
@@ -208,7 +216,25 @@ export class PlannerAgent extends EventEmitter {
             this.lastSystemPrompt = systemPrompt;
             log.info(`[PlannerAgent] Prompt built: ${systemPrompt.length} chars`);
 
-            // Step 3: Spawn the planner worker
+            // Step 3: Resolve execution mode for prompt adjustment and observability
+            let executionMode: ExecutionMode = 'fallback'; // safe default
+            const adapterAny = this.adapter as unknown as { getExecutionMode?: () => Promise<ExecutionMode> };
+            if (typeof adapterAny.getExecutionMode === 'function') {
+                executionMode = await adapterAny.getExecutionMode();
+            }
+            this.lastExecutionMode = executionMode;
+            log.info(`[PlannerAgent] Execution mode resolved: ${executionMode}`);
+
+            // Step 3b: In fallback mode, the adapter writes the prompt to request.md
+            // and uses a meta-prompt to tell the agent to read it. The agent must then
+            // write its output to response.md for the FileStabilityWatcher to pick up.
+            // In primary mode, the prompt is injected directly into the conversation
+            // and the response streams back via vscode.lm — no filesystem involved.
+            if (executionMode === 'fallback') {
+                systemPrompt += '\n\n## Output\nWrite your COMPLETE response to the response.md file in the IPC directory.\nOutput ONLY the JSON runbook — no explanation, no markdown code fences wrapping the file write.';
+            }
+
+            // Step 4: Spawn the planner worker
             this.emit('plan:status', 'generating', 'AI agent is creating your plan...');
             log.info(`[PlannerAgent] Creating ADK session...`);
             this.activeSession = await this.adapter.createSession({
