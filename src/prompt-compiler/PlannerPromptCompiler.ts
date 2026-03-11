@@ -194,9 +194,9 @@ export class PlannerPromptCompiler {
             sections.push(`## Planning Policies\n${policyBullets}`);
         }
 
-        // 6. Workspace file tree (if provided)
+        // 6. Top-level structure (if provided — keep short to save tokens)
         if (options?.fileTree && options.fileTree.length > 0) {
-            sections.push(`## Workspace File Tree\n${options.fileTree.join('\n')}`);
+            sections.push(`## Top-Level Structure\n${options.fileTree.join('\n')}`);
         }
 
         // 7. Available worker skills (if provided)
