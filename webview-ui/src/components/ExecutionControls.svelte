@@ -29,6 +29,7 @@
     let isIdle = $derived(appState.engineState === "IDLE");
     let isCompleted = $derived(appState.engineState === "COMPLETED");
     let hasPhases = $derived(appState.phases.length > 0);
+    let hasReport = $derived(appState.consolidationReport != null);
 
     // Timer management — using plain var avoids $effect loop caused by $state timerInterval
     $effect(() => {
@@ -93,7 +94,7 @@
 
     <span class="controls-spacer"></span>
 
-    {#if isCompleted}
+    {#if isCompleted || hasReport}
         <button class="btn-icon" onclick={handleViewReport} title="View Report"
             >📊</button
         >
