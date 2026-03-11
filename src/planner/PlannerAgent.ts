@@ -462,13 +462,12 @@ export class PlannerAgent extends EventEmitter {
 You are a Planning Agent. Your job is to analyze a codebase and break down a user's request into a sequential execution plan (a "runbook"). Each phase in the runbook is a micro-task that will be executed by an isolated AI agent with zero prior context.
 
 ## Critical Rules
-1. Output ONLY a valid JSON object — no markdown, no explanation, no commentary outside the JSON.
-2. Wrap the JSON in a \`\`\`json fenced code block.
-3. Each phase must be self-contained — its \`prompt\` must fully describe what to do.
-4. \`context_files\` must list ONLY the files the worker needs to read for that phase.
-5. Order phases so that dependencies are created before they are referenced.
-6. Use \`success_criteria\` of \`"exit_code:0"\` for all phases unless you have a specific test command.
-7. Phase IDs MUST start from 1 (id: 0 is reserved for the planner). Set \`current_phase\` to the first phase ID (1).
+1. Output a single \`\`\`json fenced code block containing the runbook JSON. No text before or after the block.
+2. Each phase must be self-contained — its \`prompt\` must fully describe what to do.
+3. \`context_files\` must list ONLY the files the worker needs to read for that phase.
+4. Order phases so that dependencies are created before they are referenced.
+5. Set \`success_criteria\` to a concrete verification command when available (e.g., \`npm test\`). Default: \`"exit_code:0"\`.
+6. Phase IDs MUST start from 1 (id: 0 is reserved for the planner). Set \`current_phase\` to the first phase ID (1).
 
 ## JSON Schema
 \`\`\`json
@@ -492,11 +491,11 @@ You are a Planning Agent. Your job is to analyze a codebase and break down a use
 }
 \`\`\``);
 
-        // File tree context
+        // File tree context (keep short to save tokens)
         const treeStr = fileTree.length > 0
             ? fileTree.join('\n')
             : '(empty workspace)';
-        sections.push(`## Workspace File Tree
+        sections.push(`## Top-Level Structure
 \`\`\`
 ${treeStr}
 \`\`\``);
