@@ -69,6 +69,11 @@
         postMessage({ type: "CMD_ABORT" });
     }
     function handleViewReport() {
+        // Open the modal immediately (data is already in appState from a
+        // previous fetch).  Also ask the host for a fresh copy so MCP-backed
+        // data stays up-to-date — when the host replies, messageHandler sets
+        // consolidationReport + reportModalOpen again (harmless if already open).
+        appState.reportModalOpen = true;
         postMessage({ type: "CMD_REQUEST_REPORT" });
     }
     function handleViewPlan() {

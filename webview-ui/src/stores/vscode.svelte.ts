@@ -38,6 +38,7 @@ const vscodeApi: VsCodeApi = acquireVsCodeApi();
 const TRANSIENT_FIELDS: ReadonlySet<keyof AppState> = new Set([
     'consolidationReport',
     'implementationPlan',
+    'reportModalOpen',
     'error',
     'terminalOutput',
     'phaseOutputs',
