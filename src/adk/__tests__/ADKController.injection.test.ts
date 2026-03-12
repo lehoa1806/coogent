@@ -121,7 +121,7 @@ describe('ADKController — Injection Prompt Construction', () => {
 
         await controller.spawnWorker(phaseWithFiles, 5000);
 
-        expect(capturedPrompt).toContain('## Context Files');
+        expect(capturedPrompt).toContain('## Required Context Reads');
         expect(capturedPrompt).toContain('get_modified_file_content');
         expect(capturedPrompt).toContain('src/app.ts');
         expect(capturedPrompt).toContain('src/utils.ts');
@@ -141,7 +141,7 @@ describe('ADKController — Injection Prompt Construction', () => {
 
         await controller.spawnWorker(basePhase, 5000);
 
-        expect(capturedPrompt).not.toContain('## Context Files');
+        expect(capturedPrompt).not.toContain('## Required Context Reads');
         expect(capturedPrompt).not.toContain('get_modified_file_content');
     });
 

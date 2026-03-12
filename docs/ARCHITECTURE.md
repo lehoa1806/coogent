@@ -528,7 +528,7 @@ User Prompt → PlannerAgent
                 │
                 ├── AgentRegistry.getAvailableTags() → Injects skill tags into planner prompt
                 │
-                └── Generates phases with required_skills: [...]
+                └── Generates phases with required_capabilities: [...]
                                 │
                                 ▼
                           DispatchController

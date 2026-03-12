@@ -194,32 +194,41 @@ export class CoogentMCPServer {
      * @param workspaceId Tenant identifier for workspace-scoped queries (default: '').
      */
     async init(coogentDir: string, workspaceId: string = ''): Promise<void> {
+        log.info('[CoogentMCPServer] init() starting — coogentDir:', coogentDir);
         const dbPath = path.join(coogentDir, DATABASE_FILE);
+
+        log.info('[CoogentMCPServer] Creating ArtifactDB at:', dbPath);
         this.db = await ArtifactDB.create(dbPath, workspaceId);
+        log.info('[CoogentMCPServer] ArtifactDB created successfully.');
 
         // Initialise backup manager (default backup dir: <coogentDir>/backups/)
         const backupDir = path.join(coogentDir, 'backups');
         this.backupManager = new ArtifactDBBackup(dbPath, backupDir);
         this.db.setBackupManager(this.backupManager);
+        log.info('[CoogentMCPServer] Backup manager configured.');
 
         // Register protocol handlers now that DB is ready
+        log.info('[CoogentMCPServer] Registering MCP protocol handlers...');
         new MCPResourceHandler(this.server, this.db).register();
         new MCPToolHandler(this.server, this.db, this.workspaceRoot, this.emitter).register();
         new MCPPromptHandler(this.server).register();
+        log.info('[CoogentMCPServer] MCP protocol handlers registered.');
 
         // Load plugins (Sprint 5) — fire-and-forget, errors are isolated
         this.pluginLoader = new PluginLoader(this.workspaceRoot);
         try {
+            log.info('[CoogentMCPServer] Loading plugins...');
             await this.pluginLoader.loadAll({
                 server: this.server,
                 db: this.db,
                 workspaceRoot: this.workspaceRoot,
             });
+            log.info('[CoogentMCPServer] Plugins loaded successfully.');
         } catch (err) {
             log.warn('[CoogentMCPServer] Plugin loading failed:', (err as Error).message);
         }
 
-        log.info('[CoogentMCPServer] ArtifactDB initialised at:', dbPath);
+        log.info('[CoogentMCPServer] init() complete — ArtifactDB at:', dbPath);
     }
 
     // ═══════════════════════════════════════════════════════════════════════

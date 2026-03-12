@@ -589,6 +589,9 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
         const sections: string[] = [
             `## Task`,
             phase.prompt,
+            ``,
+            `## Critical Rules`,
+            `- **No piped output** — Do NOT pipe command output through another command (e.g., \`| cat\`, \`| tee\`, \`| grep\`). Run commands directly so built-in reporters and interactive features work correctly.`,
         ];
 
         // B-1: enforce the Pull Model / Pointer Method.
@@ -600,8 +603,8 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
             );
             sections.push(
                 ``,
-                `## Context Files`,
-                `Fetch the following files via the MCP tool \`get_modified_file_content\`. Do NOT guess their content.`,
+                `## Required Context Reads`,
+                `Read the following files via the MCP tool \`get_modified_file_content\` before making changes:`,
                 ...fileUris
             );
         }
@@ -626,7 +629,8 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
                     `## MCP Context Resources`,
                     `You have access to a local MCP server. Use these resource URIs to read context:`,
                     ...uriLines,
-                    `DO NOT GUESS context. Read these resources to understand your task.`
+                    ``,
+                    `Base your work on retrieved repository context, not assumptions.`
                 );
             }
         }

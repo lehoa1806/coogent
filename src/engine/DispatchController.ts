@@ -20,7 +20,7 @@ export interface DispatchControllerOptions {
     /** S3-4: Enable shadow mode — run selection pipeline, log results, but don't affect dispatch. */
     readonly enableShadowMode?: boolean;
     /** ArtifactDB instance for persisting selection audit records. */
-    readonly artifactDb?: ArtifactDB;
+    readonly artifactDb?: ArtifactDB | (() => ArtifactDB | undefined);
     /** TelemetryLogger instance for telemetry events. */
     readonly logger?: TelemetryLogger;
     /** Session directory name for audit record persistence. */
@@ -53,7 +53,7 @@ export class DispatchController {
     /** Lazily-initialised pipeline instance (created on first use). */
     private selectionPipeline: SelectionPipeline | null = null;
     /** ArtifactDB for persisting audit records. */
-    private readonly artifactDb: ArtifactDB | undefined;
+    private readonly artifactDb: ArtifactDB | (() => ArtifactDB | undefined) | undefined;
     /** TelemetryLogger for structured event logging. */
     private readonly telemetryLogger: TelemetryLogger | undefined;
     /** Session directory name used as session_id in audit records. */
@@ -389,7 +389,7 @@ export class DispatchController {
             goal: phase.prompt.slice(0, 500),
             contextFiles: phase.context_files ?? [],
             dependsOn: phase.depends_on?.map(String) ?? [],
-            requiredSkills: phase.required_skills ?? [],
+            requiredCapabilities: phase.required_capabilities ?? [],
             successCriteria: phase.success_criteria ?? undefined,
         };
     }
@@ -437,12 +437,13 @@ export class DispatchController {
             }
 
             // 5. Persist audit record
-            if (this.artifactDb) {
+            const resolvedDb = typeof this.artifactDb === 'function' ? this.artifactDb() : this.artifactDb;
+            if (resolvedDb) {
                 const auditWithSession = {
                     ...result.audit,
                     session_id: this.sessionDirName,
                 };
-                this.artifactDb.audits.insertSelectionAudit(auditWithSession);
+                resolvedDb.audits.insertSelectionAudit(auditWithSession);
             }
 
             log.info(

@@ -109,7 +109,7 @@ describe('PlannerPromptCompiler', () => {
         expect(inputData).toHaveProperty('workspace_folders');
         expect(inputData).toHaveProperty('repo_profile');
         expect(inputData).toHaveProperty('normalized_task');
-        expect(inputData).toHaveProperty('available_worker_skills');
+        expect(inputData).not.toHaveProperty('available_worker_skills');
     });
 
     it('should include repo profile fields in INPUT DATA JSON', async () => {
@@ -223,20 +223,13 @@ describe('PlannerPromptCompiler', () => {
     });
 
     // ─────────────────────────────────────────────────────────────────────────
-    //  Available worker skills in INPUT DATA
+    //  Capability inference (no available_worker_skills in INPUT DATA)
     // ─────────────────────────────────────────────────────────────────────────
 
-    it('should include available_worker_skills in INPUT DATA when tags provided', async () => {
-        const result = await compiler.compile('Add auth', { availableTags: ['security', 'backend', 'api'] });
-
-        const inputData = extractInputData(result.text);
-        expect(inputData.available_worker_skills).toEqual(['api', 'backend', 'security']); // sorted
-    });
-
-    it('should have empty available_worker_skills when no tags provided', async () => {
+    it('should NOT include available_worker_skills in INPUT DATA', async () => {
         const result = await compiler.compile('Add a feature');
 
         const inputData = extractInputData(result.text);
-        expect(inputData.available_worker_skills).toEqual([]);
+        expect(inputData).not.toHaveProperty('available_worker_skills');
     });
 });

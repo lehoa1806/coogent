@@ -53,7 +53,7 @@ function compilePrompt(spec: SubtaskSpec, profile: AgentProfile): CompiledWorker
         subtask_id: spec.subtask_id,
         task_type: spec.task_type,
         reasoning_type: spec.reasoning_type.join(', '),
-        required_skills: spec.required_skills.join(', '),
+        required_capabilities: spec.required_capabilities.join(', '),
         required_inputs: formatList(spec.required_inputs),
         dependency_inputs: formatList(spec.dependency_inputs),
         assumptions_allowed: formatList(spec.assumptions_allowed),
@@ -113,7 +113,7 @@ describe('PromptValidator', () => {
             title: 'Add feature',
             goal: 'Implement the new feature',
             contextFiles: ['src/feature.ts'],
-            requiredSkills: ['typescript'],
+            requiredCapabilities: ['typescript'],
         };
         const spec = SubtaskSpecBuilder.build(draft, {
             constraints: ['Do not break existing tests'],

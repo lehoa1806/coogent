@@ -242,7 +242,7 @@ describe('ADKController (with MockADKAdapter)', () => {
 
         await controller.spawnWorker(phaseWithFiles, 5000);
 
-        // Should contain MCP tool directives
+        expect(capturedPrompt).toContain('## Required Context Reads');
         expect(capturedPrompt).toContain('get_modified_file_content');
         expect(capturedPrompt).toContain('src/foo.ts');
         expect(capturedPrompt).toContain('src/bar.ts');
@@ -265,7 +265,7 @@ describe('ADKController (with MockADKAdapter)', () => {
 
         // No tool directive, no raw bytes
         expect(capturedPrompt).not.toContain('get_modified_file_content');
-        expect(capturedPrompt).not.toContain('## Context Files');
+        expect(capturedPrompt).not.toContain('## Required Context Reads');
         // Should still have the task prompt
         expect(capturedPrompt).toContain('Mock phase');
     });

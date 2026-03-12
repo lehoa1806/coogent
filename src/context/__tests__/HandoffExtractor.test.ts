@@ -27,22 +27,20 @@ describe('HandoffExtractor', () => {
     // ═════════════════════════════════════════════════════════════════════════
 
     describe('generateDistillationPrompt', () => {
-        it('should include the phase ID in the prompt', () => {
+        it('should reference the Output Contract section', () => {
             const prompt = extractor.generateDistillationPrompt(3);
-            expect(prompt).toContain('Phase 3');
+            expect(prompt).toContain('Output Contract');
         });
 
-        it('should reference all four required JSON keys', () => {
+        it('should reference all four required JSON keys indirectly', () => {
             const prompt = extractor.generateDistillationPrompt(1);
-            expect(prompt).toContain('decisions');
-            expect(prompt).toContain('modified_files');
-            expect(prompt).toContain('unresolved_issues');
-            expect(prompt).toContain('next_steps_context');
+            expect(prompt).toContain('JSON block');
+            expect(prompt).toContain('Do NOT omit any key');
         });
 
-        it('should include a JSON code fence', () => {
-            const prompt = extractor.generateDistillationPrompt(1);
-            expect(prompt).toContain('```json');
+        it('should not hardcode a phase number', () => {
+            const prompt = extractor.generateDistillationPrompt(7);
+            expect(prompt).not.toContain('Phase 7');
         });
     });
 

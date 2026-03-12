@@ -61,7 +61,7 @@ export function wireEngine(
     if (svc.mcpServer && engine.configureDispatch) {
         const dispatchOpts: import('./engine/DispatchController.js').DispatchControllerOptions = {
             useAgentSelection: false,
-            artifactDb: svc.mcpServer.getArtifactDB(),
+            artifactDb: () => svc.mcpServer!.getArtifactDB(),
             sessionDirName: getSessionDirName(),
             ...(logger ? { logger } : {}),
             // V2-A 1.1: Pass getter so builder is resolved at dispatch time (after MCP init)

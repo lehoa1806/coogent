@@ -24,7 +24,7 @@ export interface SubtaskDraft {
     readonly goal: string;
     readonly contextFiles?: readonly string[];
     readonly dependsOn?: readonly string[];
-    readonly requiredSkills?: readonly string[];
+    readonly requiredCapabilities?: readonly string[];
     readonly successCriteria?: string;
 }
 
@@ -183,7 +183,7 @@ export class SubtaskSpecBuilder {
             goal: draft.goal,
             task_type: taskType,
             reasoning_type: reasoningTypes,
-            required_skills: draft.requiredSkills ?? [],
+            required_capabilities: draft.requiredCapabilities ?? [],
             required_inputs: context?.knownInputs ?? [],
             context_requirements: contextRequirements,
             dependency_inputs: dependencyInputs ?? [],

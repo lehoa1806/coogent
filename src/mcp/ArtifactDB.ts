@@ -173,6 +173,9 @@ export class ArtifactDB {
      * @param dbPath     Path to the SQLite database file.
      * @param workspaceId  Tenant identifier for workspace-scoped queries (default: '').
      */
+    /** Timeout for sql.js WASM initialization (ms). */
+    private static readonly INIT_TIMEOUT_MS = 30_000;
+
     static async create(dbPath: string, workspaceId: string = ''): Promise<ArtifactDB> {
         // Dynamic import — avoids top-level CJS require() and defers WASM
         // loading until the factory is actually called.
@@ -180,9 +183,26 @@ export class ArtifactDB {
             config?: { locateFile?: (file: string) => string }
         ) => Promise<SqlJsStatic>;
 
-        const SQL = await initSqlJs({
-            locateFile: (file: string) => path.join(__dirname, file),
-        });
+        // Pre-check: verify WASM binary exists before attempting init
+        const wasmPath = path.join(__dirname, 'sql-wasm.wasm');
+        if (!fs.existsSync(wasmPath)) {
+            throw new Error(
+                `[ArtifactDB] sql-wasm.wasm not found at: ${wasmPath}. ` +
+                `Ensure the build step (node esbuild.js) has run successfully.`
+            );
+        }
+
+        const SQL = await Promise.race([
+            initSqlJs({
+                locateFile: (file: string) => path.join(__dirname, file),
+            }),
+            new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(
+                    `[ArtifactDB] initSqlJs timed out after ${ArtifactDB.INIT_TIMEOUT_MS}ms. ` +
+                    `WASM path: ${wasmPath}`
+                )), ArtifactDB.INIT_TIMEOUT_MS)
+            ),
+        ]);
 
         let db: Database;
 

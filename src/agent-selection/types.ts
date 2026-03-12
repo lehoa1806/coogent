@@ -225,8 +225,8 @@ export interface SubtaskSpec {
     readonly task_type: TaskType;
     /** Cognitive reasoning strategies required. */
     readonly reasoning_type: readonly ReasoningType[];
-    /** Domain skills needed (e.g., 'typescript', 'sql', 'testing'). */
-    readonly required_skills: readonly string[];
+    /** Domain capabilities needed (e.g., 'typescript', 'sql', 'testing'). */
+    readonly required_capabilities: readonly string[];
     /** Input artifacts or data required before execution. */
     readonly required_inputs: readonly string[];
     /** Context requirements specifying format and content needs. */

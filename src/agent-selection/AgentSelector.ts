@@ -215,7 +215,7 @@ export class AgentSelector {
         );
 
         const skillMatch = this.proportionOverlap(
-            spec.required_skills,
+            spec.required_capabilities,
             profile.skills,
         );
 
@@ -342,7 +342,7 @@ export class AgentSelector {
             spec.title.toLowerCase(),
             spec.goal.toLowerCase(),
             spec.task_type.toLowerCase(),
-            ...spec.required_skills.map((s) => s.toLowerCase()),
+            ...spec.required_capabilities.map((s) => s.toLowerCase()),
         ];
 
         let penalty = 0;
