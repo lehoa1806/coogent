@@ -15,17 +15,18 @@ import { COOGENT_DIR, IPC_DIR, IPC_RESPONSE_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  Execution Mode
+//  Execution Mode (centralized in ExecutionModeResolver)
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Execution mode determines how prompts are delivered to the AI agent:
- *   - `primary`: vscode.lm API is available — prompts are injected directly
- *     into the conversation. No request.md is written.
- *   - `fallback`: No vscode.lm model available — prompts are written to
- *     request.md and a meta-prompt is injected telling the agent to read it.
- */
-export type ExecutionMode = 'primary' | 'fallback';
+import {
+    type ExecutionMode,
+    type ModeDetectionResult,
+    getExecutionMode,
+    getExecutionModeSync,
+} from './ExecutionModeResolver.js';
+
+/** @deprecated Use `ExecutionMode` from `./ExecutionModeResolver.js` directly. */
+export type { ExecutionMode } from './ExecutionModeResolver.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Active Session Tracking (for cancellation)
@@ -91,12 +92,13 @@ function uuidv7(): string {
  *   1. **Primary — `vscode.lm` API**: If a language model is available (e.g.,
  *      GitHub Copilot Chat), streams the response directly. This is the fastest path.
  *
- *   2. **File-based IPC via chat**: If no `vscode.lm` model exists:
- *      a. Writes the prompt to a request file.
- *      b. Opens the Antigravity chat with a meta-prompt instructing the agent
- *         to read the request file and write its response to a response file.
- *      c. Watches the filesystem for the response file to appear and stabilize.
- *      d. Reads the response, emits it via `onOutput`, calls `onExit(0)`.
+ *   2. **File-based IPC via chat**: If no `vscode.lm` model exists, opens the
+ *      Antigravity chat with the full prompt injected directly into the
+ *      conversation and watches for a response file.
+ *
+ * Execution mode is resolved centrally by `ExecutionModeResolver`.
+ * Three certified modes: `vscode-native`, `cursor`, `antigravity`.
+ * Unsupported hosts resolve to `unsupported`.
  *
  * Each `createSession()` call returns immediately with an `ADKSessionHandle`.
  * The actual work runs asynchronously.
@@ -109,8 +111,8 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
     /** S3-3: Shared token encoder for consistent estimation across pipeline. */
     private readonly tokenEncoder: TokenEncoder;
 
-    /** Cached execution mode — resolved lazily on first query. */
-    private cachedExecutionMode: ExecutionMode | null = null;
+    /** Cached mode detection result — resolved lazily on first query. */
+    private cachedModeResult: ModeDetectionResult | null = null;
 
     // ── Dispatch serialization ───────────────────────────────────────────────
     /**
@@ -136,42 +138,29 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
     /**
      * Determine the current execution mode.
      *
-     * - `primary`: vscode.lm API is available — prompts go directly into the
-     *   conversation via LM streaming. No request.md needed.
-     * - `fallback`: No LM model found — uses file-based IPC (request.md + meta-prompt).
+     * Delegates to the centralized `ExecutionModeResolver` which probes VS Code
+     * APIs to detect one of three certified modes:
+     *   - `vscode-native`: LM API + Copilot models available
+     *   - `cursor`: Cursor extension + chat command available
+     *   - `antigravity`: Antigravity extension + agent/chat command available
+     *   - `unsupported`: None of the above detected
      *
-     * Result is cached for the lifetime of the adapter instance to avoid
-     * repeated model enumeration during a single orchestration run.
+     * Result is cached for the lifetime of the adapter instance.
      */
     public async getExecutionMode(): Promise<ExecutionMode> {
-        if (this.cachedExecutionMode) {
-            return this.cachedExecutionMode;
+        if (!this.cachedModeResult) {
+            this.cachedModeResult = await getExecutionMode();
+            log.info(`[AntigravityADKAdapter] ExecutionMode resolved: ${this.cachedModeResult.mode} (host: ${this.cachedModeResult.host})`);
         }
-
-        try {
-            const models = await vscode.lm.selectChatModels({});
-            if (models.length > 0) {
-                this.cachedExecutionMode = 'primary';
-                log.info(`[AntigravityADK] ExecutionMode resolved: primary (${models.length} LM model(s) available)`);
-            } else {
-                this.cachedExecutionMode = 'fallback';
-                log.info(`[AntigravityADK] ExecutionMode resolved: fallback (no LM models)`);
-            }
-        } catch {
-            this.cachedExecutionMode = 'fallback';
-            log.info(`[AntigravityADK] ExecutionMode resolved: fallback (vscode.lm unavailable)`);
-        }
-
-        log.info(`[AntigravityADKAdapter] ExecutionMode detected: ${this.cachedExecutionMode}`);
-        return this.cachedExecutionMode;
+        return this.cachedModeResult.mode;
     }
 
     /**
      * Synchronous getter for callers that need the mode after it has been resolved.
-     * Returns null if getExecutionMode() has not been called yet.
+     * Returns null if neither the adapter nor the global resolver has been called yet.
      */
     public getExecutionModeSync(): ExecutionMode | null {
-        return this.cachedExecutionMode;
+        return this.cachedModeResult?.mode ?? getExecutionModeSync()?.mode ?? null;
     }
 
     async createSession(options: ADKSessionOptions): Promise<ADKSessionHandle> {

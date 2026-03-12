@@ -7,7 +7,7 @@ import { asTimestamp, type Phase } from '../types/index.js';
 import { MissionControlPanel } from '../webview/MissionControlPanel.js';
 import { RESOURCE_URIS } from '../mcp/types.js';
 import log from '../logger/log.js';
-import type { ExecutionMode } from '../adk/AntigravityADKAdapter.js';
+import type { ExecutionMode } from '../adk/ExecutionModeResolver.js';
 import type { ServiceContainer } from '../ServiceContainer.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -46,7 +46,6 @@ export interface WorkerLauncherADK {
             implementationPlan?: string;
             parentHandoffs?: string[];
         },
-        executionMode?: ExecutionMode,
     ): Promise<unknown>;
 }
 
@@ -97,7 +96,7 @@ export class WorkerLauncher {
 
         // Step 3.5: Resolve execution mode for prompt adjustment and observability
         // (mirrors PlannerAgent L219–226 from Phase 3)
-        let executionMode: ExecutionMode = 'fallback'; // safe default
+        let executionMode: ExecutionMode = 'unsupported'; // safe default
         const adapterAny = this.adkController as unknown as { getExecutionMode?: () => Promise<ExecutionMode> };
         if (typeof adapterAny.getExecutionMode === 'function') {
             executionMode = await adapterAny.getExecutionMode();
@@ -251,6 +250,6 @@ export class WorkerLauncher {
             }
         }
 
-        await this.adkController.spawnWorker(effectivePhase, timeoutMs, masterTaskId, mcpResourceUris, executionMode);
+        await this.adkController.spawnWorker(effectivePhase, timeoutMs, masterTaskId, mcpResourceUris);
     }
 }

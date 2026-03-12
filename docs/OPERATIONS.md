@@ -49,7 +49,7 @@ code --install-extension coogent-0.2.0.vsix
 | Step | Command / Action | Pass Criteria |
 |---|---|---|
 | Type check | `npm run lint` | 0 errors |
-| Test suite | `npm test` | 88 host + 8 webview test files pass |
+| Test suite | `npm test` | 89 host + 8 webview test files pass |
 | Security audit | `npm audit --audit-level=high` | No high/critical vulnerabilities |
 | CI pipeline | `npm run ci` | All above in sequence |
 | Version bump | Update `version` in `package.json` | Semantic versioning |

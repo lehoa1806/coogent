@@ -11,7 +11,7 @@ import log from '../logger/log.js';
 import type { AgentBackendProvider } from './AgentBackendProvider.js';
 import { INJECTION_PATTERNS } from './injection-patterns.js';
 import { PromptInjectionBlockedError } from './PromptInjectionBlockedError.js';
-import type { ExecutionMode } from './AntigravityADKAdapter.js';
+import type { ExecutionMode } from './ExecutionModeResolver.js';
 import { TypedEventEmitter } from '../engine/TypedEventEmitter.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -176,7 +176,6 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
             implementationPlan?: string;
             parentHandoffs?: string[];  // PLURAL — supports multi-dependency DAG phases
         },
-        executionMode: ExecutionMode = 'primary',
     ): Promise<WorkerHandle | null> {
         // B-3: Warn when mcpResourceUris is absent for phases that have parent dependencies.
         // This surfaces silent Pull→Push degradation that would otherwise be invisible.
@@ -197,9 +196,14 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
             await this.terminateWorker(phase.id, 'ORPHAN_PREVENTION');
         }
 
-        log.info(`[ADKController] Spawning worker with executionMode: ${executionMode ?? 'not-specified'}`);
+        // Resolve execution mode from the centralized resolver
+        let executionMode: ExecutionMode = 'unsupported';
+        if (this.adapter.getExecutionMode) {
+            executionMode = await this.adapter.getExecutionMode();
+        }
+        log.info(`[ADKController] spawnWorker: executionMode=${executionMode}`);
 
-        const prompt = this.buildInjectionPrompt(phase, mcpResourceUris, executionMode);
+        const prompt = this.buildInjectionPrompt(phase, mcpResourceUris);
 
         // Determine if a new conversation should be started based on mode.
         // Isolated mode: ALWAYS start a new conversation — guaranteed regardless
@@ -561,7 +565,6 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
             implementationPlan?: string;
             parentHandoffs?: string[];  // PLURAL — one URI per depends_on parent
         },
-        executionMode: ExecutionMode = 'primary',
     ): string {
         // S1-4 (SEC-3, AI-5): Prompt injection detection
         // R1: When blockOnInjection is enabled, throw instead of warn-only.
@@ -626,18 +629,6 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
                     `DO NOT GUESS context. Read these resources to understand your task.`
                 );
             }
-        }
-
-        // In fallback mode, include request.md read instructions so the agent
-        // knows to read the file-based prompt. In primary mode, the prompt is
-        // injected directly into the conversation — no request.md needed.
-        if (executionMode === 'fallback') {
-            sections.push(
-                ``,
-                `## Input Instructions`,
-                `Read the full task instructions from the \`request.md\` file in your working directory.`,
-                `Follow those instructions carefully before writing your response.`,
-            );
         }
 
         return sections.join('\n');

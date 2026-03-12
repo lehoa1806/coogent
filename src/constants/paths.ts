@@ -76,7 +76,7 @@ export const ENGINE_LOG_FILE = 'engine.jsonl';
 /** Workspace-level agent profile configuration (user-editable). */
 export const WORKERS_CONFIG_FILE = 'workers.json';
 
-/** File-based IPC prompt file (per subtask). */
+/** @deprecated Legacy file-based IPC prompt file. No longer used by supported execution modes. */
 export const IPC_REQUEST_FILE = 'request.md';
 
 /** File-based IPC response file (per subtask). */
@@ -224,7 +224,7 @@ export function getIpcSubtaskDir(
         : path.join(ipcRoot, subTaskName);
 }
 
-/** Absolute path to the IPC request file within a subtask directory. */
+/** @deprecated Legacy request file path. No longer used by supported execution modes. */
 export function getIpcRequestPath(subTaskDir: string): string {
     return path.join(subTaskDir, IPC_REQUEST_FILE);
 }

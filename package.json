@@ -212,17 +212,17 @@
         },
         "coogent.blockOnSecretsDetection": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Block phase execution when secrets are detected in context files (default: warn-only)."
         },
         "coogent.blockOnPromptInjection": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Block phase execution when prompt injection patterns are detected in phase prompts (default: warn-only)."
         },
         "coogent.enableEncryption": {
           "type": "boolean",
-          "default": false,
+          "default": true,
           "description": "Encrypt .task-runbook.json files at rest using a key stored in VS Code SecretStorage."
         },
         "coogent.maxWorkerOutputBytes": {
@@ -326,7 +326,7 @@
   },
   "lint-staged": {
     "src/**/*.ts": [
-      "eslint --max-warnings=50"
+      "eslint --max-warnings=30"
     ]
   },
   "scripts": {
@@ -338,7 +338,7 @@
     "dev:webview": "cd webview-ui && npm run dev",
     "build": "npm run compile && npm run build:webview",
     "mcp:start": "node out/stdio-server.js",
-    "lint": "tsc --noEmit && eslint src/ --max-warnings=50",
+    "lint": "tsc --noEmit && eslint src/ --max-warnings=30",
     "pretest": "npm run lint",
     "prepackage": "npm run compile -- --minify && npm run build:webview",
     "package": "npx -y @vscode/vsce package",

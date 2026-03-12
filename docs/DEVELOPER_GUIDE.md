@@ -274,7 +274,7 @@ npx jest --watch                   # Watch mode
 npx jest --listTests               # List all test files
 ```
 
-### Test Suites (88 host files + 8 webview files)
+### Test Suites (89 host files + 8 webview files)
 
 #### Core Engine (`src/engine/__tests__/`)
 

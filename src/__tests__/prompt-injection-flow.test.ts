@@ -65,7 +65,7 @@ import {
 import type { AgentBackendProvider } from '../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle, ADKSessionOptions } from '../adk/ADKController.js';
 import type { WorkspaceScanner } from '../planner/WorkspaceScanner.js';
-import type { ExecutionMode } from '../adk/AntigravityADKAdapter.js';
+import type { ExecutionMode } from '../adk/ExecutionModeResolver.js';
 import type { HandoffExtractor } from '../context/HandoffExtractor.js';
 import type { ServiceContainer } from '../ServiceContainer.js';
 import { asPhaseId, type Phase } from '../types/index.js';
@@ -132,23 +132,23 @@ function createSvc(overrides: Partial<ServiceContainer> = {}): ServiceContainer 
 
 describe('Prompt Injection Flow — Integration', () => {
     // ─────────────────────────────────────────────────────────────────────
-    //  Planner + Primary Mode
+    //  Planner + Antigravity Mode
     // ─────────────────────────────────────────────────────────────────────
 
-    describe('planner → primary mode', () => {
+    describe('planner → antigravity mode', () => {
         it('prompt is injected directly without response.md instructions', async () => {
-            const adapter = createAdapter('primary');
+            const adapter = createAdapter('antigravity');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
                 maxTreeChars: 100,
             }, { scanner: createScanner() });
 
-            agent.setMasterTaskId('int-primary-task');
+            agent.setMasterTaskId('int-antigravity-task');
             await agent.plan('Build microservices architecture');
 
             // Verify mode
-            expect(agent.getLastExecutionMode()).toBe('primary');
+            expect(agent.getLastExecutionMode()).toBe('antigravity');
             expect(adapter.getExecutionMode).toHaveBeenCalled();
 
             // Verify prompt does NOT contain response.md instructions
@@ -161,7 +161,7 @@ describe('Prompt Injection Flow — Integration', () => {
             // Session options
             expect(createSession.mock.calls[0][0]).toEqual(
                 expect.objectContaining({
-                    masterTaskId: 'int-primary-task',
+                    masterTaskId: 'int-antigravity-task',
                     phaseNumber: 0,
                     newConversation: true,
                     zeroContext: true,
@@ -171,22 +171,22 @@ describe('Prompt Injection Flow — Integration', () => {
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    //  Planner + Fallback Mode
+    //  Planner + Unsupported Mode
     // ─────────────────────────────────────────────────────────────────────
 
-    describe('planner → fallback mode', () => {
-        it('planner prompt is identical to primary — adapter handles response.md', async () => {
-            const adapter = createAdapter('fallback');
+    describe('planner → unsupported mode', () => {
+        it('planner prompt is identical to antigravity — adapter handles response.md', async () => {
+            const adapter = createAdapter('unsupported');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
                 maxTreeChars: 100,
             }, { scanner: createScanner() });
 
-            agent.setMasterTaskId('int-fallback-task');
+            agent.setMasterTaskId('int-unsupported-task');
             await agent.plan('Create data pipeline');
 
-            expect(agent.getLastExecutionMode()).toBe('fallback');
+            expect(agent.getLastExecutionMode()).toBe('unsupported');
 
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
@@ -194,7 +194,6 @@ describe('Prompt Injection Flow — Integration', () => {
 
             // The planner no longer appends response.md instructions —
             // the adapter layer handles that during createFileIpcSession.
-            // With a mock adapter the raw prompt is just the system prompt.
             expect(prompt).not.toContain('## Output');
             expect(prompt).not.toContain('Write your COMPLETE response to the response.md');
         });
@@ -205,8 +204,8 @@ describe('Prompt Injection Flow — Integration', () => {
     // ─────────────────────────────────────────────────────────────────────
 
     describe('worker launcher → mode propagation', () => {
-        it('passes primary executionMode through the full launch flow', async () => {
-            const adk = createADK('primary');
+        it('resolves antigravity executionMode through the full launch flow', async () => {
+            const adk = createADK('antigravity');
             const launcher = new WorkerLauncher(adk, createLogger());
 
             const phase: Phase = {
@@ -217,11 +216,11 @@ describe('Prompt Injection Flow — Integration', () => {
                 success_criteria: 'exit_code:0',
             };
 
-            await launcher.launch(phase, 120_000, 'int-worker-primary', createSvc());
+            await launcher.launch(phase, 120_000, 'int-worker-antigravity', createSvc());
 
-            // Verify executionMode propagated to spawnWorker as 5th argument
+            // spawnWorker is called with 4 args (no executionMode param)
             const spawnCall = (adk.spawnWorker as jest.Mock).mock.calls[0];
-            expect(spawnCall[4]).toBe('primary');
+            expect(spawnCall).toHaveLength(4);
 
             // Verify prompt assembly includes handoff and distillation
             const spawnedPhase = spawnCall[0] as Phase;
@@ -230,8 +229,8 @@ describe('Prompt Injection Flow — Integration', () => {
             expect(spawnedPhase.prompt).toContain('Build API endpoints');
         });
 
-        it('passes fallback executionMode through the full launch flow', async () => {
-            const adk = createADK('fallback');
+        it('resolves unsupported executionMode through the full launch flow', async () => {
+            const adk = createADK('unsupported');
             const launcher = new WorkerLauncher(adk, createLogger());
 
             const phase: Phase = {
@@ -242,10 +241,11 @@ describe('Prompt Injection Flow — Integration', () => {
                 success_criteria: 'exit_code:0',
             };
 
-            await launcher.launch(phase, 120_000, 'int-worker-fallback', createSvc());
+            await launcher.launch(phase, 120_000, 'int-worker-unsupported', createSvc());
 
+            // spawnWorker is called with 4 args (no executionMode param)
             const spawnCall = (adk.spawnWorker as jest.Mock).mock.calls[0];
-            expect(spawnCall[4]).toBe('fallback');
+            expect(spawnCall).toHaveLength(4);
         });
     });
 
@@ -256,56 +256,54 @@ describe('Prompt Injection Flow — Integration', () => {
     describe('response.md contract', () => {
         it('planner prompt never contains response.md instructions — adapter handles it', async () => {
             // Test both modes in sequence to confirm the planner is clean
-            const primaryAdapter = createAdapter('primary');
-            const primaryAgent = new PlannerAgent(primaryAdapter, {
+            const antigravityAdapter = createAdapter('antigravity');
+            const antigravityAgent = new PlannerAgent(antigravityAdapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
                 maxTreeChars: 100,
             }, { scanner: createScanner() });
-            await primaryAgent.plan('Query 1');
+            await antigravityAgent.plan('Query 1');
 
-            const fallbackAdapter = createAdapter('fallback');
-            const fallbackAgent = new PlannerAgent(fallbackAdapter, {
+            const unsupportedAdapter = createAdapter('unsupported');
+            const unsupportedAgent = new PlannerAgent(unsupportedAdapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
                 maxTreeChars: 100,
             }, { scanner: createScanner() });
-            await fallbackAgent.plan('Query 2');
+            await unsupportedAgent.plan('Query 2');
 
-            const primaryPrompt = ((primaryAdapter.createSession as jest.Mock).mock.calls[0][0] as ADKSessionOptions).initialPrompt;
-            const fallbackPrompt = ((fallbackAdapter.createSession as jest.Mock).mock.calls[0][0] as ADKSessionOptions).initialPrompt;
+            const antigravityPrompt = ((antigravityAdapter.createSession as jest.Mock).mock.calls[0][0] as ADKSessionOptions).initialPrompt;
+            const unsupportedPrompt = ((unsupportedAdapter.createSession as jest.Mock).mock.calls[0][0] as ADKSessionOptions).initialPrompt;
 
             // Neither mode includes response.md instructions in the planner
             // prompt — the adapter layer appends them during session creation.
-            expect(primaryPrompt).not.toContain('Write your COMPLETE response to the response.md');
-            expect(fallbackPrompt).not.toContain('Write your COMPLETE response to the response.md');
+            expect(antigravityPrompt).not.toContain('Write your COMPLETE response to the response.md');
+            expect(unsupportedPrompt).not.toContain('Write your COMPLETE response to the response.md');
         });
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    //  Regression: Stale request.md does not affect primary mode
+    //  Regression: Stale request.md does not affect antigravity mode
     // ─────────────────────────────────────────────────────────────────────
 
-    describe('stale request.md → primary mode', () => {
+    describe('stale request.md → antigravity mode', () => {
         it('prompt does NOT contain request.md instructions even if request.md exists from a prior run', async () => {
-            // Simulate a stale request.md existing from a previous fallback run:
-            // In primary mode the prompt is injected directly — no request.md reference.
-            const adapter = createAdapter('primary');
+            const adapter = createAdapter('antigravity');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
                 maxTreeChars: 100,
             }, { scanner: createScanner() });
 
-            agent.setMasterTaskId('stale-request-primary-task');
+            agent.setMasterTaskId('stale-request-antigravity-task');
             await agent.plan('Refactor database layer');
 
-            expect(agent.getLastExecutionMode()).toBe('primary');
+            expect(agent.getLastExecutionMode()).toBe('antigravity');
 
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
 
-            // Primary mode: no request.md instructions regardless of filesystem state
+            // Antigravity mode: no request.md instructions regardless of filesystem state
             expect(prompt).not.toContain('request.md');
             expect(prompt).not.toContain('Read the instructions from the file');
 
@@ -313,7 +311,7 @@ describe('Prompt Injection Flow — Integration', () => {
             expect(prompt).toContain('integration-test-system-prompt');
             expect(createSession).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    masterTaskId: 'stale-request-primary-task',
+                    masterTaskId: 'stale-request-antigravity-task',
                     newConversation: true,
                     zeroContext: true,
                 }),
@@ -322,22 +320,22 @@ describe('Prompt Injection Flow — Integration', () => {
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    //  Regression: Fallback mode writes request.md (meta-prompt)
+    //  Regression: Unsupported mode — adapter handles response.md
     // ─────────────────────────────────────────────────────────────────────
 
-    describe('fallback mode → no request.md, adapter handles response.md', () => {
-        it('planner prompt in fallback is clean — adapter appends response.md instructions', async () => {
-            const adapter = createAdapter('fallback');
+    describe('unsupported mode → no request.md, adapter handles response.md', () => {
+        it('planner prompt in unsupported mode is clean — adapter appends response.md instructions', async () => {
+            const adapter = createAdapter('unsupported');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
                 maxTreeChars: 100,
             }, { scanner: createScanner() });
 
-            agent.setMasterTaskId('fallback-request-write');
+            agent.setMasterTaskId('unsupported-request-write');
             await agent.plan('Create authentication module');
 
-            expect(agent.getLastExecutionMode()).toBe('fallback');
+            expect(agent.getLastExecutionMode()).toBe('unsupported');
 
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
@@ -351,12 +349,12 @@ describe('Prompt Injection Flow — Integration', () => {
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    //  Regression: Worker prompt in primary mode excludes request.md
+    //  Regression: Worker prompt in antigravity mode excludes request.md
     // ─────────────────────────────────────────────────────────────────────
 
-    describe('worker prompt → primary mode excludes request.md', () => {
-        it('effective prompt does NOT contain request.md references in primary mode', async () => {
-            const adk = createADK('primary');
+    describe('worker prompt → antigravity mode excludes request.md', () => {
+        it('effective prompt does NOT contain request.md references in antigravity mode', async () => {
+            const adk = createADK('antigravity');
             const launcher = new WorkerLauncher(adk, createLogger());
 
             const phase: Phase = {
@@ -367,7 +365,7 @@ describe('Prompt Injection Flow — Integration', () => {
                 success_criteria: 'exit_code:0',
             };
 
-            await launcher.launch(phase, 120_000, 'worker-primary-no-request', createSvc());
+            await launcher.launch(phase, 120_000, 'worker-antigravity-no-request', createSvc());
 
             const spawnCall = (adk.spawnWorker as jest.Mock).mock.calls[0];
             const spawnedPhase = spawnCall[0] as Phase;
@@ -378,21 +376,18 @@ describe('Prompt Injection Flow — Integration', () => {
 
             // Verify the original prompt content IS present
             expect(spawnedPhase.prompt).toContain('Build payment processing');
-
-            // Verify mode propagated
-            expect(spawnCall[4]).toBe('primary');
         });
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    //  Regression: Mode detection absent → safe default to fallback
+    //  Regression: Mode detection absent → safe default to unsupported
     //  The production code uses `typeof getExecutionMode === 'function'`
     //  to guard the call. When getExecutionMode is missing (adapter
-    //  doesn't expose it), the safe default 'fallback' is used.
+    //  doesn't expose it), the safe default 'unsupported' is used.
     // ─────────────────────────────────────────────────────────────────────
 
-    describe('mode detection absent → defaults to fallback', () => {
-        it('planner defaults to fallback when adapter lacks getExecutionMode', async () => {
+    describe('mode detection absent → defaults to unsupported', () => {
+        it('planner defaults to unsupported when adapter lacks getExecutionMode', async () => {
             // Create a bare adapter WITHOUT getExecutionMode
             const adapter: AgentBackendProvider = {
                 name: 'no-mode-adapter',
@@ -412,23 +407,23 @@ describe('Prompt Injection Flow — Integration', () => {
                 maxTreeChars: 100,
             }, { scanner: createScanner() });
 
-            agent.setMasterTaskId('fallback-no-method');
+            agent.setMasterTaskId('unsupported-no-method');
             await agent.plan('Run security audit');
 
-            // typeof check fails → executionMode stays at safe default 'fallback'
-            expect(agent.getLastExecutionMode()).toBe('fallback');
+            // typeof check fails → executionMode stays at safe default 'unsupported'
+            expect(agent.getLastExecutionMode()).toBe('unsupported');
 
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
 
-            // Even in fallback mode, the planner prompt is clean —
+            // Even in unsupported mode, the planner prompt is clean —
             // the adapter layer appends response.md instructions.
             expect(prompt).toContain('integration-test-system-prompt');
             expect(prompt).not.toContain('## Output');
             expect(prompt).not.toContain('Write your COMPLETE response to the response.md');
         });
 
-        it('worker launcher defaults to fallback when ADK lacks getExecutionMode', async () => {
+        it('worker launcher defaults to unsupported when ADK lacks getExecutionMode', async () => {
             // Create a bare ADK mock WITHOUT getExecutionMode
             const adk: WorkerLauncherADK = {
                 spawnWorker: jest.fn(async () => {}),
@@ -444,11 +439,11 @@ describe('Prompt Injection Flow — Integration', () => {
                 success_criteria: 'exit_code:0',
             };
 
-            await launcher.launch(phase, 120_000, 'worker-fallback-no-method', createSvc());
+            await launcher.launch(phase, 120_000, 'worker-unsupported-no-method', createSvc());
 
+            // spawnWorker is called with 4 args (no executionMode param)
             const spawnCall = (adk.spawnWorker as jest.Mock).mock.calls[0];
-            // executionMode defaults to 'fallback' since getExecutionMode is absent
-            expect(spawnCall[4]).toBe('fallback');
+            expect(spawnCall).toHaveLength(4);
         });
     });
 
@@ -457,8 +452,8 @@ describe('Prompt Injection Flow — Integration', () => {
     // ─────────────────────────────────────────────────────────────────────
 
     describe('response.md contract → mode-independent guarantees', () => {
-        it('primary mode: prompt never instructs filesystem write to response.md', async () => {
-            const adapter = createAdapter('primary');
+        it('antigravity mode: prompt never instructs filesystem write to response.md', async () => {
+            const adapter = createAdapter('antigravity');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
@@ -470,13 +465,13 @@ describe('Prompt Injection Flow — Integration', () => {
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
 
-            // In primary mode, the response streams back via vscode.lm — no response.md write
+            // In antigravity mode, the response streams back via direct injection — no response.md write
             expect(prompt).not.toContain('Write your COMPLETE response to the response.md');
             expect(prompt).not.toContain('## Output');
         });
 
-        it('fallback mode: planner prompt does not contain response.md (adapter handles it)', async () => {
-            const adapter = createAdapter('fallback');
+        it('unsupported mode: planner prompt does not contain response.md (adapter handles it)', async () => {
+            const adapter = createAdapter('unsupported');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
@@ -493,32 +488,80 @@ describe('Prompt Injection Flow — Integration', () => {
             expect(prompt).not.toContain('Write your COMPLETE response to the response.md');
         });
 
-        it('worker in both modes: executionMode is always propagated to spawnWorker', async () => {
-            // Primary
-            const adkPrimary = createADK('primary');
-            const launcherPrimary = new WorkerLauncher(adkPrimary, createLogger());
-            const phasePrimary: Phase = {
+        it('worker in both modes: spawnWorker is called with 4 args (no executionMode param)', async () => {
+            // Antigravity
+            const adkAntigravity = createADK('antigravity');
+            const launcherAntigravity = new WorkerLauncher(adkAntigravity, createLogger());
+            const phaseAntigravity: Phase = {
                 id: asPhaseId(5),
-                prompt: 'Primary task',
+                prompt: 'Antigravity task',
                 context_files: [],
                 status: 'pending',
                 success_criteria: 'exit_code:0',
             };
-            await launcherPrimary.launch(phasePrimary, 120_000, 'mode-contract-primary', createSvc());
-            expect((adkPrimary.spawnWorker as jest.Mock).mock.calls[0][4]).toBe('primary');
+            await launcherAntigravity.launch(phaseAntigravity, 120_000, 'mode-contract-antigravity', createSvc());
+            expect((adkAntigravity.spawnWorker as jest.Mock).mock.calls[0]).toHaveLength(4);
 
-            // Fallback
-            const adkFallback = createADK('fallback');
-            const launcherFallback = new WorkerLauncher(adkFallback, createLogger());
-            const phaseFallback: Phase = {
+            // Unsupported
+            const adkUnsupported = createADK('unsupported');
+            const launcherUnsupported = new WorkerLauncher(adkUnsupported, createLogger());
+            const phaseUnsupported: Phase = {
                 id: asPhaseId(6),
-                prompt: 'Fallback task',
+                prompt: 'Unsupported task',
                 context_files: [],
                 status: 'pending',
                 success_criteria: 'exit_code:0',
             };
-            await launcherFallback.launch(phaseFallback, 120_000, 'mode-contract-fallback', createSvc());
-            expect((adkFallback.spawnWorker as jest.Mock).mock.calls[0][4]).toBe('fallback');
+            await launcherUnsupported.launch(phaseUnsupported, 120_000, 'mode-contract-unsupported', createSvc());
+            expect((adkUnsupported.spawnWorker as jest.Mock).mock.calls[0]).toHaveLength(4);
+        });
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  NEW: No execution mode emits /handle block
+    // ─────────────────────────────────────────────────────────────────────
+
+    describe('no execution mode emits /handle block', () => {
+        it('the string /handle never appears in any planner prompt across all modes', async () => {
+            const allModes: ExecutionMode[] = ['vscode-native', 'cursor', 'antigravity', 'unsupported'];
+            for (const mode of allModes) {
+                const adapter = createAdapter(mode);
+                const agent = new PlannerAgent(adapter, {
+                    workspaceRoot: '/tmp/test-workspace',
+                    maxTreeDepth: 1,
+                    maxTreeChars: 100,
+                }, { scanner: createScanner() });
+
+                await agent.plan(`Test query for ${mode}`);
+
+                const createSession = adapter.createSession as jest.Mock;
+                const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
+                expect(prompt).not.toContain('/handle');
+            }
+        });
+    });
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  NEW: No execution mode emits request.md reference
+    // ─────────────────────────────────────────────────────────────────────
+
+    describe('no execution mode emits request.md reference', () => {
+        it('request.md never appears in any planner prompt across all modes', async () => {
+            const allModes: ExecutionMode[] = ['vscode-native', 'cursor', 'antigravity', 'unsupported'];
+            for (const mode of allModes) {
+                const adapter = createAdapter(mode);
+                const agent = new PlannerAgent(adapter, {
+                    workspaceRoot: '/tmp/test-workspace',
+                    maxTreeDepth: 1,
+                    maxTreeChars: 100,
+                }, { scanner: createScanner() });
+
+                await agent.plan(`Verify no request.md for ${mode}`);
+
+                const createSession = adapter.createSession as jest.Mock;
+                const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
+                expect(prompt).not.toContain('request.md');
+            }
         });
     });
 });

@@ -27,15 +27,11 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 /**
- * Module-level singleton — services are assigned directly during `activate()`.
- *
- * **Reactivation risk (hidden coupling #1)**:  Because this lives at module
- * scope, `svc` survives `deactivate()` → `activate()` cycles if VS Code
- * reloads the extension host without fully evicting the cached module.
- * `releaseAll()` clears all service fields, but any external references
- * captured during the previous activation will become stale.
+ * Module-level service container — recreated on each `activate()` call and
+ * fully released on `deactivate()`. This ensures a clean slate when VS Code
+ * reloads the extension host.
  */
-const svc = new ServiceContainer();
+let svc: ServiceContainer | undefined;
 
 // Re-export preFlightGitCheck for backward compatibility
 export { preFlightGitCheck };
@@ -48,6 +44,9 @@ export function activate(context: vscode.ExtensionContext): void {
   // Step 1-3: Start log stream FIRST — captures everything from this point on
   initializeLogging();
   log.info('[Coogent] Extension activating...');
+
+  // Create a fresh ServiceContainer on every activation
+  svc = new ServiceContainer();
 
   // Commands must always be available, even without a workspace
   registerAllCommands(context, svc);
@@ -93,23 +92,28 @@ export function activate(context: vscode.ExtensionContext): void {
 export async function deactivate(): Promise<void> {
   log.info('[Coogent] Extension deactivating...');
 
-  await Promise.allSettled([
-    svc.engine?.getState() !== 'IDLE' ? svc.engine?.abort().catch(log.onError) : undefined,
-    svc.adkController?.killAllWorkers().catch(log.onError),
-    svc.plannerAgent?.abort().catch(log.onError),
-    svc.mcpBridge?.disconnect().catch((err) =>
-      log.warn('[Coogent] deactivate: mcpBridge.disconnect() threw:', err)
-    ),
-  ]);
+  if (svc) {
+    await Promise.allSettled([
+      svc.engine?.getState() !== 'IDLE' ? svc.engine?.abort().catch(log.onError) : undefined,
+      svc.adkController?.killAllWorkers().catch(log.onError),
+      svc.plannerAgent?.abort().catch(log.onError),
+      svc.mcpBridge?.disconnect().catch((err) =>
+        log.warn('[Coogent] deactivate: mcpBridge.disconnect() threw:', err)
+      ),
+    ]);
 
-  svc.outputRegistry?.dispose();
+    svc.outputRegistry?.dispose();
 
-  try {
-    svc.mcpServer?.dispose();
-  } catch (err) {
-    log.warn('[Coogent] deactivate: mcpServer.dispose() threw:', err);
+    try {
+      svc.mcpServer?.dispose();
+    } catch (err) {
+      log.warn('[Coogent] deactivate: mcpServer.dispose() threw:', err);
+    }
+
+    svc.releaseAll();
+    svc = undefined;
   }
 
-  svc.releaseAll();
   disposeLog();
 }
+
