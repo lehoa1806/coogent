@@ -10,8 +10,8 @@ import { buildImplementationPlanMarkdown } from './utils/planMarkdown.js';
 import log from './logger/log.js';
 import type { ServiceContainer } from './ServiceContainer.js';
 import type { ArtifactDB } from './mcp/ArtifactDB.js';
-import { getDebugDir } from './constants/paths.js';
-import type { Runbook } from './types/index.js';
+import { getDebugDir, IPC_RESPONSE_FILE } from './constants/paths.js';
+import type { Runbook, EngineState } from './types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  wirePlanner — connects PlannerAgent events to Engine and MCP
@@ -177,6 +177,29 @@ export function wirePlanner(
             },
         });
 
+        // ── Runtime persistence: planner response.md (FR2) ────────────
+        // Persist raw planner output to the planner phase directory.
+        // This ensures response.md exists for every phase, including planner.
+        const rawOutput = plannerAgent.getLastRawOutput();
+        if (rawOutput && svc.currentSessionDir) {
+            const plannerPhaseDir = path.join(svc.currentSessionDir, 'phase-000-planner');
+            fs.mkdir(plannerPhaseDir, { recursive: true })
+                .then(() => fs.writeFile(path.join(plannerPhaseDir, IPC_RESPONSE_FILE), rawOutput, 'utf-8'))
+                .then(() => log.info('[PlannerWiring] Planner response.md persisted.'))
+                .catch(err => log.warn('[PlannerWiring] Failed to persist planner response.md (non-fatal):', err));
+        }
+
+        // ── Runtime persistence: .task-runbook.json (FR3) ─────────────
+        // Persist the validated runbook to the task root immediately after
+        // successful planning, before user approval. PlanningController.planApproved()
+        // will write again on approval — this early write ensures the artifact
+        // exists for inspection even before approval.
+        if (svc.stateManager) {
+            svc.stateManager.saveRunbook(draft, 'PLAN_REVIEW' as EngineState)
+                .then(() => log.info('[PlannerWiring] .task-runbook.json persisted (early write).'))
+                .catch(err => log.warn('[PlannerWiring] Failed to persist .task-runbook.json (non-fatal):', err));
+        }
+
         // S2 audit fix: Persist the planner system prompt for prompt lineage
         if (mcpServer) {
             const plannerPrompt = plannerAgent.getLastSystemPrompt();
@@ -223,6 +246,18 @@ export function wirePlanner(
     });
 
     plannerAgent.on('plan:error', (error) => {
+        // ── FR6: Failure traceability — persist raw output on error ────
+        // If the planner produced any raw output before failing (e.g. malformed JSON),
+        // persist it to response.md so the output is still inspectable for debugging.
+        const rawOutput = plannerAgent.getLastRawOutput();
+        if (rawOutput && svc.currentSessionDir) {
+            const plannerPhaseDir = path.join(svc.currentSessionDir, 'phase-000-planner');
+            fs.mkdir(plannerPhaseDir, { recursive: true })
+                .then(() => fs.writeFile(path.join(plannerPhaseDir, IPC_RESPONSE_FILE), rawOutput, 'utf-8'))
+                .then(() => log.info('[PlannerWiring] Planner response.md persisted on error (FR6).'))
+                .catch(err => log.warn('[PlannerWiring] Failed to persist planner response.md on error (non-fatal):', err));
+        }
+
         MissionControlPanel.broadcast({
             type: 'PLAN_STATUS',
             payload: { status: 'error', message: error.message },

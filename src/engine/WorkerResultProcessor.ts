@@ -3,7 +3,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Extracted from EngineWiring wireEngine() worker lifecycle handlers.
 
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import { asTimestamp } from '../types/index.js';
+import { IPC_RESPONSE_FILE } from '../constants/paths.js';
 import { MissionControlPanel } from '../webview/MissionControlPanel.js';
 import log from '../logger/log.js';
 
@@ -184,6 +187,21 @@ export class WorkerResultProcessor {
                         });
                     }
                 }
+
+                // ── Runtime persistence: worker response.md (FR2) ────────
+                // Persist worker accumulated output to the phase's IPC directory.
+                if (accumulatedOutput && currentSessionDir) {
+                    const runbook = this.engine.getRunbook();
+                    const phaseObj = runbook?.phases.find(p => p.id === phaseId);
+                    if (phaseObj?.mcpPhaseId) {
+                        const phaseDir = path.join(currentSessionDir, phaseObj.mcpPhaseId);
+                        fs.mkdir(phaseDir, { recursive: true })
+                            .then(() => fs.writeFile(path.join(phaseDir, IPC_RESPONSE_FILE), accumulatedOutput, 'utf-8'))
+                            .then(() => log.info(`[WorkerResultProcessor] Worker response.md persisted for phase ${phaseId}.`))
+                            .catch(err => log.warn(`[WorkerResultProcessor] Failed to persist worker response.md for phase ${phaseId} (non-fatal):`, err));
+                    }
+                }
+
                 return this.engine.onWorkerExited(phaseId, exitCode);
             })
             .catch(log.onError);
@@ -213,5 +231,10 @@ export class WorkerResultProcessor {
         }
 
         this.engine.onWorkerFailed(phaseId, reason).catch(log.onError);
+
+        // ── FR6: Failure traceability — persist raw output on failure ─
+        // Best-effort write: currentSessionDir is not available directly in
+        // processWorkerFailure, but the MCP server has already been flushed
+        // above. Runtime persistence for failures relies on the MCP DB path.
     }
 }

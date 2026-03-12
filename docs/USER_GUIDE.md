@@ -30,12 +30,12 @@ Search for **"Coogent — Multi-Agent Engine"** in the Extensions panel and clic
 ### From VSIX
 
 ```
-Cmd+Shift+P → "Extensions: Install from VSIX…" → select coogent-0.2.0.vsix
+Cmd+Shift+P → "Extensions: Install from VSIX…" → select coogent-0.3.0.vsix
 ```
 
 **CLI Installation**:
 ```bash
-code --install-extension coogent-0.2.0.vsix
+code --install-extension coogent-0.3.0.vsix
 ```
 
 ### From Source

@@ -65,7 +65,7 @@ export class WorkerPromptCompiler {
         spec: SubtaskSpec,
         profile: AgentProfile,
         contextPackage?: readonly string[],
-        executionMode: ExecutionMode = 'unsupported',
+        _executionMode: ExecutionMode = 'unsupported',
     ): CompiledWorkerPrompt {
         const values: Record<string, string> = {
             agent_type: profile.agent_type,
@@ -105,9 +105,10 @@ export class WorkerPromptCompiler {
         const interpolatedBase = this.interpolate(BASE_WORKER, values);
         const interpolatedAgent = this.interpolate(agentTemplate, values);
 
-        // Assemble IPC contract instructions based on execution mode
-        const ipcInstructions = this.buildIpcInstructions(executionMode);
-        const text = `${interpolatedBase}\n${interpolatedAgent}\n${ipcInstructions}`;
+        // IPC instructions removed — file-writing instructions are handled
+        // exclusively by the adapter layer (AntigravityADKAdapter). See PRD:
+        // "Planner Output Contract Simplification with Mandatory Runtime Persistence".
+        const text = `${interpolatedBase}\n${interpolatedAgent}`;
 
         const promptId = this.generatePromptId(
             spec.subtask_id,
@@ -222,26 +223,5 @@ export class WorkerPromptCompiler {
             return '_None._';
         }
         return items.map((item) => `- ${item}`).join('\n');
-    }
-
-    // ─── IPC Instructions ────────────────────────────────────────────────────
-
-    /**
-     * Build the IPC contract instructions appended to the worker prompt.
-     *
-     * Instructs the agent to write final output to `response.md`.
-     */
-    private buildIpcInstructions(_executionMode: ExecutionMode): string {
-        const sections: string[] = [
-            '### IPC Contract',
-            '',
-        ];
-
-        sections.push(
-            `1. **Write your COMPLETE response** to \`response.md\` in the current IPC directory.`,
-            `2. Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
-        );
-
-        return sections.join('\n');
     }
 }

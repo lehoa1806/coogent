@@ -11,11 +11,11 @@ import type { NormalizedTaskSpec, TaskFamily } from './types.js';
 const FAMILY_KEYWORDS: readonly { readonly family: TaskFamily; readonly keywords: readonly string[] }[] = [
     {
         family: 'bug_fix',
-        keywords: ['fix', 'bug', 'broken', 'crash', 'error', 'failing', 'regression', 'issue', 'not working'],
+        keywords: ['fix bug', 'bug fix', 'bugfix', 'bug', 'broken', 'crash', 'not working', 'defect', 'hotfix', 'fix the', 'fix a', 'fix this'],
     },
     {
         family: 'refactor',
-        keywords: ['refactor', 'clean up', 'restructure', 'reorganize', 'simplify', 'extract', 'decouple', 'modularize'],
+        keywords: ['refactor', 'clean up', 'restructure', 'reorganize', 'simplify', 'extract', 'decouple', 'modularize', 'rename', 'clean'],
     },
     {
         family: 'migration',
@@ -23,19 +23,43 @@ const FAMILY_KEYWORDS: readonly { readonly family: TaskFamily; readonly keywords
     },
     {
         family: 'feature_implementation',
-        keywords: ['add', 'implement', 'create', 'build', 'new feature', 'integrate'],
+        keywords: ['add', 'implement', 'create', 'build', 'new feature', 'integrate', 'develop', 'introduce'],
     },
     {
         family: 'documentation_synthesis',
-        keywords: ['document', 'readme', 'docs', 'wiki', 'api reference', 'guide', 'tutorial', 'jsdoc'],
+        keywords: ['document', 'readme', 'docs', 'wiki', 'api reference', 'guide', 'tutorial', 'jsdoc', 'documentation', 'comment', 'docstring'],
     },
     {
         family: 'repo_analysis',
-        keywords: ['analyze', 'audit', 'investigate', 'assess', 'review codebase', 'understand', 'map'],
+        keywords: ['analyze', 'audit', 'investigate', 'assess', 'review', 'understand', 'evaluate', 'scan', 'profile', 'examine', 'architecture review', 'comprehensive review', 'multi-phase review', 'codebase review', 'repository review', 'review of the', 'review the repo'],
     },
     {
         family: 'review_only',
-        keywords: ['review', 'code review', 'check', 'inspect'],
+        keywords: ['just review', 'review the pr', 'review this pr', 'pr review', 'code review', 'peer review', 'look at', 'review my', 'review the changes', 'review changes'],
+    },
+    {
+        family: 'testing',
+        keywords: ['test', 'spec', 'coverage', 'unit test', 'e2e', 'integration test', 'test suite', 'test case', 'tests', 'assertion', 'mock'],
+    },
+    {
+        family: 'ci_cd',
+        keywords: ['ci', 'cd', 'pipeline', 'github actions', 'workflow', 'ci/cd', 'continuous', 'continuous integration', 'continuous delivery', 'deployment pipeline'],
+    },
+    {
+        family: 'performance',
+        keywords: ['performance', 'benchmark', 'profiling', 'optimize', 'latency', 'throughput', 'slow', 'bottleneck', 'speed up', 'memory', 'cpu', 'speed'],
+    },
+    {
+        family: 'security_audit',
+        keywords: ['security', 'vulnerability', 'cve', 'hardening', 'penetration', 'owasp', 'exploit'],
+    },
+    {
+        family: 'dependency_management',
+        keywords: ['dependency', 'dependencies', 'npm audit', 'outdated', 'lock file', 'upgrade packages', 'npm update', 'outdated packages', 'version bump'],
+    },
+    {
+        family: 'devops_infra',
+        keywords: ['infra', 'infrastructure', 'docker', 'kubernetes', 'terraform', 'deploy config', 'container', 'helm', 'orchestration', 'cloud', 'aws', 'gcp', 'azure'],
     },
 ] as const;
 
@@ -58,7 +82,7 @@ export class TaskClassifier {
      * Classify a normalized task specification into a task family.
      *
      * The classifier builds a composite text corpus from the task spec's
-     * `objective`, `constraints`, `successCriteria`, `knownInputs`, and
+     * `rawUserPrompt`, `constraints`, `successCriteria`, `knownInputs`, and
      * `decompositionHints`. It then counts keyword matches for each family
      * and returns the highest-scoring one. Ties are broken by a fixed
      * priority order:
@@ -103,7 +127,7 @@ export class TaskClassifier {
      */
     private buildCorpus(taskSpec: NormalizedTaskSpec): string {
         const parts: string[] = [
-            taskSpec.objective,
+            taskSpec.rawUserPrompt,
             ...taskSpec.constraints,
             ...taskSpec.successCriteria,
             ...taskSpec.knownInputs,

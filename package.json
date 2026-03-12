@@ -2,7 +2,7 @@
   "name": "coogent",
   "displayName": "Coogent — Multi-Agent Engine",
   "description": "Context Diffusion engine for Antigravity IDE. Breaks massive implementation plans into isolated, zero-context micro-tasks executed by ephemeral AI agents.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "antigravity",
   "license": "MIT",
   "icon": "icon.png",

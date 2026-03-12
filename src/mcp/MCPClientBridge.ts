@@ -33,7 +33,7 @@ export class MCPClientBridge {
         this.mcpServer = mcpServer;
 
         this.client = new Client(
-            { name: 'coogent-mcp-client', version: '0.2.0' },
+            { name: 'coogent-mcp-client', version: '0.3.0' },
             { capabilities: {} }
         );
     }

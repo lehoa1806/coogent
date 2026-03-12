@@ -21,6 +21,31 @@ describe('SubtaskSpecBuilder', () => {
             const result = SubtaskSpecBuilder.inferTaskType('Implement feature X', 'Add the new capability');
             expect(result).toBe('code_modification');
         });
+
+        it('classifies "debug and diagnose" as bug_investigation', () => {
+            const result = SubtaskSpecBuilder.inferTaskType('Debug the crash', 'Diagnose the root cause');
+            expect(result).toBe('bug_investigation');
+        });
+
+        it('classifies "integrate and connect" as small_integration', () => {
+            const result = SubtaskSpecBuilder.inferTaskType('Integrate payment API', 'Connect the payment gateway and link it');
+            expect(result).toBe('small_integration');
+        });
+
+        it('classifies "dependency" related titles as dependency_mapping', () => {
+            const result = SubtaskSpecBuilder.inferTaskType('Check dependencies', 'Trace import graph and dependencies');
+            expect(result).toBe('dependency_mapping');
+        });
+
+        it('uses scoring to pick the best match when multiple rules hit', () => {
+            // "fix", "bug", "broken", "crash", "error" → localized_bugfix (5 hits)
+            // vs "investigate" → repo_pattern_discovery (1 hit)
+            const result = SubtaskSpecBuilder.inferTaskType(
+                'Fix the broken crash',
+                'Investigate the bug error and resolve it',
+            );
+            expect(result).toBe('localized_bugfix');
+        });
     });
 
     describe('build', () => {
