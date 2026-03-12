@@ -226,7 +226,7 @@ Your job is not just to summarize the repository. Your job is to determine wheth
 - **Accessibility / Portability / Compliance (when applicable):**
   - For user-facing systems: assess accessibility and internationalization implications.
   - For multi-platform/local systems: assess portability across OS/runtime environments.
-  - For data-sensitive systems: assess likely compliance implications (e.g. PII handling, retention, auditability) without giving legal advice.
+  - For data-sensitive systems: assess likely compliance implications (e.g., PII handling, data retention, and auditability) without giving legal advice.
 - **Edge Cases & Failure Modes:** Identify surprising inputs, malformed state, concurrency races, partial writes, stale caches, and operator mistakes that could cause issues.
 
 ---

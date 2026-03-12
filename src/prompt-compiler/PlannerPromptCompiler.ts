@@ -168,6 +168,12 @@ export class PlannerPromptCompiler {
 
     /**
      * Assemble the full prompt from all pipeline outputs in the prescribed order.
+     *
+     * Instead of pasting repo profile, normalized task, and worker skills as
+     * free-text markdown sections, we serialize them into a single JSON object
+     * under `## INPUT DATA`. This prevents the raw user prompt from bleeding
+     * into the planner's instruction space — JSON escaping neutralizes any
+     * markdown headings or instruction-like content inside the user text.
      */
     private assemblePrompt(
         skeleton: string,
@@ -179,31 +185,85 @@ export class PlannerPromptCompiler {
     ): string {
         const sections: string[] = [];
 
-        // 1. Orchestration skeleton
+        // 1. Orchestration skeleton (instructions + rules)
         sections.push(skeleton);
 
-        // 2. Task-family template — removed (no longer injected into prompt)
+        // 2. Build the INPUT DATA JSON object
+        const inputData = this.buildInputData(fingerprint, taskSpec, options);
+        sections.push(`## INPUT DATA\nINPUT_DATA_JSON: ${JSON.stringify(inputData)}`);
 
-        // 3. Repo fingerprint as "## Repo Profile"
-        sections.push(`## Repo Profile\n${this.formatFingerprint(fingerprint)}`);
-
-        // 4. Normalized task spec as "## Normalized Task"
-        sections.push(`## Normalized Task\n${this.formatTaskSpec(taskSpec)}`);
-
-        // 5. Available worker skills (if provided)
-        if (options?.availableTags && options.availableTags.length > 0) {
-            const sorted = [...options.availableTags].sort();
-            sections.push(
-                `## Available Worker Skills\nWhen assigning phases, you may specify \`required_skills\` from this list:\n${sorted.join(', ')}`,
-            );
-        }
-
-        // 9. Feedback section (if provided)
+        // 3. Feedback section (if provided) — kept separate since it is
+        //    planner-to-planner communication, not user-controlled content.
         if (options?.feedback) {
             sections.push(`## Feedback from Previous Run\n${options.feedback}`);
         }
 
         return sections.join('\n\n');
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Private — INPUT DATA builder
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Build the INPUT DATA object that encapsulates all task context as
+     * structured data. The raw user prompt is safely contained inside a
+     * JSON string value, preventing instruction bleed.
+     */
+    private buildInputData(
+        fp: RepoFingerprint,
+        taskSpec: NormalizedTaskSpec,
+        options?: CompileOptions,
+    ): Record<string, unknown> {
+        // ── Repo profile ─────────────────────────────────────────────────
+        const repoProfile: Record<string, unknown> = {
+            primary_languages: [...fp.primaryLanguages],
+            key_frameworks: [...fp.keyFrameworks],
+            package_manager: fp.packageManager,
+            test_stack: [...fp.testStack],
+            lint_stack: [...fp.lintStack],
+            typecheck_stack: [...fp.typecheckStack],
+            build_stack: [...fp.buildStack],
+            architecture_hints: [...fp.architectureHints],
+            high_risk_surfaces: [...fp.highRiskSurfaces],
+        };
+
+        if (fp.subprojects && fp.subprojects.length > 0) {
+            repoProfile.subprojects = fp.subprojects.map(sub => ({
+                name: sub.name,
+                primary_languages: [...sub.primaryLanguages],
+                key_frameworks: [...sub.keyFrameworks],
+                package_manager: sub.packageManager,
+                test_stack: [...sub.testStack],
+                lint_stack: [...sub.lintStack],
+                typecheck_stack: [...sub.typecheckStack],
+                build_stack: [...sub.buildStack],
+            }));
+        }
+
+        // ── Normalized task ──────────────────────────────────────────────
+        const normalizedTask: Record<string, unknown> = {
+            task_type: taskSpec.taskType,
+            artifact_type: taskSpec.artifactType,
+            constraints: [...taskSpec.constraints],
+            known_inputs: [...taskSpec.knownInputs],
+            success_criteria: [...taskSpec.successCriteria],
+            decomposition_hints: [...taskSpec.decompositionHints],
+            raw_user_prompt_text: taskSpec.rawUserPrompt,
+        };
+
+        // ── Available worker skills ──────────────────────────────────────
+        const availableWorkerSkills = options?.availableTags && options.availableTags.length > 0
+            ? [...options.availableTags].sort()
+            : [];
+
+        return {
+            workspace_type: fp.workspaceType,
+            workspace_folders: [...fp.workspaceFolders],
+            repo_profile: repoProfile,
+            normalized_task: normalizedTask,
+            available_worker_skills: availableWorkerSkills,
+        };
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -228,104 +288,6 @@ export class PlannerPromptCompiler {
             fingerprintHash: this.hashFingerprint(fingerprint),
             validationFailures: [],
         };
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    //  Private — Formatters
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /**
-     * Render a {@link RepoFingerprint} as a compact, readable text block.
-     *
-     * When subprojects are present, renders a per-repo profile section
-     * so the planner can see each repo's independent tech stack.
-     */
-    private formatFingerprint(fp: RepoFingerprint): string {
-        const lines: string[] = [];
-        lines.push(`workspace_type: ${fp.workspaceType}`);
-        lines.push(`workspace_folders: ${fp.workspaceFolders.join(', ')}`);
-        if (fp.detectedSubdirectory) {
-            lines.push(`detected_project_root: ${fp.detectedSubdirectory}`);
-        }
-
-        // ── Multi-repo: render per-subproject sections ────────────────────
-        if (fp.subprojects && fp.subprojects.length > 0) {
-            lines.push('');
-            for (const sub of fp.subprojects) {
-                lines.push(`### ${sub.name}`);
-                lines.push(`primary_languages: ${sub.primaryLanguages.join(', ') || 'none detected'}`);
-                lines.push(`key_frameworks: ${sub.keyFrameworks.join(', ') || 'none detected'}`);
-                lines.push(`package_manager: ${sub.packageManager}`);
-                lines.push(`test_stack: ${sub.testStack.join(', ') || 'none detected'}`);
-                lines.push(`lint_stack: ${sub.lintStack.join(', ') || 'none detected'}`);
-                lines.push(`typecheck_stack: ${sub.typecheckStack.join(', ') || 'none detected'}`);
-                lines.push(`build_stack: ${sub.buildStack.join(', ') || 'none detected'}`);
-                lines.push('');
-            }
-
-            // Still emit aggregate fields for backward-compatible policy usage
-            lines.push(`architecture_hints: ${fp.architectureHints.join(', ') || 'none'}`);
-            lines.push(`high_risk_surfaces: ${fp.highRiskSurfaces.join(', ') || 'none'}`);
-            return lines.join('\n');
-        }
-
-        // ── Single-repo: flat format ─────────────────────────────────────
-        lines.push(`primary_languages: ${fp.primaryLanguages.join(', ') || 'none detected'}`);
-        lines.push(`key_frameworks: ${fp.keyFrameworks.join(', ') || 'none detected'}`);
-        lines.push(`package_manager: ${fp.packageManager}`);
-        lines.push(`test_stack: ${fp.testStack.join(', ') || 'none detected'}`);
-        lines.push(`lint_stack: ${fp.lintStack.join(', ') || 'none detected'}`);
-        lines.push(`typecheck_stack: ${fp.typecheckStack.join(', ') || 'none detected'}`);
-        lines.push(`build_stack: ${fp.buildStack.join(', ') || 'none detected'}`);
-        lines.push(`architecture_hints: ${fp.architectureHints.join(', ') || 'none'}`);
-        lines.push(`high_risk_surfaces: ${fp.highRiskSurfaces.join(', ') || 'none'}`);
-        return lines.join('\n');
-    }
-
-    /**
-     * Render a {@link NormalizedTaskSpec} as a compact, readable text block.
-     */
-    private formatTaskSpec(spec: NormalizedTaskSpec): string {
-        const lines: string[] = [];
-
-        lines.push(`task_type: ${spec.taskType}`);
-        lines.push(`artifact_type: ${spec.artifactType}`);
-
-        // Promoted optional fields
-        if (spec.constraints.length > 0) {
-            lines.push(`constraints: ${spec.constraints.join('; ')}`);
-        }
-        if (spec.knownInputs.length > 0) {
-            lines.push(`known_inputs: ${spec.knownInputs.join(', ')}`);
-        }
-
-        // Scope fields
-        if (spec.scope.entryPoints.length > 0) {
-            lines.push(`entry_points: ${spec.scope.entryPoints.join(', ')}`);
-        }
-        if (spec.scope.allowedFolders.length > 0) {
-            lines.push(`allowed_folders: ${spec.scope.allowedFolders.join(', ')}`);
-        }
-        if (spec.successCriteria.length > 0) {
-            lines.push(`success_criteria: ${spec.successCriteria.join('; ')}`);
-        }
-        if (spec.missingInformation.length > 0) {
-            lines.push(`missing_information: ${spec.missingInformation.join('; ')}`);
-        }
-        if (spec.riskFactors.length > 0) {
-            lines.push(`risk_factors: ${spec.riskFactors.join(', ')}`);
-        }
-        if (spec.decompositionHints.length > 0) {
-            lines.push(`decomposition_hints: ${spec.decompositionHints.join('; ')}`);
-        }
-
-        // Raw user prompt in a fenced code block to prevent misinterpretation
-        lines.push('raw_user_prompt: |');
-        lines.push('```');
-        lines.push(spec.rawUserPrompt);
-        lines.push('```');
-
-        return lines.join('\n');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
