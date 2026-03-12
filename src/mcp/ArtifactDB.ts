@@ -147,6 +147,15 @@ export class ArtifactDB {
         this.sessions.delete(sessionDirName);
     }
 
+    /**
+     * Full cascade delete: removes all child records, the tasks row,
+     * and the sessions row.  Use this instead of `deleteSessionFromDB()`
+     * when child-table cleanup is needed (e.g. session pruning).
+     */
+    deleteSessionCascade(sessionDirName: string): void {
+        this.tasks.delete(sessionDirName);
+    }
+
     // ── Private constructor — use ArtifactDB.create() ────────────────────
     private constructor(db: Database, dbPath: string, workspaceId: string, SQL: SqlJsStatic) {
         this.db = db;

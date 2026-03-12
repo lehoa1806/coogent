@@ -51,13 +51,13 @@ describe('SessionManager.deleteSession()', () => {
         await expect(fs.stat(sessionDir)).rejects.toThrow();
     });
 
-    it('calls db.deleteSessionFromDB when ArtifactDB is wired', async () => {
+    it('calls db.deleteSessionCascade when ArtifactDB is wired', async () => {
         // Create a fake session directory on disk
         const sessionDir = path.join(ipcDir, SESSION_DIR_NAME);
         await fs.mkdir(sessionDir, { recursive: true });
 
         // Create a mock ArtifactDB that resolves the UUID to the full dir name
-        const mockDeleteSessionFromDB = jest.fn();
+        const mockDeleteSessionCascade = jest.fn();
         const sessionRow = {
             sessionDirName: SESSION_DIR_NAME,
             sessionId: SESSION_ID,
@@ -70,7 +70,7 @@ describe('SessionManager.deleteSession()', () => {
             implementationPlan: null,
         };
         const mockDB = {
-            deleteSessionFromDB: mockDeleteSessionFromDB,
+            deleteSessionCascade: mockDeleteSessionCascade,
             sessions: {
                 list: jest.fn().mockReturnValue([sessionRow]),
                 getBySessionId: jest.fn().mockImplementation((id: string) =>
@@ -91,11 +91,11 @@ describe('SessionManager.deleteSession()', () => {
         await mgr.deleteSession(SESSION_ID);
 
         // Verify DB deletion was called with the dir name (basename of session dir)
-        expect(mockDeleteSessionFromDB).toHaveBeenCalledTimes(1);
-        expect(mockDeleteSessionFromDB).toHaveBeenCalledWith(SESSION_DIR_NAME);
+        expect(mockDeleteSessionCascade).toHaveBeenCalledTimes(1);
+        expect(mockDeleteSessionCascade).toHaveBeenCalledWith(SESSION_DIR_NAME);
     });
 
-    it('does not call db.deleteSessionFromDB when no ArtifactDB is wired', async () => {
+    it('does not call db.deleteSessionCascade when no ArtifactDB is wired', async () => {
         // Create a fake session directory on disk
         const sessionDir = path.join(ipcDir, SESSION_DIR_NAME);
         await fs.mkdir(sessionDir, { recursive: true });
@@ -121,12 +121,12 @@ describe('SessionManager.deleteSession()', () => {
         await expect(mgr.deleteSession('nonexistent-session')).resolves.not.toThrow();
     });
 
-    it('handles db.deleteSessionFromDB failure gracefully (does not throw)', async () => {
+    it('handles db.deleteSessionCascade failure gracefully (does not throw)', async () => {
         const sessionDir = path.join(ipcDir, SESSION_DIR_NAME);
         await fs.mkdir(sessionDir, { recursive: true });
 
         const mockDB = {
-            deleteSessionFromDB: jest.fn().mockImplementation(() => {
+            deleteSessionCascade: jest.fn().mockImplementation(() => {
                 throw new Error('DB failure');
             }),
             sessions: { list: jest.fn().mockReturnValue([]) },

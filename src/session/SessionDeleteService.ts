@@ -74,23 +74,25 @@ export class SessionDeleteService {
             }
         }
 
-        // Step 2: Delete the IPC directory and sessions DB row via SessionManager.
+        // Step 2: Purge the tasks DB row, all child records, and sessions row.
+        // This MUST run before SessionManager.deleteSession() so child tables
+        // are cleaned while the parent `tasks` row still exists.
         try {
-            await this.sessionManager.deleteSession(sessionDirName);
-            log.info(`[SessionDeleteService] Step 2 — Deleted IPC dir + sessions DB row: ${sessionDirName}`);
+            this.mcpServer.purgeTask(sessionDirName);
+            log.info(`[SessionDeleteService] Step 2 — Purged tasks DB + child records: ${sessionDirName}`);
         } catch (err) {
-            const msg = `Step 2 (SessionManager.deleteSession) failed: ${String(err)}`;
+            const msg = `Step 2 (purgeTask) failed: ${String(err)}`;
             errors.push(msg);
             log.warn(`[SessionDeleteService] ${msg}`);
         }
 
-        // Step 3: Purge the tasks DB row and in-memory TaskState map entry.
-        // This covers task/phase/handoff/verdict artifacts linked via master_task_id.
+        // Step 3: Delete the IPC directory via SessionManager.
+        // DB cleanup is a safe no-op since rows were already removed in Step 2.
         try {
-            this.mcpServer.purgeTask(sessionDirName);
-            log.info(`[SessionDeleteService] Step 3 — Purged tasks DB row: ${sessionDirName}`);
+            await this.sessionManager.deleteSession(sessionDirName);
+            log.info(`[SessionDeleteService] Step 3 — Deleted IPC dir: ${sessionDirName}`);
         } catch (err) {
-            const msg = `Step 3 (purgeTask) failed: ${String(err)}`;
+            const msg = `Step 3 (SessionManager.deleteSession) failed: ${String(err)}`;
             errors.push(msg);
             log.warn(`[SessionDeleteService] ${msg}`);
         }

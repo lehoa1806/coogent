@@ -48,12 +48,12 @@ export class SessionRepository {
     }
 
     /**
-     * Delete a session and its associated task record.
-     * Removes both the `sessions` row and the corresponding `tasks` row.
+     * Delete a session row from the `sessions` table.
+     * Does NOT delete the `tasks` row or child records — use
+     * `TaskRepository.delete()` for full cascade cleanup.
      */
     delete(sessionDirName: string): void {
         this.db.run('DELETE FROM sessions WHERE session_dir_name = ?', [sessionDirName]);
-        this.db.run('DELETE FROM tasks WHERE master_task_id = ?', [sessionDirName]);
         this.scheduleFlush();
     }
 

@@ -61,7 +61,7 @@ describe('SessionRepository.delete()', () => {
         expect(afterList).toHaveLength(0);
     });
 
-    it('removes the corresponding tasks row when deleting a session', () => {
+    it('does NOT remove the tasks row (TaskRepository handles that)', () => {
         // 1. Insert a session (upsert also creates a tasks row via INSERT OR IGNORE)
         getDB().sessions.upsert(SESSION_DIR_NAME, SESSION_ID, SESSION_PROMPT, CREATED_AT);
 
@@ -70,12 +70,13 @@ describe('SessionRepository.delete()', () => {
         expect(taskBefore).toBeDefined();
         expect(taskBefore!.masterTaskId).toBe(SESSION_DIR_NAME);
 
-        // 2. Delete the session
+        // 2. Delete the session (sessions row only)
         getDB().sessions.delete(SESSION_DIR_NAME);
 
-        // 3. Verify the tasks row is also deleted
+        // 3. Verify the tasks row is still present
         const taskAfter = getDB().tasks.get(SESSION_DIR_NAME);
-        expect(taskAfter).toBeUndefined();
+        expect(taskAfter).toBeDefined();
+        expect(taskAfter!.masterTaskId).toBe(SESSION_DIR_NAME);
     });
 
     it('deleting a non-existent session is a no-op', () => {
@@ -108,5 +109,32 @@ describe('SessionRepository.delete()', () => {
 
         const result = getDB().sessions.list();
         expect(result).toEqual([]);
+    });
+
+    // ── Full Cascade Regression ──────────────────────────────────────────
+
+    it('TaskRepository.delete() cascades all child tables including sessions', () => {
+        // 1. Insert a session + child records
+        getDB().sessions.upsert(SESSION_DIR_NAME, SESSION_ID, SESSION_PROMPT, CREATED_AT);
+        getDB().phases.upsertPlan(SESSION_DIR_NAME, 'phase-1', 'test plan');
+        getDB().phases.upsertOutput(SESSION_DIR_NAME, 'phase-1', 'test output');
+        getDB().phases.upsertLog(SESSION_DIR_NAME, 'phase-1', { prompt: 'test prompt', startedAt: Date.now() });
+
+        // Verify data exists
+        expect(getDB().sessions.list()).toHaveLength(1);
+        expect(getDB().tasks.get(SESSION_DIR_NAME)).toBeDefined();
+        expect(getDB().phases.listIds(SESSION_DIR_NAME)).toHaveLength(1);
+        expect(Object.keys(getDB().phases.getOutputs(SESSION_DIR_NAME))).toHaveLength(1);
+        expect(getDB().phases.getLog(SESSION_DIR_NAME, 'phase-1')).toBeDefined();
+
+        // 2. Full cascade delete via TaskRepository
+        getDB().tasks.delete(SESSION_DIR_NAME);
+
+        // 3. Verify everything is gone
+        expect(getDB().sessions.list()).toHaveLength(0);
+        expect(getDB().tasks.get(SESSION_DIR_NAME)).toBeUndefined();
+        expect(getDB().phases.listIds(SESSION_DIR_NAME)).toHaveLength(0);
+        expect(getDB().phases.getOutputs(SESSION_DIR_NAME)).toEqual({});
+        expect(getDB().phases.getLog(SESSION_DIR_NAME, 'phase-1')).toBeUndefined();
     });
 });
