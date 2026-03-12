@@ -25,6 +25,17 @@ export class RunbookParser {
         if (jsonCandidate) {
             try {
                 return this.validateRunbook(JSON.parse(jsonCandidate));
+            } catch { /* fall through to repair */ }
+
+            // Strategy 1b: Attempt JSON repair on the extracted candidate.
+            // LLMs often produce trailing commas, unescaped newlines inside
+            // string values, or other minor formatting issues.
+            try {
+                const repaired = this.repairJson(jsonCandidate);
+                if (repaired !== jsonCandidate) {
+                    log.info('[RunbookParser] Attempting parse with repaired JSON');
+                    return this.validateRunbook(JSON.parse(repaired));
+                }
             } catch { /* fall through */ }
         }
 
@@ -33,7 +44,13 @@ export class RunbookParser {
         if (fencedMatch) {
             try {
                 return this.validateRunbook(JSON.parse(fencedMatch[1]));
-            } catch { /* fall through */ }
+            } catch {
+                // Try repair on fenced content too
+                try {
+                    const repaired = this.repairJson(fencedMatch[1]);
+                    return this.validateRunbook(JSON.parse(repaired));
+                } catch { /* fall through */ }
+            }
         }
 
         return null;
@@ -85,6 +102,71 @@ export class RunbookParser {
         }
 
         return null; // Unbalanced braces
+    }
+
+    /**
+     * Attempt to repair common LLM JSON mistakes:
+     * 1. Trailing commas before `]` or `}` (e.g., `[1, 2,]`)
+     * 2. Literal (unescaped) newlines inside JSON string values
+     *
+     * Uses a character-level scan to track whether we are inside a string,
+     * so repairs only apply where they are structurally appropriate.
+     */
+    private repairJson(raw: string): string {
+        // Pass 1: Fix unescaped literal newlines inside string values.
+        // Walk character-by-character, tracking whether we're inside a JSON string.
+        const chars: string[] = [];
+        let inStr = false;
+        let esc = false;
+
+        for (let i = 0; i < raw.length; i++) {
+            const ch = raw[i];
+
+            if (esc) {
+                esc = false;
+                chars.push(ch);
+                continue;
+            }
+
+            if (ch === '\\' && inStr) {
+                esc = true;
+                chars.push(ch);
+                continue;
+            }
+
+            if (ch === '"') {
+                inStr = !inStr;
+                chars.push(ch);
+                continue;
+            }
+
+            // If we are inside a string and hit a literal newline, escape it.
+            if (inStr && (ch === '\n' || ch === '\r')) {
+                if (ch === '\r' && i + 1 < raw.length && raw[i + 1] === '\n') {
+                    // \r\n → \\n  (skip the \r, the \n will be caught next iteration)
+                    continue;
+                }
+                chars.push('\\', 'n');
+                continue;
+            }
+
+            // If we are inside a string and hit a literal tab, escape it.
+            if (inStr && ch === '\t') {
+                chars.push('\\', 't');
+                continue;
+            }
+
+            chars.push(ch);
+        }
+
+        let repaired = chars.join('');
+
+        // Pass 2: Remove trailing commas before ] or } (outside strings).
+        // This regex is safe because Pass 1 already escaped all in-string newlines,
+        // so we can safely match structurally.
+        repaired = repaired.replace(/,\s*([\]}])/g, '$1');
+
+        return repaired;
     }
 
     /**

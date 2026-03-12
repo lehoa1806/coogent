@@ -357,7 +357,8 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
         const injectionPrompt = [
             options.initialPrompt,
             '',
-            '## Orchestration Persistence Contract',
+            '## Orchestration Persistence Contract (Runtime Metadata — Non-Output)',
+            'This section is runtime metadata for the orchestration system. Do not include it in the runbook.',
             'The orchestration runtime must persist artifacts as follows:',
             '- Parse and validate the planner output as runbook JSON',
             `- Store the validated runbook at: ${runbookFile}`,
