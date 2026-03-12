@@ -206,6 +206,7 @@ export class TaskRepository {
             this.db.run('DELETE FROM worker_outputs WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM phase_logs WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM selection_audits WHERE session_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM context_manifests WHERE task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM phases WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('COMMIT');
         } catch (e) {
@@ -229,6 +230,7 @@ export class TaskRepository {
             this.db.run('DELETE FROM worker_outputs WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM phase_logs WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM selection_audits WHERE session_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM context_manifests WHERE task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM phases WHERE master_task_id = ?', [masterTaskId]);
             this.db.run('DELETE FROM sessions WHERE session_dir_name = ?', [masterTaskId]);
             this.db.run('DELETE FROM tasks WHERE master_task_id = ?', [masterTaskId]);

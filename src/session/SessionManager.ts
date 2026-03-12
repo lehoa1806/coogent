@@ -248,7 +248,7 @@ export class SessionManager {
                 try {
                     const dir = path.join(this.ipcDir, row.sessionDirName);
                     await fs.rm(dir, { recursive: true, force: true });
-                    this.db.deleteSessionFromDB(row.sessionDirName);
+                    this.db.deleteSessionCascade(row.sessionDirName);
                     log.info(`[SessionManager] Pruned old session: ${row.sessionDirName}`);
                 } catch {
                     // Best-effort pruning: individual session deletion may fail
@@ -437,7 +437,7 @@ export class SessionManager {
         if (this.db) {
             try {
                 const dirName = path.basename(dir);
-                this.db.deleteSessionFromDB(dirName);
+                this.db.deleteSessionCascade(dirName);
                 log.info(`[SessionManager] Deleted session from DB: ${dirName}`);
             } catch (err) {
                 log.warn('[SessionManager] Failed to delete session from DB:', err);
