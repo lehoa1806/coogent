@@ -75,7 +75,7 @@ export class WorkerPromptCompiler {
             subtask_id: spec.subtask_id,
             task_type: spec.task_type,
             reasoning_type: spec.reasoning_type.join(', '),
-            required_skills: spec.required_skills.join(', '),
+            required_capabilities: spec.required_capabilities.join(', '),
             required_inputs: this.formatList(spec.required_inputs),
             dependency_inputs: this.formatList(spec.dependency_inputs),
             assumptions_allowed: this.formatList(spec.assumptions_allowed),

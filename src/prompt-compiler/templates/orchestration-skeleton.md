@@ -134,3 +134,12 @@ Artifact write order: `.task-runbook.json` must be persisted before `response.md
 - The runbook is complete when all phases pass.
 - The final phase must verify overall project integrity with the appropriate validation commands.
 - Do not add unnecessary polish or cleanup phases unless the user explicitly asked for them.
+
+## OUTPUT ENFORCEMENT
+Your entire response MUST be a single raw JSON object conforming to the JSON Schema above. No exceptions.
+- Do NOT wrap the JSON in markdown code fences (no ```json).
+- Do NOT include explanatory text, headings, or commentary before or after the JSON.
+- The root object MUST contain "project_id" (string) and "phases" (non-empty array).
+- Each phase MUST contain "id" (number), "prompt" (string), "context_files" (array), and "success_criteria" (string).
+- If you output anything other than a valid JSON object matching this schema, the system will reject your output and retry.
+- Begin your response with `{` and end it with `}`.

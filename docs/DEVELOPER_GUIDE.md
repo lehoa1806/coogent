@@ -173,7 +173,7 @@ The `AgentRegistry` class (`src/agent-selection/AgentRegistry.ts`) manages agent
 
 | Method | Signature | Description |
 |---|---|---|
-| `getBestAgent` | `(requiredSkills: string[]) → Promise<AgentProfile>` | Returns the best-matching profile using Jaccard similarity + weighted scoring. Falls back to the generalist when no skills match above 0. |
+| `getBestAgent` | `(requiredCapabilities: string[]) → Promise<AgentProfile>` | Returns the best-matching profile using Jaccard similarity + weighted scoring. Falls back to the generalist when no capabilities match above 0. |
 | `getAvailableTags` | `() → Promise<string[]>` | Returns all unique tags across all loaded profiles. Used by PlannerAgent to populate the prompt. |
 | `getAgents` | `() → Promise<AgentProfile[]>` | Returns all loaded profiles. Used by the Worker Studio UI. |
 | `getByType` | `(type: AgentType) → AgentProfile \| undefined` | Synchronous lookup by agent type. Used by the SelectionPipeline. |

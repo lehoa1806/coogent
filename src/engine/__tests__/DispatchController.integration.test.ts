@@ -23,7 +23,7 @@ function makePhase(overrides: Omit<Partial<Phase>, 'id'> & { id: number }): Phas
     // Only set optional fields when they are explicitly provided (not undefined),
     // to satisfy exactOptionalPropertyTypes.
     if (overrides.depends_on !== undefined) base.depends_on = overrides.depends_on;
-    if (overrides.required_skills !== undefined) base.required_skills = overrides.required_skills;
+    if (overrides.required_capabilities !== undefined) base.required_capabilities = overrides.required_capabilities;
     if (overrides.mcpPhaseId !== undefined) base.mcpPhaseId = overrides.mcpPhaseId;
     if (overrides.evaluator !== undefined) base.evaluator = overrides.evaluator;
     return base;
@@ -131,7 +131,7 @@ describe('DispatchController Integration — Agent Selection Pipeline', () => {
                 makePhase({
                     id: 1,
                     prompt: 'Build a React component with TypeScript',
-                    required_skills: ['react', 'typescript'],
+                    required_capabilities: ['react', 'typescript'],
                 }),
             ];
             const runbook = makeRunbook(phases);
@@ -156,7 +156,7 @@ describe('DispatchController Integration — Agent Selection Pipeline', () => {
                 makePhase({
                     id: 1,
                     prompt: originalPrompt,
-                    required_skills: ['testing'],
+                    required_capabilities: ['testing'],
                     context_files: ['src/auth.ts'],
                 }),
             ];

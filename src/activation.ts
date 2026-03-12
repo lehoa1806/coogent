@@ -197,12 +197,14 @@ export function startMCPServer(svc: ServiceContainer, primaryRoot: string): void
     svc.mcpServer = new CoogentMCPServer(primaryRoot);
     svc.mcpBridge = new MCPClientBridge(svc.mcpServer, primaryRoot);
     const workspaceId = deriveWorkspaceId(primaryRoot);
+    log.info('[Coogent] startMCPServer: beginning init sequence...');
     svc.mcpReady = svc.mcpServer.init(coogentDir, workspaceId)
         .then(async () => {
             log.info('[Coogent] ArtifactDB initialised.');
 
             // Initialize ContextPackBuilder now that ArtifactDB is available
             if (svc.contextScoper) {
+                log.debug('[Coogent] startMCPServer: creating ContextPackBuilder...');
                 svc.contextPackBuilder = new ContextPackBuilder(
                     svc.mcpServer!.getArtifactDB(),
                     svc.contextScoper.getEncoder(),
@@ -212,6 +214,7 @@ export function startMCPServer(svc: ServiceContainer, primaryRoot: string): void
             }
 
             // Initialize Session History Services
+            log.debug('[Coogent] startMCPServer: creating SessionHistoryService...');
             const restoreService = new SessionRestoreService(svc.engine!, svc.mcpServer!, coogentDir);
             const deleteService = new SessionDeleteService(svc.mcpServer!, svc.sessionManager!);
             svc.sessionHistoryService = new SessionHistoryService(
@@ -229,10 +232,29 @@ export function startMCPServer(svc: ServiceContainer, primaryRoot: string): void
             // Re-trigger sidebar refresh now that DB is available
             svc.sidebarMenu?.refresh();
 
+            log.debug('[Coogent] startMCPServer: connecting MCP Client Bridge...');
             return svc.mcpBridge!.connect();
         })
         .then(() => log.info('[Coogent] MCP Client Bridge connected.'))
-        .catch(err => log.error('[Coogent] MCP Server/Bridge init failed:', err));
+        .catch(err => {
+            const stack = err instanceof Error ? err.stack ?? err.message : String(err);
+            log.error('[Coogent] MCP Server/Bridge init failed:', stack);
+            vscode.window.showErrorMessage(
+                '[Coogent] MCP Server initialization failed: ' +
+                (err instanceof Error ? err.message : String(err)),
+            );
+            throw err; // Re-throw so svc.mcpReady rejects
+        });
+
+    // Startup timeout guard
+    const STARTUP_TIMEOUT_MS = 60_000;
+    const startupTimer = setTimeout(() => {
+        log.error('[Coogent] MCP Server startup timed out after 60s');
+        vscode.window.showErrorMessage(
+            '[Coogent] MCP Server startup timed out. Check Output panel for details.'
+        );
+    }, STARTUP_TIMEOUT_MS);
+    svc.mcpReady.then(() => clearTimeout(startupTimer)).catch(() => clearTimeout(startupTimer));
 
     // MCP phaseCompleted logging bridge
     svc.mcpServer.onPhaseCompleted((handoff) => {

@@ -16,6 +16,12 @@ const copyWasmPlugin = {
     setup(build) {
         build.onStart(() => {
             const src = path.join(__dirname, 'node_modules', 'sql.js', 'dist', 'sql-wasm.wasm');
+            if (!fs.existsSync(src)) {
+                throw new Error(
+                    `[copy-sql-wasm] Source WASM file not found: ${src}. Run npm install first.`
+                );
+            }
+
             const outDir = path.join(__dirname, 'out');
             const dest = path.join(outDir, 'sql-wasm.wasm');
 

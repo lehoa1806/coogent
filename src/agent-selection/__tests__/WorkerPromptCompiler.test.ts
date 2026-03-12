@@ -56,7 +56,7 @@ function compile(spec: SubtaskSpec, profile: AgentProfile, _executionMode: Execu
         subtask_id: spec.subtask_id,
         task_type: spec.task_type,
         reasoning_type: spec.reasoning_type.join(', '),
-        required_skills: spec.required_skills.join(', '),
+        required_capabilities: spec.required_capabilities.join(', '),
         required_inputs: formatList(spec.required_inputs),
         dependency_inputs: formatList(spec.dependency_inputs),
         assumptions_allowed: formatList(spec.assumptions_allowed),
@@ -116,7 +116,7 @@ describe('WorkerPromptCompiler', () => {
             title: 'Add validation to user form',
             goal: 'Implement input validation for the user registration form',
             contextFiles: ['src/components/UserForm.ts'],
-            requiredSkills: ['typescript', 'validation'],
+            requiredCapabilities: ['typescript', 'validation'],
         };
         spec = SubtaskSpecBuilder.build(draft, {
             constraints: ['Do not change the submit endpoint'],

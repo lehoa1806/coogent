@@ -417,7 +417,7 @@ export class PromptTemplateManager {
 
         const injectedSections = [
             `## Workspace Tech Stack\n${formattedStack}`,
-            `## Available Worker Skills\nWhen assigning phases, you may specify \`required_skills\` as an array of tags from this list:\n${sortedTags.join(', ')}\nIf a phase needs no special skills, omit \`required_skills\` (a generalist worker will be used).`,
+            `## Available Worker Skills\nWhen assigning phases, you may specify \`required_capabilities\` as an array of tags from this list:\n${sortedTags.join(', ')}\nIf a phase needs no special capabilities, omit \`required_capabilities\` (a generalist worker will be used).`,
         ].join('\n\n');
 
         // Try to insert before `## User Request`

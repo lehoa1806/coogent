@@ -68,7 +68,7 @@ describe('RunbookParser', () => {
     it('should parse deeply nested multi-phase raw JSON (regression for #44)', () => {
         // This is the exact scenario that caused malformed JSON in production:
         // large runbooks with many phases, each containing nested context_files
-        // and required_skills arrays.
+        // and required_capabilities arrays.
         const deepRunbook = {
             project_id: 'deep-test',
             summary: 'Multi-phase review',
@@ -83,7 +83,7 @@ describe('RunbookParser', () => {
                     context_files: ['src/a.ts', 'src/b.ts', 'docs/README.md'],
                     success_criteria: 'exit_code:0',
                     context_summary: 'Analyze architecture',
-                    required_skills: ['architecture', 'review'],
+                    required_capabilities: ['architecture', 'review'],
                 },
                 {
                     id: 2,
@@ -92,7 +92,7 @@ describe('RunbookParser', () => {
                     context_files: ['src/c.ts'],
                     success_criteria: 'exit_code:0',
                     depends_on: [1],
-                    required_skills: ['testing'],
+                    required_capabilities: ['testing'],
                 },
                 {
                     id: 3,

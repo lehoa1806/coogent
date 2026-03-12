@@ -78,20 +78,10 @@ export class HandoffExtractor {
      * Returns a prompt instructing the worker to produce a strict JSON
      * Handoff Report at the end of its output.
      */
-    generateDistillationPrompt(phaseId: number): string {
+    generateDistillationPrompt(_phaseId: number): string {
         return [
-            `After completing your task for Phase ${phaseId}, you MUST append a JSON block`,
-            'at the very end of your output, fenced with ```json and ```, containing exactly',
-            'these keys:',
-            '',
-            '```json',
-            '{',
-            '  "decisions": ["<string: each key decision you made>"],',
-            '  "modified_files": ["<string: relative path of every file you created or modified>"],',
-            '  "unresolved_issues": ["<string: anything left incomplete or risky>"],',
-            '  "next_steps_context": "<string: what the next phase needs to know>"',
-            '}',
-            '```',
+            'After completing your task, the final response artifact must end with the',
+            'JSON block defined in the `## Output Contract` section.',
             '',
             'This JSON block is critical for downstream phases. Do NOT omit any key.',
         ].join('\n');

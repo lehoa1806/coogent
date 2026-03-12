@@ -119,11 +119,11 @@ export interface Phase {
      */
     max_retries?: number;
     /**
-     * Skill tags requested by the Planner for this phase.
+     * Capability tags requested by the Planner for this phase.
      * Used by the AgentRegistry to select the best-matching AgentProfile.
      * When absent, the default generalist worker is used.
      */
-    required_skills?: string[];
+    required_capabilities?: string[];
     /**
      * The real MCP-server phase ID string (format: `phase-NNN-<uuid>`).
      * Set by the Engine when a phase is dispatched to a worker.

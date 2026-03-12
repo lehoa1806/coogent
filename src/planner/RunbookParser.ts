@@ -19,13 +19,21 @@ export class RunbookParser {
      * @returns A validated Runbook, or `null` if parsing/validation fails.
      */
     parse(output: string): Runbook | null {
+        log.info(`[RunbookParser] parse() called with ${output.length} chars`);
+
         // Strategy 1: Brace-counting extraction of the outermost JSON object.
         // (Replaces the former regex approach which failed on nested brackets — #44)
         const jsonCandidate = this.extractOutermostJson(output);
         if (jsonCandidate) {
+            log.info(`[RunbookParser] Strategy 1: extractOutermostJson found ${jsonCandidate.length} chars (first 200: ${jsonCandidate.slice(0, 200)})`);
             try {
-                return this.validateRunbook(JSON.parse(jsonCandidate));
-            } catch { /* fall through to repair */ }
+                const obj = JSON.parse(jsonCandidate);
+                const result = this.validateRunbook(obj);
+                if (result) return result;
+                log.warn(`[RunbookParser] Strategy 1: JSON parsed OK but validateRunbook rejected it`);
+            } catch (err) {
+                log.warn(`[RunbookParser] Strategy 1: JSON.parse failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
 
             // Strategy 1b: Attempt JSON repair on the extracted candidate.
             // LLMs often produce trailing commas, unescaped newlines inside
@@ -33,26 +41,46 @@ export class RunbookParser {
             try {
                 const repaired = this.repairJson(jsonCandidate);
                 if (repaired !== jsonCandidate) {
-                    log.info('[RunbookParser] Attempting parse with repaired JSON');
-                    return this.validateRunbook(JSON.parse(repaired));
+                    log.info('[RunbookParser] Strategy 1b: Attempting parse with repaired JSON');
+                    const obj = JSON.parse(repaired);
+                    const result = this.validateRunbook(obj);
+                    if (result) return result;
+                    log.warn(`[RunbookParser] Strategy 1b: repaired JSON parsed but validateRunbook rejected it`);
                 }
-            } catch { /* fall through */ }
+            } catch (err) {
+                log.warn(`[RunbookParser] Strategy 1b: repaired JSON.parse failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
+        } else {
+            log.warn(`[RunbookParser] Strategy 1: extractOutermostJson returned null (no balanced {} found)`);
         }
 
         // Strategy 2: Look for ```json ... ``` fenced code block (backward-compatible fallback)
         const fencedMatch = output.match(/```json\s*\n([\s\S]*?)\n```/);
         if (fencedMatch) {
+            log.info(`[RunbookParser] Strategy 2: fenced JSON block found (${fencedMatch[1].length} chars, first 200: ${fencedMatch[1].slice(0, 200)})`);
             try {
-                return this.validateRunbook(JSON.parse(fencedMatch[1]));
-            } catch {
+                const obj = JSON.parse(fencedMatch[1]);
+                const result = this.validateRunbook(obj);
+                if (result) return result;
+                log.warn(`[RunbookParser] Strategy 2: fenced JSON parsed but validateRunbook rejected it`);
+            } catch (err) {
+                log.warn(`[RunbookParser] Strategy 2: fenced JSON.parse failed: ${err instanceof Error ? err.message : String(err)}`);
                 // Try repair on fenced content too
                 try {
                     const repaired = this.repairJson(fencedMatch[1]);
-                    return this.validateRunbook(JSON.parse(repaired));
-                } catch { /* fall through */ }
+                    const obj = JSON.parse(repaired);
+                    const result = this.validateRunbook(obj);
+                    if (result) return result;
+                    log.warn(`[RunbookParser] Strategy 2b: repaired fenced JSON parsed but validateRunbook rejected it`);
+                } catch (err2) {
+                    log.warn(`[RunbookParser] Strategy 2b: repaired fenced JSON.parse failed: ${err2 instanceof Error ? err2.message : String(err2)}`);
+                }
             }
+        } else {
+            log.warn(`[RunbookParser] Strategy 2: no fenced json block found in output`);
         }
 
+        log.error(`[RunbookParser] All strategies exhausted — returning null`);
         return null;
     }
 
@@ -174,21 +202,47 @@ export class RunbookParser {
      * #43: Also validates depends_on refs and checks for duplicate phase IDs.
      */
     private validateRunbook(obj: unknown): Runbook | null {
-        if (!obj || typeof obj !== 'object') return null;
+        if (!obj || typeof obj !== 'object') {
+            log.warn(`[RunbookParser] validateRunbook: not an object (type=${typeof obj})`);
+            return null;
+        }
         const r = obj as Record<string, unknown>;
+        const topKeys = Object.keys(r);
+        log.info(`[RunbookParser] validateRunbook: top-level keys = [${topKeys.join(', ')}]`);
 
-        if (typeof r.project_id !== 'string') return null;
-        if (!Array.isArray(r.phases) || r.phases.length === 0) return null;
+        if (typeof r.project_id !== 'string') {
+            log.warn(`[RunbookParser] validateRunbook REJECTED: project_id is ${typeof r.project_id} (expected string), value=${JSON.stringify(r.project_id)?.slice(0, 100)}`);
+            return null;
+        }
+        if (!Array.isArray(r.phases) || r.phases.length === 0) {
+            log.warn(`[RunbookParser] validateRunbook REJECTED: phases is ${Array.isArray(r.phases) ? `empty array (length=0)` : typeof r.phases}`);
+            return null;
+        }
 
         // Validate each phase has required fields
         const seenIds = new Set<number>();
         for (const p of r.phases) {
-            if (typeof p !== 'object' || p === null) return null;
+            if (typeof p !== 'object' || p === null) {
+                log.warn(`[RunbookParser] validateRunbook REJECTED: phase entry is not an object`);
+                return null;
+            }
             const phase = p as Record<string, unknown>;
-            if (typeof phase.id !== 'number') return null;
-            if (typeof phase.prompt !== 'string') return null;
-            if (!Array.isArray(phase.context_files)) return null;
-            if (typeof phase.success_criteria !== 'string') return null;
+            if (typeof phase.id !== 'number') {
+                log.warn(`[RunbookParser] validateRunbook REJECTED: phase.id is ${typeof phase.id} (expected number), keys=[${Object.keys(phase).join(', ')}]`);
+                return null;
+            }
+            if (typeof phase.prompt !== 'string') {
+                log.warn(`[RunbookParser] validateRunbook REJECTED: phase[${phase.id}].prompt is ${typeof phase.prompt} (expected string)`);
+                return null;
+            }
+            if (!Array.isArray(phase.context_files)) {
+                log.warn(`[RunbookParser] validateRunbook REJECTED: phase[${phase.id}].context_files is ${typeof phase.context_files} (expected array)`);
+                return null;
+            }
+            if (typeof phase.success_criteria !== 'string') {
+                log.warn(`[RunbookParser] validateRunbook REJECTED: phase[${phase.id}].success_criteria is ${typeof phase.success_criteria} (expected string)`);
+                return null;
+            }
 
             // #43: Check for duplicate phase IDs
             if (seenIds.has(phase.id as number)) {

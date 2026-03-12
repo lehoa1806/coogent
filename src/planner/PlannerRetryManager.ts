@@ -5,7 +5,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import type { Runbook } from '../types/index.js';
-import { COOGENT_DIR, IPC_DIR, IPC_RESPONSE_FILE } from '../constants/paths.js';
+import { COOGENT_DIR, IPC_DIR, IPC_RESPONSE_FILE, RUNBOOK_FILE } from '../constants/paths.js';
 import { RunbookParser } from './RunbookParser.js';
 import log from '../logger/log.js';
 
@@ -93,6 +93,30 @@ export class PlannerRetryManager {
         workspaceRoot: string,
         masterTaskId?: string,
     ): Promise<RetryParseResult> {
+        // Strategy 0: Read .task-runbook.json from disk (canonical runbook location)
+        if (masterTaskId) {
+            const runbookPath = path.join(workspaceRoot, COOGENT_DIR, IPC_DIR, masterTaskId, RUNBOOK_FILE);
+            try {
+                const content = await fs.readFile(runbookPath, 'utf-8');
+                if (content.trim().length > 0) {
+                    log.info(`[PlannerRetryManager] retryParse() — read ${content.length} chars from ${runbookPath}`);
+                    const parsed = this.parser.parse(content);
+                    if (parsed) {
+                        this.clear();
+                        return {
+                            success: true,
+                            runbook: parsed,
+                            statusKey: 'ready',
+                            statusMessage: 'Plan loaded from .task-runbook.json',
+                        };
+                    }
+                    log.warn(`[PlannerRetryManager] .task-runbook.json exists but failed validation`);
+                }
+            } catch {
+                // File doesn't exist — continue to other strategies
+            }
+        }
+
         // Strategy 1: Use cached streaming output (vscode.lm path)
         if (this.lastTimeoutOutput && this.lastTimeoutOutput.trim().length > 0) {
             log.info(`[PlannerRetryManager] retryParse() — parsing ${this.lastTimeoutOutput.length} cached chars`);

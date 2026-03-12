@@ -159,9 +159,9 @@ export class WorkerLauncher {
         let workerSystemContext = '';
         if (agentRegistry) {
             try {
-                const agentProfile = await agentRegistry.getBestAgent(phase.required_skills ?? []);
+                const agentProfile = await agentRegistry.getBestAgent(phase.required_capabilities ?? []);
                 log.info(`[EngineWiring] Phase ${phase.id}: routed to agent '${agentProfile.id}' (${agentProfile.name})`);
-                workerSystemContext = `## Worker Role: ${agentProfile.name}\n${agentProfile.system_prompt}\n\n`;
+                workerSystemContext = `## Worker Role\nYou are a senior software engineer. Execute the assigned task precisely, following existing project conventions. Make the smallest correct change, avoid unrelated refactors, and validate your work against the stated acceptance criteria.\n\n### Agent Profile: ${agentProfile.name}\n${agentProfile.system_prompt}\n\n`;
 
                 // Derive plan requirement from agent's default_output
                 const NON_PLAN_OUTPUTS = new Set(['review_report', 'research_summary', 'debug_report', 'task_graph']);

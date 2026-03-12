@@ -99,7 +99,7 @@ describe('AgentSelector', () => {
             goal: 'something unusual',
             task_type: 'code_modification', // CodeEditor handles this
             reasoning_type: [],
-            required_skills: [],
+            required_capabilities: [],
             required_inputs: [],
             context_requirements: {
                 preferred_format: [],

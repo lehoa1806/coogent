@@ -3,6 +3,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { EventEmitter } from 'node:events';
+import * as fs from 'node:fs/promises';
+import * as path from 'node:path';
 import type { Runbook } from '../types/index.js';
 import { PromptTemplateManager, type TechStackInfo } from '../context/PromptTemplateManager.js';
 import type { AgentBackendProvider } from '../adk/AgentBackendProvider.js';
@@ -10,6 +12,7 @@ import type { ADKSessionHandle } from '../adk/ADKController.js';
 import type { ExecutionMode } from '../adk/ExecutionModeResolver.js';
 import log from '../logger/log.js';
 import { PlannerPromptCompiler, RepoFingerprinter, type CompilationManifest } from '../prompt-compiler/index.js';
+import { COOGENT_DIR, IPC_DIR, RUNBOOK_FILE } from '../constants/paths.js';
 import { WorkspaceScanner } from './WorkspaceScanner.js';
 import { RunbookParser } from './RunbookParser.js';
 import { PlannerRetryManager } from './PlannerRetryManager.js';
@@ -406,13 +409,70 @@ export class PlannerAgent extends EventEmitter {
             return;
         }
 
-        // Parse the accumulated output for a JSON runbook
-        this.emit('plan:status', 'parsing', 'Parsing generated plan...');
-        log.info(`[PlannerAgent] Parsing output (${this.accumulatedOutput.length} chars)...`);
-        log.info(`[PlannerAgent] First 300 chars: ${this.accumulatedOutput.slice(0, 300)}`);
-
         // BL-5 audit fix: Capture raw LLM output before parsing
         this.lastRawOutput = this.accumulatedOutput;
+
+        // Strategy 0: Read .task-runbook.json from disk (file-IPC path).
+        // The worker writes the runbook to .task-runbook.json in the session
+        // directory. The stdout (response.md content) is NOT the runbook —
+        // it contains a markdown document with an output contract JSON.
+        this.emit('plan:status', 'parsing', 'Reading runbook from disk...');
+        this.tryReadRunbookFromDisk()
+            .then(diskRunbook => {
+                if (diskRunbook) {
+                    this.planRetryCount = 0;
+                    log.info(`[PlannerAgent] Plan loaded from .task-runbook.json: ${diskRunbook.phases.length} phases, project_id=${diskRunbook.project_id}`);
+                    this.draft = diskRunbook;
+                    this.emit('plan:status', 'ready', 'Plan loaded from disk');
+                    this.emit('plan:generated', diskRunbook, this.fileTree);
+                    return;
+                }
+
+                // Fallback: parse stdout (vscode.lm streaming path — no files written)
+                this.parseFromStdout();
+            })
+            .catch(err => {
+                log.warn(`[PlannerAgent] Error reading .task-runbook.json, falling back to stdout:`, err);
+                this.parseFromStdout();
+            });
+    }
+
+    /**
+     * Attempt to read and validate .task-runbook.json from the IPC session directory.
+     * Returns null if the file doesn't exist or is invalid.
+     */
+    private async tryReadRunbookFromDisk(): Promise<Runbook | null> {
+        if (!this.masterTaskId) {
+            log.info('[PlannerAgent] No masterTaskId set — skipping disk read');
+            return null;
+        }
+
+        const ipcBase = path.join(this.config.workspaceRoot, COOGENT_DIR, IPC_DIR);
+        const runbookPath = path.join(ipcBase, this.masterTaskId, RUNBOOK_FILE);
+
+        try {
+            const content = await fs.readFile(runbookPath, 'utf-8');
+            log.info(`[PlannerAgent] Read ${content.length} chars from ${runbookPath}`);
+            const parsed = this.parser.parse(content);
+            if (parsed) {
+                return parsed;
+            }
+            log.warn(`[PlannerAgent] .task-runbook.json exists but failed validation`);
+        } catch {
+            log.info(`[PlannerAgent] .task-runbook.json not found at ${runbookPath}`);
+        }
+
+        return null;
+    }
+
+    /**
+     * Parse the runbook from accumulated stdout (vscode.lm streaming path).
+     * This is the original parse logic, kept as a fallback.
+     */
+    private parseFromStdout(): void {
+        this.emit('plan:status', 'parsing', 'Parsing generated plan...');
+        log.info(`[PlannerAgent] Parsing stdout (${this.accumulatedOutput.length} chars)...`);
+        log.info(`[PlannerAgent] First 300 chars: ${this.accumulatedOutput.slice(0, 300)}`);
 
         const parsed = this.parser.parse(this.accumulatedOutput);
 
@@ -442,7 +502,7 @@ export class PlannerAgent extends EventEmitter {
         }
 
         this.planRetryCount = 0; // Reset on success
-        log.info(`[PlannerAgent] Plan parsed successfully: ${parsed.phases.length} phases, project_id=${parsed.project_id}`);
+        log.info(`[PlannerAgent] Plan parsed successfully from stdout: ${parsed.phases.length} phases, project_id=${parsed.project_id}`);
         this.draft = parsed;
         this.emit('plan:status', 'ready', 'Plan generated successfully');
         this.emit('plan:generated', parsed, this.fileTree);
@@ -488,7 +548,7 @@ You are a Planning Agent. Your job is to analyze a codebase and break down a use
       "context_files": ["<relative/path/to/file.ts>"],
       "success_criteria": "exit_code:0",
       "context_summary": "<1-2 sentence summary of what this phase does and why>",
-      "required_skills": ["<optional-tag-1>", "<optional-tag-2>"]
+      "required_capabilities": ["<optional-tag-1>", "<optional-tag-2>"]
     }
   ]
 }
@@ -514,9 +574,9 @@ ${promptManager.formatTechStack(techStack)}`);
         if (availableTags && availableTags.length > 0) {
             const sortedTags = [...availableTags].sort();
             sections.push(`## Available Worker Skills
-When creating phases, you may optionally specify \`required_skills\` as an array of tags from this list:
+When creating phases, you may optionally specify \`required_capabilities\` as an array of tags from this list:
 ${sortedTags.join(', ')}
-Only assign skills when a phase genuinely needs specialized expertise. If a phase needs no special skills, omit \`required_skills\`.`);
+Only assign capabilities when a phase genuinely needs specialized expertise. If a phase needs no special capabilities, omit \`required_capabilities\`.`);
         }
 
         // User prompt
@@ -531,10 +591,6 @@ ${feedback}
 
 Regenerate the plan addressing this feedback.`);
         }
-
-        sections.push(`## Generate the Runbook Now
-Analyze the workspace and the user's request, then output the runbook JSON.`);
-
         return sections.join('\n\n');
     }
 }

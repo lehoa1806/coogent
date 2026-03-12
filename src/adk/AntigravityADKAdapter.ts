@@ -353,18 +353,26 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
 
         // Step 2: Build the injection prompt — the full task prompt + persistence contract.
         // The prompt is injected directly into the chat conversation; no request.md is written.
-        // Only response.md serves as the file-based completion signal.
-        const injectionPrompt = [
-            options.initialPrompt,
-            '',
-            '## Orchestration Persistence Contract (Runtime Metadata — Non-Output)',
-            'This section is runtime metadata for the orchestration system. Do not include it in the runbook.',
-            'The orchestration runtime must persist artifacts in this order:',
-            '1. Parse and validate the planner output as runbook JSON',
-            `2. Store the validated runbook at: ${runbookFile}`,
-            `3. Store the planner's raw output at: ${responseFile}`,
-            'The runbook file must exist on disk before the response file is written, because the response file is the completion signal.'
-        ].join('\n');
+        // Phase 0 = planner (Orchestration Persistence Contract), phase 1+ = worker (Output Artifact Contract).
+        const isPlanner = options.phaseNumber === 0;
+        let artifactContract: string;
+
+        if (isPlanner) {
+            artifactContract = [
+                '',
+                '## Orchestration Persistence Contract (Runtime Metadata — Non-Output)',
+                'This section is runtime metadata for the orchestration system. Do not include it in the runbook.',
+                'The orchestration runtime must persist artifacts in this order:',
+                '1. Parse and validate the planner output as runbook JSON',
+                `2. Store the validated runbook at: ${runbookFile}`,
+                `3. Store the planner\\'s raw output at: ${responseFile}`,
+                'The runbook file must exist on disk before the response file is written, because the response file is the completion signal.',
+            ].join('\n');
+        } else {
+            artifactContract = AntigravityADKAdapter.buildWorkerArtifactContract(responseFile);
+        }
+
+        const injectionPrompt = options.initialPrompt + artifactContract;
 
         // Step 3: Inject the full prompt directly into the chat panel
         log.info(`[AntigravityADK] Injecting prompt directly into chat (${injectionPrompt.length} chars)...`);
@@ -553,6 +561,58 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
     /** Get the current cumulative token estimate for the active conversation. */
     getConversationTokens(): number {
         return this.conversationTokens;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    //  Worker Artifact Contract
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Build the `Output Artifact Contract` prompt section for worker sessions.
+     *
+     * This instructs the worker agent to write its complete output to the
+     * response file. The planner uses a different contract (Orchestration
+     * Persistence Contract) — see `createFileIpcSession`.
+     *
+     * @param responseFile Absolute path to the response.md file the worker must write.
+     */
+    static buildWorkerArtifactContract(responseFile: string): string {
+        return [
+            '',
+            '## Output Artifact Contract (Required)',
+            'This task uses a filesystem-based inter-process contract.',
+            'The content written to `response.md` is the canonical final output for this task.',
+            'Your chat reply should be a brief completion acknowledgment only.',
+            '',
+            `You must write your complete final response to: \`${responseFile}\``,
+            '',
+            'Requirements:',
+            '- The file must contain your full final response for this task.',
+            '- Write the file only after you have completed the task.',
+            '- The file must end with the fenced `json` block defined in `## Output Contract`.',
+            '- Do not write partial placeholders or progress notes to this file.',
+            '- Ensure the parent directory exists before writing the artifact.',
+            '- Treat successful creation of this file as mandatory task completion behavior.',
+            '',
+            'After writing the final artifact, reply briefly confirming completion and listing the written file path.',
+            'Do not repeat the full artifact content in chat unless explicitly requested.',
+            '',
+            '## Output Contract',
+            'At the very end of the response written to the artifact file, append a fenced block starting with ```json and ending with ``` containing exactly these keys:',
+            '```json',
+            '{',
+            '  "decisions": ["<string: each key decision you made>"],',
+            '  "modified_files": ["<string: relative path of every file you created or modified>"],',
+            '  "unresolved_issues": ["<string: anything left incomplete or risky>"],',
+            '  "next_steps_context": "<string: what the next phase needs to know>"',
+            '}',
+            '```',
+            '',
+            '## Runtime Metadata (Ignore)',
+            'The following section is for the orchestration runtime only and must not affect task execution.',
+            'Do not reference or reproduce this metadata in your response.',
+            'The response file is the completion signal.',
+        ].join('\n');
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
