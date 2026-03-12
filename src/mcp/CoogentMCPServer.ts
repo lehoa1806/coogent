@@ -167,7 +167,7 @@ export class CoogentMCPServer {
         this.workspaceRoot = workspaceRoot;
 
         this.server = new Server(
-            { name: 'coogent-mcp-server', version: '0.2.0' },
+            { name: 'coogent-mcp-server', version: '0.3.0' },
             {
                 capabilities: {
                     resources: {},

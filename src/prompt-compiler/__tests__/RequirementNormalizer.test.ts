@@ -37,10 +37,10 @@ describe('RequirementNormalizer', () => {
     //  Basic normalization
     // ─────────────────────────────────────────────────────────────────────────
 
-    it('should normalize a simple feature request (extracts objective, defaults to feature_implementation)', () => {
+    it('should normalize a simple feature request (defaults to feature_implementation)', () => {
         const spec = normalizer.normalize('Add user authentication with JWT');
 
-        expect(spec.objective).toBe('Add user authentication with JWT');
+        expect(spec.rawUserPrompt).toBe('Add user authentication with JWT');
         expect(spec.taskType).toBe('feature_implementation');
         expect(spec.artifactType).toBe('code_change');
         expect(spec.autonomy.allowReview).toBe(true);
@@ -57,6 +57,59 @@ describe('RequirementNormalizer', () => {
 
         expect(spec.artifactType).toBe('code_change');
         expect(spec.taskType).toBe('bug_fix');
+    });
+
+    it('should detect documentation artifact type for docs-heavy prompts', () => {
+        const spec = normalizer.normalize('Write documentation for the API reference guide');
+
+        expect(spec.artifactType).toBe('documentation');
+    });
+
+    it('should detect test artifact type for test-focused prompts', () => {
+        const spec = normalizer.normalize('Write unit tests and add test cases for the auth module');
+
+        expect(spec.artifactType).toBe('test');
+    });
+
+    it('should detect configuration artifact type for Docker/CI prompts', () => {
+        const spec = normalizer.normalize('Set up a Dockerfile and configure GitHub Actions pipeline');
+
+        expect(spec.artifactType).toBe('configuration');
+    });
+
+    it('should use scoring to resolve ambiguous artifact type (code_change vs analysis)', () => {
+        // "fix" and "patch" → code_change (2 hits) vs "review" → analysis (1 hit)
+        const spec = normalizer.normalize('Fix and patch the module, then review');
+
+        expect(spec.artifactType).toBe('code_change');
+    });
+
+    // ─────────────────────────────────────────────────────────────────────────
+    //  Task family detection (scoring-based)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    it('should classify testing family from keywords like "test suite" and "coverage"', () => {
+        const spec = normalizer.normalize('Increase test suite coverage for the auth module');
+
+        expect(spec.taskType).toBe('testing');
+    });
+
+    it('should classify performance family from keywords like "optimize", "slow", "bottleneck"', () => {
+        const spec = normalizer.normalize('Optimize the slow database queries and fix bottleneck');
+
+        expect(spec.taskType).toBe('performance');
+    });
+
+    it('should classify security_audit family from security keywords', () => {
+        const spec = normalizer.normalize('Run a security audit for CVE vulnerabilities');
+
+        expect(spec.taskType).toBe('security_audit');
+    });
+
+    it('should classify devops_infra family from infra keywords', () => {
+        const spec = normalizer.normalize('Set up Kubernetes cluster with Terraform on AWS');
+
+        expect(spec.taskType).toBe('devops_infra');
     });
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -101,7 +154,7 @@ describe('RequirementNormalizer', () => {
     it('should handle empty prompt gracefully', () => {
         const spec = normalizer.normalize('');
 
-        expect(spec.objective).toBe('');
+        expect(spec.rawUserPrompt).toBe('');
         expect(spec.taskType).toBe('feature_implementation');
         expect(spec.artifactType).toBe('code_change');
         expect(spec.scope.entryPoints).toEqual([]);

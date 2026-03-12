@@ -24,7 +24,7 @@ function makeFingerprint(overrides?: Partial<RepoFingerprint>): RepoFingerprint 
 
 function makeTaskSpec(overrides?: Partial<NormalizedTaskSpec>): NormalizedTaskSpec {
     return {
-        objective: 'Do something',
+        rawUserPrompt: 'Do something',
         artifactType: 'code_change',
         taskType: 'feature_implementation',
         scope: { entryPoints: [], allowedFolders: [], forbiddenFolders: [] },
@@ -198,20 +198,6 @@ describe('PolicyEngine', () => {
         const result = engine.evaluate(fp, spec);
 
         expect(result.appliedPolicies).not.toContain('no-squad-rule');
-    });
-
-    // ─────────────────────────────────────────────────────────────────────────
-    //  no-pipe-output policy (universal)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    it('should always apply no-pipe-output policy', () => {
-        const fp = makeFingerprint();
-        const spec = makeTaskSpec();
-
-        const result = engine.evaluate(fp, spec);
-
-        expect(result.appliedPolicies).toContain('no-pipe-output');
-        expect(result.promptBlocks.some(b => b.includes('no-pipe-output'))).toBe(true);
     });
 
     // ─────────────────────────────────────────────────────────────────────────

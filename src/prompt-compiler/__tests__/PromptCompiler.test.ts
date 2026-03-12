@@ -14,6 +14,12 @@ jest.mock('../templates.js', () => ({
     DOCUMENTATION_SYNTHESIS: '# Documentation\nDocs template.',
     REPO_ANALYSIS: '# Repo Analysis\nAnalysis template.',
     REVIEW_ONLY: '# Review Only\nReview template.',
+    TESTING: '# Testing\nTesting template.',
+    CI_CD: '# CI/CD\nCI/CD template.',
+    PERFORMANCE: '# Performance\nPerformance template.',
+    SECURITY_AUDIT: '# Security Audit\nSecurity template.',
+    DEPENDENCY_MANAGEMENT: '# Dependency Management\nDependency template.',
+    DEVOPS_INFRA: '# DevOps Infra\nDevOps template.',
 }));
 
 import { PlannerPromptCompiler } from '../PlannerPromptCompiler.js';
@@ -24,7 +30,6 @@ import type { RepoFingerprint } from '../types.js';
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const MOCK_SKELETON = '# Orchestration Skeleton\nYou are a planning agent.';
-const MOCK_FEATURE_TEMPLATE = '# Feature Implementation\nPlan features step by step.';
 
 const MOCK_FINGERPRINT: RepoFingerprint = {
     workspaceType: 'single',
@@ -83,10 +88,10 @@ describe('PlannerPromptCompiler', () => {
         expect(result.text).toContain(MOCK_SKELETON);
     });
 
-    it('should contain task-family template content in compiled prompt', async () => {
+    it('should include task_type in normalized task section for feature request', async () => {
         const result = await compiler.compile('Add a new profile feature');
 
-        expect(result.text).toContain(MOCK_FEATURE_TEMPLATE);
+        expect(result.text).toContain('task_type: feature_implementation');
     });
 
     it('should contain repo fingerprint section in compiled prompt', async () => {
@@ -97,12 +102,16 @@ describe('PlannerPromptCompiler', () => {
         expect(result.text).toContain('package_manager: npm');
     });
 
-    it('should contain user request section in compiled prompt', async () => {
+    it('should contain normalized task section with raw_user_prompt', async () => {
         const userPrompt = 'Build a REST API for user management';
         const result = await compiler.compile(userPrompt);
 
-        expect(result.text).toContain('## User Request');
-        expect(result.text).toContain(userPrompt);
+        expect(result.text).toContain('## Normalized Task');
+        // Raw user prompt preserved in a fenced code block
+        expect(result.text).toContain('raw_user_prompt: |\n```\n' + userPrompt + '\n```');
+        // Type fields present
+        expect(result.text).toContain('task_type:');
+        expect(result.text).toContain('artifact_type:');
     });
 
     // ─────────────────────────────────────────────────────────────────────────

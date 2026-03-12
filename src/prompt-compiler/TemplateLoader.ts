@@ -12,6 +12,12 @@ import {
     DOCUMENTATION_SYNTHESIS,
     REPO_ANALYSIS,
     REVIEW_ONLY,
+    TESTING,
+    CI_CD,
+    PERFORMANCE,
+    SECURITY_AUDIT,
+    DEPENDENCY_MANAGEMENT,
+    DEVOPS_INFRA,
 } from './templates.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -29,6 +35,12 @@ const FAMILY_TO_CONTENT: Record<TaskFamily, string> = {
     documentation_synthesis: DOCUMENTATION_SYNTHESIS,
     repo_analysis: REPO_ANALYSIS,
     review_only: REVIEW_ONLY,
+    testing: TESTING,
+    ci_cd: CI_CD,
+    performance: PERFORMANCE,
+    security_audit: SECURITY_AUDIT,
+    dependency_management: DEPENDENCY_MANAGEMENT,
+    devops_infra: DEVOPS_INFRA,
 };
 
 /** Default fallback family when a template is missing. */

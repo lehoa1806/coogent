@@ -9,8 +9,8 @@ import log from '../logger/log.js';
  * Extracts and validates a Runbook from raw LLM output.
  *
  * Parsing strategies (in order):
- * 1. Fenced ```json code block
- * 2. Raw JSON object containing a `"phases"` array
+ * 1. Raw JSON object containing a `"phases"` array
+ * 2. Fenced ```json code block (backward-compatible fallback)
  */
 export class RunbookParser {
     /**
@@ -19,8 +19,16 @@ export class RunbookParser {
      * @returns A validated Runbook, or `null` if parsing/validation fails.
      */
     parse(output: string): Runbook | null {
-        // Strategy 1: Look for ```json ... ``` fenced code block
-        // #44: Use non-greedy pattern to avoid over-capturing
+        // Strategy 1: Brace-counting extraction of the outermost JSON object.
+        // (Replaces the former regex approach which failed on nested brackets — #44)
+        const jsonCandidate = this.extractOutermostJson(output);
+        if (jsonCandidate) {
+            try {
+                return this.validateRunbook(JSON.parse(jsonCandidate));
+            } catch { /* fall through */ }
+        }
+
+        // Strategy 2: Look for ```json ... ``` fenced code block (backward-compatible fallback)
         const fencedMatch = output.match(/```json\s*\n([\s\S]*?)\n```/);
         if (fencedMatch) {
             try {
@@ -28,15 +36,55 @@ export class RunbookParser {
             } catch { /* fall through */ }
         }
 
-        // Strategy 2: Look for raw JSON object { ... } — non-greedy (#44)
-        const jsonMatch = output.match(/\{[\s\S]*?"phases"\s*:\s*\[[\s\S]*?\]\s*[\s\S]*?\}/);
-        if (jsonMatch) {
-            try {
-                return this.validateRunbook(JSON.parse(jsonMatch[0]));
-            } catch { /* fall through */ }
+        return null;
+    }
+
+    /**
+     * Walk the string character-by-character to extract the outermost `{ ... }`
+     * JSON object, correctly handling nested braces and string literals.
+     *
+     * Why not regex? Regex cannot reliably match balanced brackets in nested
+     * JSON (the old non-greedy pattern truncated at the first inner `]`).
+     */
+    private extractOutermostJson(text: string): string | null {
+        const start = text.indexOf('{');
+        if (start === -1) return null;
+
+        let depth = 0;
+        let inString = false;
+        let escape = false;
+
+        for (let i = start; i < text.length; i++) {
+            const ch = text[i];
+
+            if (escape) {
+                escape = false;
+                continue;
+            }
+
+            if (ch === '\\' && inString) {
+                escape = true;
+                continue;
+            }
+
+            if (ch === '"') {
+                inString = !inString;
+                continue;
+            }
+
+            if (inString) continue;
+
+            if (ch === '{') {
+                depth++;
+            } else if (ch === '}') {
+                depth--;
+                if (depth === 0) {
+                    return text.substring(start, i + 1);
+                }
+            }
         }
 
-        return null;
+        return null; // Unbalanced braces
     }
 
     /**

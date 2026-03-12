@@ -11,7 +11,7 @@ import type { ADKSessionOptions, ADKSessionHandle } from './ADKController.js';
 import type { ConversationMode } from '../types/index.js';
 import { CharRatioEncoder, type TokenEncoder } from '../context/ContextScoper.js';
 import { FileStabilityWatcher } from './FileStabilityWatcher.js';
-import { COOGENT_DIR, IPC_DIR, IPC_RESPONSE_FILE } from '../constants/paths.js';
+import { COOGENT_DIR, IPC_DIR, IPC_RESPONSE_FILE, RUNBOOK_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -338,6 +338,10 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
             ? path.join(this.ipcDir, options.masterTaskId, subTaskName)
             : path.join(this.ipcDir, subTaskName);
         const responseFile = path.join(subDir, IPC_RESPONSE_FILE);
+        const masterDir = options.masterTaskId
+            ? path.join(this.ipcDir, options.masterTaskId)
+            : subDir;
+        const runbookFile = path.join(masterDir, RUNBOOK_FILE);
 
         // ── Critical section: chat injection ─────────────────────────────────
         // These steps MUST complete before the next session starts, otherwise
@@ -347,16 +351,17 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
         // Step 1: Ensure sub-task directory exists (for response.md)
         await fs.mkdir(subDir, { recursive: true });
 
-        // Step 2: Build the injection prompt — the full task prompt + response.md write instruction.
+        // Step 2: Build the injection prompt — the full task prompt + persistence contract.
         // The prompt is injected directly into the chat conversation; no request.md is written.
         // Only response.md serves as the file-based completion signal.
         const injectionPrompt = [
             options.initialPrompt,
             '',
-            '## Output',
-            `Write your COMPLETE response to the file: ${responseFile}`,
-            `Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
-            `Use the file editing tools to create/write to ${responseFile}.`,
+            '## Orchestration Persistence Contract',
+            'The orchestration runtime must persist artifacts as follows:',
+            '- Parse and validate the planner output as runbook JSON',
+            `- Store the validated runbook at: ${runbookFile}`,
+            `- Store the planner's raw output at: ${responseFile}`
         ].join('\n');
 
         // Step 3: Inject the full prompt directly into the chat panel

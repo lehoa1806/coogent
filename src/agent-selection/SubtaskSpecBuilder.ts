@@ -39,14 +39,17 @@ export interface NormalizedRequirementContext {
 //  2. Keyword → TaskType mapping table
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/** Ordered keyword-to-TaskType rules. First match wins. */
+/** Ordered keyword-to-TaskType rules. Scored by match count; highest wins. */
 const TASK_TYPE_KEYWORDS: readonly { readonly keywords: readonly string[]; readonly type: TaskType }[] = [
-    { keywords: ['test', 'spec', 'coverage'], type: 'test_creation' },
-    { keywords: ['review', 'verify', 'audit', 'check'], type: 'verification' },
+    { keywords: ['test', 'spec', 'coverage', 'testing', 'tests', 'e2e', 'integration test', 'test suite', 'test case'], type: 'test_creation' },
+    { keywords: ['review', 'verify', 'audit', 'check', 'validate', 'inspect', 'confirm', 'regression'], type: 'verification' },
     { keywords: ['refactor', 'restructure', 'reorganize'], type: 'refactor' as TaskType },
-    { keywords: ['fix', 'bug', 'patch', 'resolve'], type: 'localized_bugfix' },
-    { keywords: ['investigate', 'research', 'discover', 'find', 'search'], type: 'repo_pattern_discovery' },
-    { keywords: ['plan', 'decompose', 'design'], type: 'task_decomposition' },
+    { keywords: ['fix', 'bug', 'patch', 'resolve', 'broken', 'crash', 'error', 'issue', 'failing', 'defect'], type: 'localized_bugfix' },
+    { keywords: ['debug', 'investigate bug', 'root cause', 'diagnose'], type: 'bug_investigation' },
+    { keywords: ['investigate', 'research', 'discover', 'find', 'search', 'explore', 'analyze', 'scan', 'map', 'understand'], type: 'repo_pattern_discovery' },
+    { keywords: ['plan', 'decompose', 'design', 'architect', 'structure', 'organize', 'break down'], type: 'task_decomposition' },
+    { keywords: ['integrate', 'connect', 'wire up', 'hook up', 'link'], type: 'small_integration' },
+    { keywords: ['dependency', 'dependencies', 'import graph', 'module graph'], type: 'dependency_mapping' },
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -197,17 +200,22 @@ export class SubtaskSpecBuilder {
 
     /**
      * Infer TaskType from title and goal text.
-     * Uses keyword matching against a priority-ordered rule set.
-     * First match wins; defaults to 'code_modification'.
+     * Uses scoring-based keyword matching against a priority-ordered rule set.
+     * Counts keyword hits per rule; highest score wins. Ties broken by
+     * declaration order. Defaults to 'code_modification'.
      */
     static inferTaskType(title: string, goal: string): TaskType {
         const combined = `${title} ${goal}`.toLowerCase();
+        let bestType: TaskType = 'code_modification';
+        let bestScore = 0;
         for (const rule of TASK_TYPE_KEYWORDS) {
-            if (rule.keywords.some((kw) => combined.includes(kw))) {
-                return rule.type;
+            const score = rule.keywords.reduce((count, kw) => count + (combined.includes(kw) ? 1 : 0), 0);
+            if (score > bestScore) {
+                bestScore = score;
+                bestType = rule.type;
             }
         }
-        return 'code_modification';
+        return bestType;
     }
 
     /**

@@ -55,14 +55,69 @@ describe('RunbookParser', () => {
     //  Raw JSON
     // ═════════════════════════════════════════════════════════════════════
 
-    it('should return null for raw JSON with nested brackets (known #44 limitation)', () => {
-        // The non-greedy regex (#44) cannot reliably match raw (unfenced) JSON
-        // that contains nested arrays/objects. The fenced ```json path is the
-        // reliable primary strategy. Raw JSON matching is best-effort.
+    it('should parse raw JSON with nested brackets (fixed #44)', () => {
+        // The brace-counting extractor correctly handles nested arrays/objects,
+        // resolving the old regex non-greedy truncation issue (#44).
         const rawJson = '{"project_id":"raw-test","phases":[{"id":1,"prompt":"Do X","context_files":["a.ts"],"success_criteria":"exit_code:0"}]}';
         const result = parser.parse(rawJson);
-        // Returns null because the non-greedy regex can't handle nested brackets
-        expect(result).toBeNull();
+        expect(result).not.toBeNull();
+        expect(result!.project_id).toBe('raw-test');
+        expect(result!.phases).toHaveLength(1);
+    });
+
+    it('should parse deeply nested multi-phase raw JSON (regression for #44)', () => {
+        // This is the exact scenario that caused malformed JSON in production:
+        // large runbooks with many phases, each containing nested context_files
+        // and required_skills arrays.
+        const deepRunbook = {
+            project_id: 'deep-test',
+            summary: 'Multi-phase review',
+            implementation_plan: '## Approach\n\nDeep phases.',
+            status: 'idle',
+            current_phase: 1,
+            phases: [
+                {
+                    id: 1,
+                    status: 'pending',
+                    prompt: 'Phase 1 with [brackets] and {braces} and "quotes"',
+                    context_files: ['src/a.ts', 'src/b.ts', 'docs/README.md'],
+                    success_criteria: 'exit_code:0',
+                    context_summary: 'Analyze architecture',
+                    required_skills: ['architecture', 'review'],
+                },
+                {
+                    id: 2,
+                    status: 'pending',
+                    prompt: 'Phase 2 referencing phase 1',
+                    context_files: ['src/c.ts'],
+                    success_criteria: 'exit_code:0',
+                    depends_on: [1],
+                    required_skills: ['testing'],
+                },
+                {
+                    id: 3,
+                    status: 'pending',
+                    prompt: 'Phase 3 final',
+                    context_files: ['src/d.ts', 'src/e.ts'],
+                    success_criteria: 'exit_code:0',
+                    depends_on: [1, 2],
+                },
+            ],
+        };
+        const rawJson = JSON.stringify(deepRunbook);
+        const result = parser.parse(rawJson);
+        expect(result).not.toBeNull();
+        expect(result!.project_id).toBe('deep-test');
+        expect(result!.phases).toHaveLength(3);
+        expect(result!.phases[0].prompt).toContain('[brackets]');
+        expect(result!.summary).toBe('Multi-phase review');
+    });
+
+    it('should parse raw JSON with surrounding text', () => {
+        const rawJson = 'Here is my plan:\n\n{"project_id":"surrounded","phases":[{"id":1,"prompt":"Do it","context_files":["x.ts"],"success_criteria":"exit_code:0"}]}\n\nDone.';
+        const result = parser.parse(rawJson);
+        expect(result).not.toBeNull();
+        expect(result!.project_id).toBe('surrounded');
     });
 
     // ═════════════════════════════════════════════════════════════════════

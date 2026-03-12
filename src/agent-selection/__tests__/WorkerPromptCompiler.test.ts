@@ -46,18 +46,8 @@ function formatAssumptionPolicy(policy: AssumptionPolicy): string {
     return sections.length > 0 ? sections.join('\n\n') : '_None._';
 }
 
-/** Build IPC contract instructions (test-friendly reimplementation). */
-function buildIpcInstructions(_executionMode: ExecutionMode): string {
-    const sections: string[] = ['### IPC Contract', ''];
-    sections.push(
-        `1. **Write your COMPLETE response** to \`response.md\` in the current IPC directory.`,
-        `2. Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
-    );
-    return sections.join('\n');
-}
-
 /** Compile prompt (test-friendly reimplementation). */
-function compile(spec: SubtaskSpec, profile: AgentProfile, executionMode: ExecutionMode = 'unsupported'): CompiledWorkerPrompt {
+function compile(spec: SubtaskSpec, profile: AgentProfile, _executionMode: ExecutionMode = 'unsupported'): CompiledWorkerPrompt {
     const values: Record<string, string> = {
         agent_type: profile.agent_type,
         mode: profile.mode ?? '',
@@ -88,8 +78,8 @@ function compile(spec: SubtaskSpec, profile: AgentProfile, executionMode: Execut
 
     const interpolatedBase = interpolate(BASE_WORKER, values);
     const interpolatedAgent = interpolate(CODE_EDITOR, values);
-    const ipcInstructions = buildIpcInstructions(executionMode);
-    const text = `${interpolatedBase}\n${interpolatedAgent}\n${ipcInstructions}`;
+    // IPC instructions removed — file-writing handled by adapter layer
+    const text = `${interpolatedBase}\n${interpolatedAgent}`;
     const promptId = `prompt_${spec.subtask_id}_v${PROMPT_VERSION}`;
 
     const assumptionPolicy: AssumptionPolicy = {
@@ -169,26 +159,29 @@ describe('WorkerPromptCompiler', () => {
         expect(rawPlaceholders).toBeNull();
     });
 
-    // ─── Execution Mode: IPC instructions ─────────────────────────────────
+    // ─── Execution Mode: IPC instructions removed ─────────────────────────
 
-    it('vscode-native mode: includes response.md but NOT request.md instructions', () => {
+    it('vscode-native mode: does NOT include response.md or IPC Contract instructions', () => {
         const result = compile(spec, codeEditorProfile, 'vscode-native');
-        expect(result.text).toContain('response.md');
+        expect(result.text).not.toContain('response.md');
+        expect(result.text).not.toContain('IPC Contract');
         expect(result.text).not.toContain('Read your task');
         expect(result.text).not.toMatch(/request\.md/);
     });
 
-    it('default executionMode is unsupported (no request.md)', () => {
+    it('default executionMode is unsupported (no IPC instructions)', () => {
         const result = compile(spec, codeEditorProfile);
-        expect(result.text).toContain('response.md');
+        expect(result.text).not.toContain('response.md');
+        expect(result.text).not.toContain('IPC Contract');
         expect(result.text).not.toMatch(/request\.md/);
     });
 
-    it('no mode emits request.md instructions', () => {
+    it('no mode emits response.md or IPC Contract instructions', () => {
         const allModes: ExecutionMode[] = ['vscode-native', 'cursor', 'antigravity', 'unsupported'];
         for (const mode of allModes) {
             const result = compile(spec, codeEditorProfile, mode);
-            expect(result.text).toContain('response.md');
+            expect(result.text).not.toContain('response.md');
+            expect(result.text).not.toContain('IPC Contract');
             expect(result.text).not.toMatch(/request\.md/);
             expect(result.text).not.toContain('Read your task');
         }

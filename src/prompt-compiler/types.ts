@@ -17,7 +17,13 @@ export type TaskFamily =
     | 'migration'
     | 'documentation_synthesis'
     | 'repo_analysis'
-    | 'review_only';
+    | 'review_only'
+    | 'testing'
+    | 'ci_cd'
+    | 'performance'
+    | 'security_audit'
+    | 'dependency_management'
+    | 'devops_infra';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  2. Task Scope — Where in the repo work should happen
@@ -63,8 +69,8 @@ export interface AutonomyPreferences {
  * to select templates, inject policies, and generate the master prompt.
  */
 export interface NormalizedTaskSpec {
-    /** Clear statement of what the user wants to achieve. */
-    readonly objective: string;
+    /** The exact, unmodified user prompt for traceability. */
+    readonly rawUserPrompt: string;
     /** The type of artifact this task will produce. */
     readonly artifactType: 'code_change' | 'documentation' | 'analysis' | 'configuration' | 'test' | 'other';
     /** The classified task family, used for template selection. */

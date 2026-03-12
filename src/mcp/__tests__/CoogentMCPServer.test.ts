@@ -35,7 +35,7 @@ async function createConnectedPair(workspaceRoot: string) {
     await server.init(workspaceRoot);
 
     const client = new Client(
-        { name: 'test-client', version: '0.2.0' },
+        { name: 'test-client', version: '0.3.0' },
         { capabilities: {} }
     );
 

@@ -19,11 +19,11 @@ const ARTIFACT_TYPE_RULES: ReadonlyArray<{
     readonly keywords: readonly string[];
     readonly type: NormalizedTaskSpec['artifactType'];
 }> = [
-        { keywords: ['fix', 'bug', 'patch', 'hotfix', 'resolve', 'crash'], type: 'code_change' },
-        { keywords: ['document', 'readme', 'docs', 'jsdoc', 'changelog'], type: 'documentation' },
-        { keywords: ['analyze', 'audit', 'review', 'inspect', 'investigate'], type: 'analysis' },
-        { keywords: ['test', 'spec', 'coverage', 'e2e', 'unit test'], type: 'test' },
-        { keywords: ['configure', 'setup', 'config', 'env', 'ci', 'deploy'], type: 'configuration' },
+        { keywords: ['fix bug', 'bug fix', 'bugfix', 'patch', 'hotfix', 'resolve', 'implement', 'add', 'create', 'build', 'modify', 'update', 'refactor', 'rewrite', 'replace', 'remove', 'delete', 'fix the', 'fix a', 'fix this'], type: 'code_change' },
+        { keywords: ['document', 'readme', 'docs', 'jsdoc', 'changelog', 'documentation', 'comment', 'docstring', 'annotation', 'api reference', 'guide', 'tutorial', 'wiki'], type: 'documentation' },
+        { keywords: ['analyze', 'audit', 'review', 'inspect', 'investigate', 'scan', 'assess', 'evaluate', 'examine', 'report', 'profile', 'benchmark', 'find', 'check'], type: 'analysis' },
+        { keywords: ['test', 'spec', 'coverage', 'e2e', 'unit test', 'testing', 'tests', 'test case', 'assertion', 'mock', 'stub', 'fixture'], type: 'test' },
+        { keywords: ['configure', 'setup', 'config', 'env', 'ci', 'deploy', 'dockerfile', 'yaml', 'yml', 'json config', '.env', 'nginx', 'settings', 'pipeline', 'github actions', 'terraform', 'kubernetes', 'docker', 'helm'], type: 'configuration' },
     ];
 
 /** Keyword → task family mapping, evaluated top-down (first match wins). */
@@ -31,12 +31,18 @@ const TASK_FAMILY_RULES: ReadonlyArray<{
     readonly keywords: readonly string[];
     readonly family: TaskFamily;
 }> = [
-        { keywords: ['fix', 'bug', 'patch', 'hotfix', 'crash', 'error'], family: 'bug_fix' },
-        { keywords: ['refactor', 'clean up', 'restructure', 'simplify'], family: 'refactor' },
-        { keywords: ['migrate', 'migration', 'upgrade', 'convert'], family: 'migration' },
-        { keywords: ['document', 'readme', 'docs', 'jsdoc', 'changelog'], family: 'documentation_synthesis' },
-        { keywords: ['analyze', 'audit', 'review', 'inspect', 'investigate'], family: 'repo_analysis' },
-        { keywords: ['review only', 'code review', 'just review'], family: 'review_only' },
+        { keywords: ['fix bug', 'bug fix', 'bugfix', 'hotfix', 'crash', 'broken', 'not working', 'defect', 'fix the', 'fix a', 'fix this'], family: 'bug_fix' },
+        { keywords: ['refactor', 'clean up', 'restructure', 'simplify', 'reorganize', 'clean', 'extract', 'decouple', 'modularize', 'rename'], family: 'refactor' },
+        { keywords: ['migrate', 'migration', 'upgrade', 'convert', 'move from', 'transition', 'port', 'switch to'], family: 'migration' },
+        { keywords: ['document', 'readme', 'docs', 'jsdoc', 'changelog', 'documentation', 'api reference', 'guide', 'tutorial', 'wiki', 'comment', 'docstring'], family: 'documentation_synthesis' },
+        { keywords: ['analyze', 'audit', 'review', 'inspect', 'investigate', 'understand', 'evaluate', 'scan', 'profile', 'examine', 'architecture review', 'comprehensive review', 'multi-phase review', 'codebase review', 'repository review', 'review of the', 'review the repo', 'assess'], family: 'repo_analysis' },
+        { keywords: ['just review', 'review the pr', 'review this pr', 'pr review', 'code review', 'peer review', 'look at', 'review my', 'review the changes'], family: 'review_only' },
+        { keywords: ['test', 'spec', 'coverage', 'unit test', 'e2e', 'integration test', 'test case', 'tests', 'assertion', 'mock', 'test suite'], family: 'testing' },
+        { keywords: ['ci', 'cd', 'pipeline', 'github actions', 'workflow', 'ci/cd', 'continuous integration', 'continuous delivery', 'deployment pipeline'], family: 'ci_cd' },
+        { keywords: ['performance', 'benchmark', 'profiling', 'optimize', 'latency', 'throughput', 'speed', 'slow', 'bottleneck', 'speed up', 'memory', 'cpu'], family: 'performance' },
+        { keywords: ['security', 'vulnerability', 'cve', 'hardening', 'penetration', 'owasp', 'exploit'], family: 'security_audit' },
+        { keywords: ['dependency', 'dependencies', 'npm audit', 'outdated', 'lock file', 'upgrade packages', 'npm update', 'outdated packages', 'version bump'], family: 'dependency_management' },
+        { keywords: ['infra', 'infrastructure', 'docker', 'kubernetes', 'terraform', 'deploy config', 'container', 'helm', 'orchestration', 'cloud', 'aws', 'gcp', 'azure'], family: 'devops_infra' },
     ];
 
 /** Regex for file-path–like tokens (e.g., `src/foo/bar.ts`, `./lib/util.js`). */
@@ -105,7 +111,7 @@ export class RequirementNormalizer {
         const autonomy = this.defaultAutonomy();
 
         return {
-            objective: trimmed,
+            rawUserPrompt: trimmed,
             artifactType,
             taskType,
             scope,
@@ -171,29 +177,39 @@ export class RequirementNormalizer {
     }
 
     /**
-     * Detect the artifact type via keyword matching against {@link ARTIFACT_TYPE_RULES}.
-     * Falls back to `'code_change'` if no rule matches.
+     * Detect the artifact type via scoring-based keyword matching.
+     * Counts keyword hits per rule and returns the type with the highest score.
+     * Ties are broken by declaration order. Falls back to `'code_change'`.
      */
     private detectArtifactType(lower: string): NormalizedTaskSpec['artifactType'] {
+        let bestType: NormalizedTaskSpec['artifactType'] = 'code_change';
+        let bestScore = 0;
         for (const rule of ARTIFACT_TYPE_RULES) {
-            if (rule.keywords.some((kw) => lower.includes(kw))) {
-                return rule.type;
+            const score = rule.keywords.reduce((count, kw) => count + (lower.includes(kw) ? 1 : 0), 0);
+            if (score > bestScore) {
+                bestScore = score;
+                bestType = rule.type;
             }
         }
-        return 'code_change';
+        return bestType;
     }
 
     /**
-     * Classify the task family via keyword matching against {@link TASK_FAMILY_RULES}.
-     * Falls back to `'feature_implementation'` if no rule matches.
+     * Classify the task family via scoring-based keyword matching.
+     * Counts keyword hits per rule and returns the family with the highest score.
+     * Ties are broken by declaration order. Falls back to `'feature_implementation'`.
      */
     private classifyTaskFamily(lower: string): TaskFamily {
+        let bestFamily: TaskFamily = 'feature_implementation';
+        let bestScore = 0;
         for (const rule of TASK_FAMILY_RULES) {
-            if (rule.keywords.some((kw) => lower.includes(kw))) {
-                return rule.family;
+            const score = rule.keywords.reduce((count, kw) => count + (lower.includes(kw) ? 1 : 0), 0);
+            if (score > bestScore) {
+                bestScore = score;
+                bestFamily = rule.family;
             }
         }
-        return 'feature_implementation';
+        return bestFamily;
     }
 
     /**

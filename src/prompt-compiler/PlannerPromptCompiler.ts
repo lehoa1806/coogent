@@ -48,6 +48,12 @@ const FAMILY_TO_TEMPLATE_FILE: Record<TaskFamily, string> = {
     documentation_synthesis: 'documentation-synthesis.md',
     repo_analysis: 'repo-analysis.md',
     review_only: 'review-only.md',
+    testing: 'testing.md',
+    ci_cd: 'ci-cd.md',
+    performance: 'performance.md',
+    security_audit: 'security-audit.md',
+    dependency_management: 'dependency-management.md',
+    devops_infra: 'devops-infra.md',
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -117,8 +123,7 @@ export class PlannerPromptCompiler {
         const templateLoader = new TemplateLoader();
         const skeleton = templateLoader.loadSkeleton();
 
-        // ── f. Load task-family template ──────────────────────────────────
-        const familyTemplate = templateLoader.loadTemplate(classifiedFamily);
+
 
         // ── g. Evaluate policy modules ────────────────────────────────────
         const policyEngine = new PolicyEngine();
@@ -127,7 +132,6 @@ export class PlannerPromptCompiler {
         // ── h. Assemble the final prompt ──────────────────────────────────
         const text = this.assemblePrompt(
             skeleton,
-            familyTemplate,
             fingerprint,
             enrichedSpec,
             policyResult.promptBlocks,
@@ -167,11 +171,10 @@ export class PlannerPromptCompiler {
      */
     private assemblePrompt(
         skeleton: string,
-        familyTemplate: string,
         fingerprint: RepoFingerprint,
         taskSpec: NormalizedTaskSpec,
-        policyBlocks: string[],
-        rawPrompt: string,
+        _policyBlocks: string[],
+        _rawPrompt: string,
         options?: CompileOptions,
     ): string {
         const sections: string[] = [];
@@ -179,8 +182,7 @@ export class PlannerPromptCompiler {
         // 1. Orchestration skeleton
         sections.push(skeleton);
 
-        // 2. Task-family template as "## Planning Strategy"
-        sections.push(`## Planning Strategy\n${familyTemplate}`);
+        // 2. Task-family template — removed (no longer injected into prompt)
 
         // 3. Repo fingerprint as "## Repo Profile"
         sections.push(`## Repo Profile\n${this.formatFingerprint(fingerprint)}`);
@@ -188,18 +190,7 @@ export class PlannerPromptCompiler {
         // 4. Normalized task spec as "## Normalized Task"
         sections.push(`## Normalized Task\n${this.formatTaskSpec(taskSpec)}`);
 
-        // 5. Policy blocks as "## Planning Policies"
-        if (policyBlocks.length > 0) {
-            const policyBullets = policyBlocks.map(block => `- ${block.replace(/\n/g, '\n  ')}`).join('\n');
-            sections.push(`## Planning Policies\n${policyBullets}`);
-        }
-
-        // 6. Top-level structure (if provided — keep short to save tokens)
-        if (options?.fileTree && options.fileTree.length > 0) {
-            sections.push(`## Top-Level Structure\n${options.fileTree.join('\n')}`);
-        }
-
-        // 7. Available worker skills (if provided)
+        // 5. Available worker skills (if provided)
         if (options?.availableTags && options.availableTags.length > 0) {
             const sorted = [...options.availableTags].sort();
             sections.push(
@@ -207,16 +198,10 @@ export class PlannerPromptCompiler {
             );
         }
 
-        // 8. User request
-        sections.push(`## User Request\n${rawPrompt}`);
-
         // 9. Feedback section (if provided)
         if (options?.feedback) {
             sections.push(`## Feedback from Previous Run\n${options.feedback}`);
         }
-
-        // 10. Footer
-        sections.push('## Generate the Runbook Now');
 
         return sections.join('\n\n');
     }
@@ -302,33 +287,44 @@ export class PlannerPromptCompiler {
      */
     private formatTaskSpec(spec: NormalizedTaskSpec): string {
         const lines: string[] = [];
-        lines.push(`objective: ${spec.objective}`);
-        lines.push(`artifact_type: ${spec.artifactType}`);
-        lines.push(`task_type: ${spec.taskType}`);
 
+        lines.push(`task_type: ${spec.taskType}`);
+        lines.push(`artifact_type: ${spec.artifactType}`);
+
+        // Promoted optional fields
+        if (spec.constraints.length > 0) {
+            lines.push(`constraints: ${spec.constraints.join('; ')}`);
+        }
+        if (spec.knownInputs.length > 0) {
+            lines.push(`known_inputs: ${spec.knownInputs.join(', ')}`);
+        }
+
+        // Scope fields
         if (spec.scope.entryPoints.length > 0) {
             lines.push(`entry_points: ${spec.scope.entryPoints.join(', ')}`);
         }
         if (spec.scope.allowedFolders.length > 0) {
             lines.push(`allowed_folders: ${spec.scope.allowedFolders.join(', ')}`);
         }
-        if (spec.constraints.length > 0) {
-            lines.push(`constraints: ${spec.constraints.join(' | ')}`);
-        }
         if (spec.successCriteria.length > 0) {
-            lines.push(`success_criteria: ${spec.successCriteria.join(' | ')}`);
+            lines.push(`success_criteria: ${spec.successCriteria.join('; ')}`);
         }
-        if (spec.knownInputs.length > 0) {
-            lines.push(`known_inputs: ${spec.knownInputs.join(', ')}`);
+        if (spec.missingInformation.length > 0) {
+            lines.push(`missing_information: ${spec.missingInformation.join('; ')}`);
         }
         if (spec.riskFactors.length > 0) {
             lines.push(`risk_factors: ${spec.riskFactors.join(', ')}`);
         }
         if (spec.decompositionHints.length > 0) {
-            lines.push(`decomposition_hints: ${spec.decompositionHints.join(' | ')}`);
+            lines.push(`decomposition_hints: ${spec.decompositionHints.join('; ')}`);
         }
 
-        lines.push(`autonomy: review=${spec.autonomy.allowReview}, squad=${spec.autonomy.allowSquad}, replan=${spec.autonomy.allowReplan}`);
+        // Raw user prompt in a fenced code block to prevent misinterpretation
+        lines.push('raw_user_prompt: |');
+        lines.push('```');
+        lines.push(spec.rawUserPrompt);
+        lines.push('```');
+
         return lines.join('\n');
     }
 
