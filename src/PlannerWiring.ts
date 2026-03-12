@@ -58,6 +58,9 @@ export function wirePlanner(
                         log.info('[PlannerWiring] StateManager + SessionManager wired to ArtifactDB.');
                     }
                 }
+
+                // Refresh sidebar so the new session appears in history immediately
+                svc.sidebarMenu?.refresh();
             }
 
             // Inject fresh available tags from AgentRegistry before planning
