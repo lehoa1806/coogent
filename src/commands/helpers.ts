@@ -99,6 +99,10 @@ export async function createFreshSession(svc: ServiceContainer): Promise<void> {
         const newSM = new StateManager(newDir);
         await svc.engine!.reset(newSM);
         svc.switchSession({ sessionId: newId, sessionDirName: newDirName, sessionDir: newDir, newStateManager: newSM });
+
+        // Persist session row so it appears in history even before a prompt is submitted
+        svc.mcpServer?.upsertSession(newDirName, newId, '', Date.now());
+        svc.sidebarMenu?.refresh();
     } else {
         await svc.engine!.reset();
     }

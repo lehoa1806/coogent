@@ -156,6 +156,9 @@ export function wireEngine(
                 message: `✅ Run completed: ${completedCount}/${phaseCount} phases for "${runbook.project_id}".`,
             },
         });
+
+        // Refresh sidebar so session status updates are visible in history
+        svc.sidebarMenu?.refresh();
     });
 
     // ── Engine → phase:execute ──────────────────────────────────────────
