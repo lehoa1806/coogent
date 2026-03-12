@@ -334,11 +334,9 @@ export class SessionManager {
         if (!this.db) return null;
 
         try {
-            const rows: SessionRow[] = this.db.sessions.list();
-            const match = rows.find(r =>
-                stripSessionDirPrefix(r.sessionDirName) === sessionId ||
-                r.sessionId === sessionId
-            );
+            // ARCH-2: Use targeted query instead of scanning full list
+            const match = this.db.sessions.getBySessionId(sessionId)
+                ?? this.db.sessions.getByDirName(sessionId);
             if (match?.runbookJson) {
                 const runbook = JSON.parse(match.runbookJson) as Runbook;
                 if (runbook && runbook.project_id && Array.isArray(runbook.phases)) {
@@ -404,14 +402,11 @@ export class SessionManager {
             return path.join(this.ipcDir, sessionIdOrDirName);
         }
 
-        // Try to look up the full dir name from the DB
+        // ARCH-2: Use targeted query instead of scanning full list
         if (this.db) {
             try {
-                const rows = this.db.sessions.list();
-                const match = rows.find(r =>
-                    r.sessionId === sessionIdOrDirName ||
-                    stripSessionDirPrefix(r.sessionDirName) === sessionIdOrDirName
-                );
+                const match = this.db.sessions.getBySessionId(sessionIdOrDirName)
+                    ?? this.db.sessions.getByDirName(sessionIdOrDirName);
                 if (match) {
                     return path.join(this.ipcDir, match.sessionDirName);
                 }

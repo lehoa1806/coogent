@@ -11,7 +11,7 @@ import type {
     Deliverable,
     AgentType,
 } from './types.js';
-import type { ExecutionMode } from '../adk/AntigravityADKAdapter.js';
+import type { ExecutionMode } from '../adk/ExecutionModeResolver.js';
 import {
     BASE_WORKER,
     PLANNER,
@@ -57,16 +57,15 @@ export class WorkerPromptCompiler {
      * @param spec - The subtask specification containing goals, constraints, and policies.
      * @param profile - The agent profile selected for this subtask.
      * @param contextPackage - Optional pre-scoped context lines to embed.
-     * @param executionMode - Determines IPC instructions: `'primary'` (default) injects
-     *   prompt directly (no request.md), `'fallback'` appends request.md read instructions.
-     *   Both modes append response.md write instructions.
+     * @param executionMode - Determines IPC instructions. All supported modes inject
+     *   the prompt directly; response.md write instructions are always appended.
      * @returns A {@link CompiledWorkerPrompt} ready for injection into a worker agent.
      */
     compile(
         spec: SubtaskSpec,
         profile: AgentProfile,
         contextPackage?: readonly string[],
-        executionMode: ExecutionMode = 'primary',
+        executionMode: ExecutionMode = 'unsupported',
     ): CompiledWorkerPrompt {
         const values: Record<string, string> = {
             agent_type: profile.agent_type,
@@ -230,24 +229,17 @@ export class WorkerPromptCompiler {
     /**
      * Build the IPC contract instructions appended to the worker prompt.
      *
-     * - **Both modes**: Instruct the agent to write final output to `response.md`.
-     * - **Fallback only**: Also instruct the agent to read its task from `request.md`.
+     * Instructs the agent to write final output to `response.md`.
      */
-    private buildIpcInstructions(executionMode: ExecutionMode): string {
+    private buildIpcInstructions(_executionMode: ExecutionMode): string {
         const sections: string[] = [
             '### IPC Contract',
             '',
         ];
 
-        if (executionMode === 'fallback') {
-            sections.push(
-                '1. **Read your task** from `request.md` in the current IPC directory.',
-            );
-        }
-
         sections.push(
-            `${executionMode === 'fallback' ? '2' : '1'}. **Write your COMPLETE response** to \`response.md\` in the current IPC directory.`,
-            `${executionMode === 'fallback' ? '3' : '2'}. Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
+            `1. **Write your COMPLETE response** to \`response.md\` in the current IPC directory.`,
+            `2. Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
         );
 
         return sections.join('\n');

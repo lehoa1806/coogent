@@ -4,6 +4,7 @@
 
 import type { IEvaluator, EvaluatorType, Phase, EvaluationResult } from '../types/index.js';
 import log from '../logger/log.js';
+import { isRegexSafe } from '../utils/regex-safety.js';
 
 /**
  * Evaluates success by matching a regex pattern against combined stdout/stderr.
@@ -32,6 +33,14 @@ export class RegexEvaluator implements IEvaluator {
             const pattern = criteria.slice('regex_fail:'.length);
             try {
                 const regex = new RegExp(pattern);
+                // E-2: ReDoS protection — reject unsafe patterns
+                if (!isRegexSafe(regex, pattern)) {
+                    log.warn(`[RegexEvaluator] Rejected unsafe regex pattern: ${pattern}`);
+                    return {
+                        passed: false,
+                        reason: `Regex pattern rejected: potential ReDoS vulnerability in /${pattern}/`,
+                    };
+                }
                 const match = regex.exec(combined);
                 if (match) {
                     return {
@@ -66,6 +75,14 @@ export class RegexEvaluator implements IEvaluator {
             const pattern = criteria.slice('regex:'.length);
             try {
                 const regex = new RegExp(pattern);
+                // E-2: ReDoS protection — reject unsafe patterns
+                if (!isRegexSafe(regex, pattern)) {
+                    log.warn(`[RegexEvaluator] Rejected unsafe regex pattern: ${pattern}`);
+                    return {
+                        passed: false,
+                        reason: `Regex pattern rejected: potential ReDoS vulnerability in /${pattern}/`,
+                    };
+                }
                 const match = regex.exec(combined);
                 if (match) {
                     return {

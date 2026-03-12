@@ -137,6 +137,15 @@ export function createServices(
 
     const adkAdapter = new AntigravityADKAdapter(primaryRoot);
     svc.adkController = new ADKController(adkAdapter, primaryRoot);
+
+    // R1: Wire blockOnPromptInjection setting
+    const blockOnPromptInjection = extConfig.get<boolean>('blockOnPromptInjection', false);
+    svc.adkController.setBlockOnInjection(blockOnPromptInjection);
+
+    // R2: Wire maxConcurrentWorkers setting
+    const maxConcurrentWorkers = extConfig.get<number>('maxConcurrentWorkers', 4);
+    svc.adkController.setMaxConcurrent(maxConcurrentWorkers);
+
     log.info('[Coogent] ADKController initialized');
 
     svc.contextScoper = new ContextScoper({
@@ -301,6 +310,20 @@ export function registerReactiveConfig(
                 `[Coogent] Configuration updated: tokenLimit=${newTokenLimit}, ` +
                 `workerTimeoutMs=${newWorkerTimeoutMs}, maxRetries=${newMaxRetries}`
             );
+
+            // R1: Reactive update for blockOnPromptInjection
+            if (e.affectsConfiguration('coogent.blockOnPromptInjection')) {
+                svc.adkController?.setBlockOnInjection(
+                    updated.get<boolean>('blockOnPromptInjection', false)
+                );
+            }
+
+            // R2: Reactive update for maxConcurrentWorkers
+            if (e.affectsConfiguration('coogent.maxConcurrentWorkers')) {
+                svc.adkController?.setMaxConcurrent(
+                    updated.get<number>('maxConcurrentWorkers', 4)
+                );
+            }
         })
     );
 }

@@ -5,6 +5,7 @@ import {
     BASE_WORKER,
     CODE_EDITOR,
 } from '../templates.js';
+import type { ExecutionMode } from '../../adk/ExecutionModeResolver.js';
 
 // ─── Inline WorkerPromptCompiler logic for testing ────────────────────────────
 // We replicate the compilation logic here because WorkerPromptCompiler.ts uses
@@ -45,23 +46,18 @@ function formatAssumptionPolicy(policy: AssumptionPolicy): string {
     return sections.length > 0 ? sections.join('\n\n') : '_None._';
 }
 
-type ExecutionMode = 'primary' | 'fallback';
-
 /** Build IPC contract instructions (test-friendly reimplementation). */
-function buildIpcInstructions(executionMode: ExecutionMode): string {
+function buildIpcInstructions(_executionMode: ExecutionMode): string {
     const sections: string[] = ['### IPC Contract', ''];
-    if (executionMode === 'fallback') {
-        sections.push('1. **Read your task** from `request.md` in the current IPC directory.');
-    }
     sections.push(
-        `${executionMode === 'fallback' ? '2' : '1'}. **Write your COMPLETE response** to \`response.md\` in the current IPC directory.`,
-        `${executionMode === 'fallback' ? '3' : '2'}. Output ONLY the content \u2014 no explanation, no markdown code fences wrapping the file write.`,
+        `1. **Write your COMPLETE response** to \`response.md\` in the current IPC directory.`,
+        `2. Output ONLY the content — no explanation, no markdown code fences wrapping the file write.`,
     );
     return sections.join('\n');
 }
 
 /** Compile prompt (test-friendly reimplementation). */
-function compile(spec: SubtaskSpec, profile: AgentProfile, executionMode: ExecutionMode = 'primary'): CompiledWorkerPrompt {
+function compile(spec: SubtaskSpec, profile: AgentProfile, executionMode: ExecutionMode = 'unsupported'): CompiledWorkerPrompt {
     const values: Record<string, string> = {
         agent_type: profile.agent_type,
         mode: profile.mode ?? '',
@@ -175,23 +171,26 @@ describe('WorkerPromptCompiler', () => {
 
     // ─── Execution Mode: IPC instructions ─────────────────────────────────
 
-    it('primary mode: includes response.md but NOT request.md instructions', () => {
-        const result = compile(spec, codeEditorProfile, 'primary');
+    it('vscode-native mode: includes response.md but NOT request.md instructions', () => {
+        const result = compile(spec, codeEditorProfile, 'vscode-native');
         expect(result.text).toContain('response.md');
         expect(result.text).not.toContain('Read your task');
         expect(result.text).not.toMatch(/request\.md/);
     });
 
-    it('fallback mode: includes BOTH request.md and response.md instructions', () => {
-        const result = compile(spec, codeEditorProfile, 'fallback');
-        expect(result.text).toContain('response.md');
-        expect(result.text).toContain('request.md');
-        expect(result.text).toContain('Read your task');
-    });
-
-    it('default executionMode is primary (no request.md)', () => {
+    it('default executionMode is unsupported (no request.md)', () => {
         const result = compile(spec, codeEditorProfile);
         expect(result.text).toContain('response.md');
         expect(result.text).not.toMatch(/request\.md/);
+    });
+
+    it('no mode emits request.md instructions', () => {
+        const allModes: ExecutionMode[] = ['vscode-native', 'cursor', 'antigravity', 'unsupported'];
+        for (const mode of allModes) {
+            const result = compile(spec, codeEditorProfile, mode);
+            expect(result.text).toContain('response.md');
+            expect(result.text).not.toMatch(/request\.md/);
+            expect(result.text).not.toContain('Read your task');
+        }
     });
 });

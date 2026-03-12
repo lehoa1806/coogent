@@ -388,23 +388,73 @@ export class HandoffExtractor {
             }
         }
 
-        // S2-5 (AI-4): Fallback — try to find and validate any JSON object
-        // with at least one expected key (replaces fragile greedy regex)
-        const jsonCandidates = output.match(/\{[\s\S]*?\}/g);
-        if (jsonCandidates) {
-            for (let i = jsonCandidates.length - 1; i >= 0; i--) {
-                try {
-                    const raw = JSON.parse(jsonCandidates[i]);
-                    const result = HandoffJsonSchema.safeParse(raw);
-                    if (result.success) {
-                        return result.data;
-                    }
-                } catch {
-                    // Not valid JSON — try next candidate
+        // S2-5 (AI-4): Fallback — use brace-counting to find balanced JSON objects,
+        // then validate with Zod. SEC-3: Requires at least one discriminator key.
+        const jsonCandidates = HandoffExtractor.extractBalancedJsonObjects(output);
+        for (let i = jsonCandidates.length - 1; i >= 0; i--) {
+            try {
+                const raw = JSON.parse(jsonCandidates[i]);
+                // SEC-3: Require at least one handoff discriminator key
+                if (!('decisions' in raw || 'modified_files' in raw || 'unresolved_issues' in raw)) {
+                    continue;
                 }
+                const result = HandoffJsonSchema.safeParse(raw);
+                if (result.success) {
+                    return result.data;
+                }
+            } catch {
+                // Not valid JSON — try next candidate
             }
         }
 
         return null;
+    }
+
+    /**
+     * SEC-3: Extract balanced JSON objects from text using brace-counting.
+     * Handles nested objects and skips braces inside string literals.
+     * Returns an array of candidate JSON strings.
+     */
+    private static extractBalancedJsonObjects(text: string): string[] {
+        const candidates: string[] = [];
+        let i = 0;
+
+        while (i < text.length) {
+            if (text[i] !== '{') { i++; continue; }
+
+            // Found an opening brace — count depth
+            let depth = 0;
+            let inString: '"' | "'" | false = false;
+            let escaped = false;
+            const start = i;
+
+            for (let j = i; j < text.length; j++) {
+                const ch = text[j];
+
+                if (escaped) { escaped = false; continue; }
+                if (ch === '\\' && inString) { escaped = true; continue; }
+
+                if (inString) {
+                    if (ch === inString) inString = false;
+                    continue;
+                }
+
+                if (ch === '"' || ch === "'") { inString = ch; continue; }
+                if (ch === '{') depth++;
+                if (ch === '}') {
+                    depth--;
+                    if (depth === 0) {
+                        candidates.push(text.slice(start, j + 1));
+                        i = j + 1;
+                        break;
+                    }
+                }
+            }
+
+            // If depth never reached 0, skip this opening brace
+            if (depth > 0) { i = start + 1; }
+        }
+
+        return candidates;
     }
 }

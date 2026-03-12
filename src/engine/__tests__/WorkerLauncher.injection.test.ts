@@ -42,7 +42,7 @@ import {
 import type { ServiceContainer } from '../../ServiceContainer.js';
 import type { HandoffExtractor } from '../../context/HandoffExtractor.js';
 import type { AgentRegistry } from '../../agent-selection/AgentRegistry.js';
-import type { ExecutionMode } from '../../adk/AntigravityADKAdapter.js';
+import type { ExecutionMode } from '../../adk/ExecutionModeResolver.js';
 import { asPhaseId, type Phase } from '../../types/index.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -60,7 +60,7 @@ function createPhase(overrides: Partial<Phase> = {}): Phase {
     };
 }
 
-function createMockADK(executionMode: ExecutionMode = 'fallback'): WorkerLauncherADK & { getExecutionMode: () => Promise<ExecutionMode> } {
+function createMockADK(executionMode: ExecutionMode = 'unsupported'): WorkerLauncherADK & { getExecutionMode: () => Promise<ExecutionMode> } {
     return {
         spawnWorker: jest.fn(async () => {}),
         getExecutionMode: jest.fn(async () => executionMode),
@@ -100,12 +100,12 @@ function createMockServiceContainer(overrides: Partial<ServiceContainer> = {}): 
 
 describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
     // ─────────────────────────────────────────────────────────────────────
-    //  Execution Mode Propagation
+    //  Execution Mode Resolution
     // ─────────────────────────────────────────────────────────────────────
 
-    describe('executionMode propagation', () => {
-        it('passes "primary" executionMode to spawnWorker', async () => {
-            const adk = createMockADK('primary');
+    describe('executionMode resolution', () => {
+        it('resolves "antigravity" executionMode and calls spawnWorker with 4 args', async () => {
+            const adk = createMockADK('antigravity');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
 
@@ -116,17 +116,18 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
                 createMockServiceContainer(),
             );
 
+            // spawnWorker is now called with 4 args (no executionMode param)
             expect(adk.spawnWorker).toHaveBeenCalledWith(
                 expect.objectContaining({ prompt: expect.any(String) }),
                 60_000,
                 'master-task-1',
                 expect.objectContaining({ implementationPlan: expect.any(String) }),
-                'primary',
             );
+            expect((adk.spawnWorker as jest.Mock).mock.calls[0]).toHaveLength(4);
         });
 
-        it('passes "fallback" executionMode to spawnWorker', async () => {
-            const adk = createMockADK('fallback');
+        it('resolves "unsupported" executionMode and calls spawnWorker with 4 args', async () => {
+            const adk = createMockADK('unsupported');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
 
@@ -142,11 +143,11 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
                 60_000,
                 'master-task-2',
                 expect.anything(),
-                'fallback',
             );
+            expect((adk.spawnWorker as jest.Mock).mock.calls[0]).toHaveLength(4);
         });
 
-        it('defaults to "fallback" when ADK adapter lacks getExecutionMode', async () => {
+        it('defaults to "unsupported" when ADK adapter lacks getExecutionMode', async () => {
             const adk = createMockADKWithoutMode();
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
@@ -158,9 +159,9 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
                 createMockServiceContainer(),
             );
 
+            // spawnWorker is called with 4 args (no executionMode param)
             const spawnCall = (adk.spawnWorker as jest.Mock).mock.calls[0];
-            // The 5th argument (index 4) should be 'fallback' (the safe default)
-            expect(spawnCall[4]).toBe('fallback');
+            expect(spawnCall).toHaveLength(4);
         });
     });
 
@@ -170,7 +171,7 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
 
     describe('effectivePrompt assembly', () => {
         it('includes handoff context when extractor returns content', async () => {
-            const adk = createMockADK('primary');
+            const adk = createMockADK('antigravity');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
 
@@ -189,7 +190,7 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
         });
 
         it('includes distillation prompt when extractor returns one', async () => {
-            const adk = createMockADK('primary');
+            const adk = createMockADK('antigravity');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
 
@@ -207,7 +208,7 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
         });
 
         it('includes agent system prompt when agentRegistry returns a profile', async () => {
-            const adk = createMockADK('primary');
+            const adk = createMockADK('antigravity');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
 
@@ -230,7 +231,7 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
         });
 
         it('preserves the original phase prompt in effective prompt', async () => {
-            const adk = createMockADK('primary');
+            const adk = createMockADK('antigravity');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
 
@@ -242,7 +243,7 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
         });
 
         it('builds effective prompt without handoff or distillation when extractors return empty', async () => {
-            const adk = createMockADK('primary');
+            const adk = createMockADK('antigravity');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
 
@@ -268,7 +269,7 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
 
     describe('MCP resource URIs', () => {
         it('always includes implementationPlan URI', async () => {
-            const adk = createMockADK('primary');
+            const adk = createMockADK('antigravity');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
 
@@ -286,7 +287,7 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
 
     describe('telemetry', () => {
         it('logs the phase prompt via logger.logPhasePrompt', async () => {
-            const adk = createMockADK('primary');
+            const adk = createMockADK('antigravity');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
 

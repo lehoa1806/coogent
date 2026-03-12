@@ -63,7 +63,8 @@ npm run build              # Both targets in one command
 ```
 coogent/
 ├── src/
-│   ├── extension.ts              ← Activation entry point (~270 lines, delegates to modules below)
+│   ├── extension.ts              ← Activation entry point (~116 lines, thin orchestrator)
+│   ├── activation.ts             ← Composable init functions (logging, services, MCP, wiring)
 │   ├── ServiceContainer.ts       ← Typed service registry (replaces module-level vars)
 │   ├── CommandRegistry.ts        ← VS Code command registrations (15 commands)
 │   ├── EngineWiring.ts           ← Engine ↔ ADK ↔ UI event subscriptions
@@ -78,6 +79,7 @@ coogent/
 │   ├── constants/                ← Storage paths, error codes, boundary definitions
 │   │   ├── paths.ts              ← Path constants and file name definitions
 │   │   ├── StorageBase.ts        ← Unified storage-path abstraction
+│   │   ├── WorkspaceIdentity.ts  ← Workspace tenant identity (SHA-256 derivation)
 │   │   ├── storage.ts            ← Storage configuration
 │   │   └── index.ts              ← Barrel re-export
 │   │
@@ -99,7 +101,8 @@ coogent/
 │   ├── state/                    ← StateManager (WAL + mutex + AJV validation)
 │   ├── mcp/                      ← MCP server, persistence, plugins
 │   │   ├── CoogentMCPServer.ts   ← In-process MCP server
-│   │   ├── ArtifactDB.ts         ← SQLite persistence (sql.js WASM)
+│   │   ├── ArtifactDB.ts         ← SQLite persistence (sql.js WASM), multi-window merge
+│   │   ├── ArtifactDBSchema.ts   ← Schema DDL, migrations, and table constants
 │   │   ├── ArtifactDBBackup.ts   ← Snapshot/restore with rotation
 │   │   ├── MCPClientBridge.ts    ← Typed client-side MCP bridge
 │   │   ├── MCPResourceHandler.ts ← coogent:// URI resource handler
@@ -125,14 +128,20 @@ coogent/
 │   │                               SessionDeleteService, SessionHealthValidator
 │   ├── planner/                  ← PlannerAgent, WorkspaceScanner, RunbookParser, PlannerRetryManager
 │   ├── logger/                   ← TelemetryLogger (JSONL), log.ts, LogStream.ts
-│   ├── webview/                  ← MissionControlPanel (IPC proxy), ipcValidator
+│   ├── webview/                  ← MissionControlPanel (IPC proxy), SidebarMenuProvider, ipcValidator
 │   ├── utils/                    ← WorkspaceHelper, shared utilities
 │   └── __tests__/                ← Integration and end-to-end test suites
 │
 ├── webview-ui/                   ← Svelte 5 + Vite webview source
 │   ├── src/
-│   │   ├── components/           ← PhaseDetails, PhaseHeader, PhaseActions, PhaseHandoff, PlanReview, ...
+│   │   ├── components/           ← 16 components: ChatInput, ExecutionControls, GlobalHeader,
+│   │   │                            InputToolbar, MarkdownRenderer, PhaseActions, PhaseDetails,
+│   │   │                            PhaseHandoff, PhaseHeader, PhaseNavigator, PlanReview,
+│   │   │                            ReportModal, SuggestionPopup, ViewModeTabs, WorkerStudio,
+│   │   │                            WorkerTerminal
 │   │   ├── stores/               ← appState, mcpStore (requestId correlation)
+│   │   ├── lib/                  ← Shared webview utilities
+│   │   ├── styles/               ← Global CSS
 │   │   └── types.ts              ← Frontend type definitions
 │   └── vite.config.ts            ← Deterministic filename build config
 │
@@ -142,6 +151,7 @@ coogent/
 │   └── secrets-allowlist.schema.json ← Secrets allowlist configuration schema
 │
 ├── examples/prompts/             ← Example prompt files for reference
+├── .github/workflows/ci.yml     ← CI pipeline (GitHub Actions)
 ├── package.json                  ← Extension manifest (15 commands, 18 settings)
 ├── esbuild.js                    ← Extension Host bundler config
 ├── jest.config.js                ← Test runner config (ts-jest + ESM)
@@ -257,14 +267,14 @@ The most common source of bugs. To trace:
 ### Run Tests
 
 ```bash
-npm test                           # All 79 test files (serial, leak detection)
+npm test                           # All 88 test files (serial, leak detection)
 npx jest --verbose                 # With detailed output
 npx jest src/engine                # Run specific module
 npx jest --watch                   # Watch mode
 npx jest --listTests               # List all test files
 ```
 
-### Test Suites (79 files)
+### Test Suites (89 host files + 8 webview files)
 
 #### Core Engine (`src/engine/__tests__/`)
 
@@ -421,6 +431,23 @@ The Svelte 5 webview is built via Vite with:
 - **Deterministic filenames** — output files use content-hash naming for cache busting
 - **CSP compatibility** — all script/style tags include `nonce` attributes for Content Security Policy compliance
 - **Single-page output** — builds to `webview-ui/dist/` as static HTML/JS/CSS
+
+#### CI/CD Pipeline (`.github/workflows/ci.yml`)
+
+Every push to `main` and every pull request triggers the GitHub Actions CI workflow:
+
+| Step | Command | Purpose |
+|---|---|---|
+| Install | `npm ci` | Deterministic dependency install |
+| Lint | `npm run lint` | TypeScript type check + ESLint |
+| Test (host) | `npm test` | 88 Jest test files (serial, leak detection) |
+| Test (webview) | `npm run test:webview` | 8 Vitest test files |
+| Audit | `npm audit --audit-level=high` | Security vulnerability scan |
+| Build | `npm run prepackage` | Minified production build |
+| Package | `npm run package` | Create `.vsix` distribution |
+| Upload | `actions/upload-artifact@v4` | Store VSIX for 30-day retention |
+
+The workflow runs on **Ubuntu latest** with a Node.js version matrix of **18 and 20**.
 
 ---
 

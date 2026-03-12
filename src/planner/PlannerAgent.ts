@@ -7,7 +7,7 @@ import type { Runbook } from '../types/index.js';
 import { PromptTemplateManager, type TechStackInfo } from '../context/PromptTemplateManager.js';
 import type { AgentBackendProvider } from '../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle } from '../adk/ADKController.js';
-import type { ExecutionMode } from '../adk/AntigravityADKAdapter.js';
+import type { ExecutionMode } from '../adk/ExecutionModeResolver.js';
 import log from '../logger/log.js';
 import { PlannerPromptCompiler, RepoFingerprinter, type CompilationManifest } from '../prompt-compiler/index.js';
 import { WorkspaceScanner } from './WorkspaceScanner.js';
@@ -217,7 +217,7 @@ export class PlannerAgent extends EventEmitter {
             log.info(`[PlannerAgent] Prompt built: ${systemPrompt.length} chars`);
 
             // Step 3: Resolve execution mode for prompt adjustment and observability
-            let executionMode: ExecutionMode = 'fallback'; // safe default
+            let executionMode: ExecutionMode = 'unsupported'; // safe default
             const adapterAny = this.adapter as unknown as { getExecutionMode?: () => Promise<ExecutionMode> };
             if (typeof adapterAny.getExecutionMode === 'function') {
                 executionMode = await adapterAny.getExecutionMode();
@@ -225,8 +225,8 @@ export class PlannerAgent extends EventEmitter {
             this.lastExecutionMode = executionMode;
             log.info(`[PlannerAgent] Execution mode resolved: ${executionMode}`);
 
-            // Note: In both primary and fallback modes, the output/response.md
-            // instructions are now appended by the adapter layer — no need to
+            // Note: For all supported execution modes, the output/response.md
+            // instructions are appended by the adapter layer — no need to
             // modify the prompt here.
 
             // Step 4: Spawn the planner worker
@@ -423,8 +423,11 @@ export class PlannerAgent extends EventEmitter {
             if (this.planRetryCount <= maxRetries) {
                 log.warn(`[PlannerAgent] Malformed JSON — retrying (${this.planRetryCount}/${maxRetries})...`);
                 this.emit('plan:status', 'generating', `Retrying plan generation (attempt ${this.planRetryCount + 1})...`);
-                this.plan(this.userPrompt).catch(err => {
-                    this.emit('plan:error', err instanceof Error ? err : new Error(String(err)));
+                // REL-3: Use setImmediate to break call stack (no recursive plan() call)
+                setImmediate(() => {
+                    this.plan(this.userPrompt).catch(err => {
+                        this.emit('plan:error', err instanceof Error ? err : new Error(String(err)));
+                    });
                 });
                 return;
             }

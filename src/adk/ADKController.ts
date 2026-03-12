@@ -2,7 +2,6 @@
 // src/adk/ADKController.ts — Agent spawn, terminate, and lifecycle management
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { DEFAULT_CONVERSATION_SETTINGS, type Phase, type ConversationSettings } from '../types/index.js';
@@ -11,7 +10,9 @@ import log from '../logger/log.js';
 
 import type { AgentBackendProvider } from './AgentBackendProvider.js';
 import { INJECTION_PATTERNS } from './injection-patterns.js';
-import type { ExecutionMode } from './AntigravityADKAdapter.js';
+import { PromptInjectionBlockedError } from './PromptInjectionBlockedError.js';
+import type { ExecutionMode } from './ExecutionModeResolver.js';
+import { TypedEventEmitter } from '../engine/TypedEventEmitter.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  S1-2 (EDGE-2): Worker output size cap
@@ -82,12 +83,9 @@ export interface ADKControllerEvents {
     'worker:timeout': (phaseId: number) => void;
     /** Fired when a worker crashes. */
     'worker:crash': (phaseId: number, error: Error) => void;
-}
-
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export declare interface ADKController {
-    on<K extends keyof ADKControllerEvents>(event: K, listener: ADKControllerEvents[K]): this;
-    emit<K extends keyof ADKControllerEvents>(event: K, ...args: Parameters<ADKControllerEvents[K]>): boolean;
+    // Index signature required by TypedEventEmitter<T> constraint
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    [key: string]: (...args: any[]) => void;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -105,12 +103,17 @@ export declare interface ADKController {
  *
  * See TDD §4 for the full specification.
  */
-// eslint-disable-next-line @typescript-eslint/no-unsafe-declaration-merging
-export class ADKController extends EventEmitter {
+export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
     private readonly activeWorkers = new Map<number, WorkerHandle>();
     private readonly activePids = new Set<number>();
     private readonly pidDir: string;
     private _conversationSettings: ConversationSettings = { ...DEFAULT_CONVERSATION_SETTINGS };
+
+    /** R2: Configurable maximum concurrent workers. Default: 4. */
+    private _maxConcurrent = 4;
+
+    /** R1: Whether to block execution when prompt injection patterns are detected. */
+    private _blockOnInjection = false;
 
     /** Configurable idle timeout for the watchdog (ms). Default: 15 minutes. */
     private watchdogTimeoutMs = 900_000;
@@ -140,6 +143,18 @@ export class ADKController extends EventEmitter {
         this.watchdogTimeoutMs = ms;
     }
 
+    /** R2: Set the maximum number of concurrent workers (1–16). */
+    setMaxConcurrent(n: number): void {
+        this._maxConcurrent = Math.max(1, Math.min(16, n));
+        log.info(`[ADKController] Max concurrent workers: ${this._maxConcurrent}`);
+    }
+
+    /** R1: Enable or disable blocking on prompt injection detection. */
+    setBlockOnInjection(block: boolean): void {
+        this._blockOnInjection = block;
+        log.info(`[ADKController] Block on prompt injection: ${this._blockOnInjection}`);
+    }
+
     /** Get all currently tracked worker PIDs. */
     getActivePids(): ReadonlySet<number> {
         return this.activePids;
@@ -161,7 +176,6 @@ export class ADKController extends EventEmitter {
             implementationPlan?: string;
             parentHandoffs?: string[];  // PLURAL — supports multi-dependency DAG phases
         },
-        executionMode: ExecutionMode = 'primary',
     ): Promise<WorkerHandle | null> {
         // B-3: Warn when mcpResourceUris is absent for phases that have parent dependencies.
         // This surfaces silent Pull→Push degradation that would otherwise be invisible.
@@ -171,10 +185,9 @@ export class ADKController extends EventEmitter {
                 `which has parent dependencies. Warm-start context will be missing.`
             );
         }
-        // S4-2 (CQ-4): Named constant for max concurrent workers
-        const maxConcurrent = 4;
-        if (this.activeWorkers.size >= maxConcurrent) {
-            log.warn(`[ADKController] Max concurrent workers reached (${maxConcurrent}). Skipping phase ${phase.id}`);
+        // S4-2 (CQ-4): R2 — use configurable max concurrent workers
+        if (this.activeWorkers.size >= this._maxConcurrent) {
+            log.warn(`[ADKController] Max concurrent workers reached (${this._maxConcurrent}). Skipping phase ${phase.id}`);
             return null;
         }
 
@@ -183,9 +196,14 @@ export class ADKController extends EventEmitter {
             await this.terminateWorker(phase.id, 'ORPHAN_PREVENTION');
         }
 
-        log.info(`[ADKController] Spawning worker with executionMode: ${executionMode ?? 'not-specified'}`);
+        // Resolve execution mode from the centralized resolver
+        let executionMode: ExecutionMode = 'unsupported';
+        if (this.adapter.getExecutionMode) {
+            executionMode = await this.adapter.getExecutionMode();
+        }
+        log.info(`[ADKController] spawnWorker: executionMode=${executionMode}`);
 
-        const prompt = this.buildInjectionPrompt(phase, mcpResourceUris, executionMode);
+        const prompt = this.buildInjectionPrompt(phase, mcpResourceUris);
 
         // Determine if a new conversation should be started based on mode.
         // Isolated mode: ALWAYS start a new conversation — guaranteed regardless
@@ -547,16 +565,25 @@ export class ADKController extends EventEmitter {
             implementationPlan?: string;
             parentHandoffs?: string[];  // PLURAL — one URI per depends_on parent
         },
-        executionMode: ExecutionMode = 'primary',
     ): string {
         // S1-4 (SEC-3, AI-5): Prompt injection detection
+        // R1: When blockOnInjection is enabled, throw instead of warn-only.
+        const injectionMatches: string[] = [];
         for (const pattern of INJECTION_PATTERNS) {
             if (pattern.test(phase.prompt)) {
                 log.warn(
                     `[ADKController] ⚠ Potential prompt injection detected in phase ${phase.id}: ` +
                     `matched pattern ${pattern.source}`
                 );
+                injectionMatches.push(pattern.source);
             }
+        }
+        if (injectionMatches.length > 0 && this._blockOnInjection) {
+            throw new PromptInjectionBlockedError(
+                `Prompt injection detected in phase ${phase.id}: ` +
+                `matched ${injectionMatches.length} pattern(s)`,
+                injectionMatches,
+            );
         }
 
         const sections: string[] = [
@@ -602,18 +629,6 @@ export class ADKController extends EventEmitter {
                     `DO NOT GUESS context. Read these resources to understand your task.`
                 );
             }
-        }
-
-        // In fallback mode, include request.md read instructions so the agent
-        // knows to read the file-based prompt. In primary mode, the prompt is
-        // injected directly into the conversation — no request.md needed.
-        if (executionMode === 'fallback') {
-            sections.push(
-                ``,
-                `## Input Instructions`,
-                `Read the full task instructions from the \`request.md\` file in your working directory.`,
-                `Follow those instructions carefully before writing your response.`,
-            );
         }
 
         return sections.join('\n');

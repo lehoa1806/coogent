@@ -41,7 +41,7 @@ import { PlannerAgent } from '../PlannerAgent.js';
 import type { AgentBackendProvider } from '../../adk/AgentBackendProvider.js';
 import type { ADKSessionHandle, ADKSessionOptions } from '../../adk/ADKController.js';
 import type { WorkspaceScanner } from '../WorkspaceScanner.js';
-import type { ExecutionMode } from '../../adk/AntigravityADKAdapter.js';
+import type { ExecutionMode } from '../../adk/ExecutionModeResolver.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Factories
@@ -51,7 +51,7 @@ interface MockAdapterWithMode extends AgentBackendProvider {
     getExecutionMode: () => Promise<ExecutionMode>;
 }
 
-function createMockAdapter(executionMode: ExecutionMode = 'fallback'): MockAdapterWithMode {
+function createMockAdapter(executionMode: ExecutionMode = 'unsupported'): MockAdapterWithMode {
     return {
         name: 'test',
         createSession: jest.fn(async (_opts: ADKSessionOptions): Promise<ADKSessionHandle> => ({
@@ -90,12 +90,12 @@ function createMockScanner(): WorkspaceScanner {
 
 describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
     // ─────────────────────────────────────────────────────────────────────
-    //  Fallback Mode
+    //  Unsupported Mode
     // ─────────────────────────────────────────────────────────────────────
 
-    describe('fallback mode', () => {
-        it('planner prompt is clean in fallback mode — adapter handles response.md', async () => {
-            const adapter = createMockAdapter('fallback');
+    describe('unsupported mode', () => {
+        it('planner prompt is clean in unsupported mode — adapter handles response.md', async () => {
+            const adapter = createMockAdapter('unsupported');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
@@ -117,8 +117,8 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
             expect(prompt).not.toContain('Write your COMPLETE response');
         });
 
-        it('preserves the compiled system prompt in fallback mode', async () => {
-            const adapter = createMockAdapter('fallback');
+        it('preserves the compiled system prompt in unsupported mode', async () => {
+            const adapter = createMockAdapter('unsupported');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
@@ -134,8 +134,8 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
             expect(prompt).toContain('mock-system-prompt-for-injection-test');
         });
 
-        it('stores lastExecutionMode as fallback', async () => {
-            const adapter = createMockAdapter('fallback');
+        it('stores lastExecutionMode as unsupported', async () => {
+            const adapter = createMockAdapter('unsupported');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
@@ -144,17 +144,17 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
 
             await agent.plan('Test query');
 
-            expect(agent.getLastExecutionMode()).toBe('fallback');
+            expect(agent.getLastExecutionMode()).toBe('unsupported');
         });
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    //  Primary Mode
+    //  Antigravity Mode
     // ─────────────────────────────────────────────────────────────────────
 
-    describe('primary mode', () => {
-        it('does NOT append response.md write instructions in primary mode', async () => {
-            const adapter = createMockAdapter('primary');
+    describe('antigravity mode', () => {
+        it('does NOT append response.md write instructions in antigravity mode', async () => {
+            const adapter = createMockAdapter('antigravity');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
@@ -169,13 +169,13 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
             const passedOptions = createSession.mock.calls[0][0] as ADKSessionOptions;
             const prompt = passedOptions.initialPrompt;
 
-            // Must NOT contain response.md file write instructions in primary mode
+            // Must NOT contain response.md file write instructions in antigravity mode
             expect(prompt).not.toContain('## Output');
             expect(prompt).not.toContain('Write your COMPLETE response to the response.md');
         });
 
-        it('still contains the compiled system prompt in primary mode', async () => {
-            const adapter = createMockAdapter('primary');
+        it('still contains the compiled system prompt in antigravity mode', async () => {
+            const adapter = createMockAdapter('antigravity');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
@@ -190,8 +190,8 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
             expect(prompt).toContain('mock-system-prompt-for-injection-test');
         });
 
-        it('stores lastExecutionMode as primary', async () => {
-            const adapter = createMockAdapter('primary');
+        it('stores lastExecutionMode as antigravity', async () => {
+            const adapter = createMockAdapter('antigravity');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
@@ -200,7 +200,7 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
 
             await agent.plan('Test query');
 
-            expect(agent.getLastExecutionMode()).toBe('primary');
+            expect(agent.getLastExecutionMode()).toBe('antigravity');
         });
     });
 
@@ -209,7 +209,7 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
     // ─────────────────────────────────────────────────────────────────────
 
     describe('adapter without getExecutionMode()', () => {
-        it('defaults to fallback mode when adapter lacks getExecutionMode', async () => {
+        it('defaults to unsupported mode when adapter lacks getExecutionMode', async () => {
             const adapter = createMockAdapterWithoutMode();
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
@@ -219,8 +219,8 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
 
             await agent.plan('Refactor database');
 
-            // Should default to fallback → response.md instructions appended
-            expect(agent.getLastExecutionMode()).toBe('fallback');
+            // Should default to unsupported
+            expect(agent.getLastExecutionMode()).toBe('unsupported');
 
             const createSession = adapter.createSession as jest.Mock;
             const prompt = (createSession.mock.calls[0][0] as ADKSessionOptions).initialPrompt;
@@ -237,7 +237,7 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
 
     describe('session options', () => {
         it('passes masterTaskId when set', async () => {
-            const adapter = createMockAdapter('primary');
+            const adapter = createMockAdapter('antigravity');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
@@ -253,7 +253,7 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
         });
 
         it('always uses phaseNumber=0 for planner', async () => {
-            const adapter = createMockAdapter('primary');
+            const adapter = createMockAdapter('antigravity');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,
@@ -268,7 +268,7 @@ describe('PlannerAgent — Execution Mode & Prompt Injection', () => {
         });
 
         it('always passes newConversation=true for planner', async () => {
-            const adapter = createMockAdapter('primary');
+            const adapter = createMockAdapter('antigravity');
             const agent = new PlannerAgent(adapter, {
                 workspaceRoot: '/tmp/test-workspace',
                 maxTreeDepth: 1,

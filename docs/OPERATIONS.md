@@ -49,7 +49,7 @@ code --install-extension coogent-0.2.0.vsix
 | Step | Command / Action | Pass Criteria |
 |---|---|---|
 | Type check | `npm run lint` | 0 errors |
-| Test suite | `npm test` | 79 test files pass |
+| Test suite | `npm test` | 89 host + 8 webview test files pass |
 | Security audit | `npm audit --audit-level=high` | No high/critical vulnerabilities |
 | CI pipeline | `npm run ci` | All above in sequence |
 | Version bump | Update `version` in `package.json` | Semantic versioning |
@@ -83,6 +83,16 @@ The runbook schema is validated by AJV on every load. When modifying the schema:
 2. Update the inlined schema constant in `StateManager.ts`
 3. Update `schemas/runbook.schema.json` (reference copy)
 4. Run the test suite — `StateManager` tests cover valid/invalid schemas
+
+### CI/CD Pipeline
+
+The project uses GitHub Actions for continuous integration (`.github/workflows/ci.yml`):
+
+- **Triggers**: Push to `main`, pull requests to `main`
+- **Matrix**: Node.js 18 and 20 on `ubuntu-latest`
+- **Steps**: `npm ci` → `npm run lint` → `npm test` → `npm run test:webview` → `npm audit` → `npm run prepackage` → `npm run package` → upload VSIX artifact (30-day retention)
+
+All steps must pass before a PR can be merged. The CI pipeline produces a VSIX artifact for each Node.js version.
 
 ---
 

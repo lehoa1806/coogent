@@ -34,6 +34,19 @@ export interface Statement {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  Tenant-Owned Tables
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/**
+ * Canonical list of tables that are scoped by `workspace_id`.
+ * Used by ArtifactDB's reload-and-merge flush strategy and by schema migrations.
+ */
+export const TENANT_TABLES = [
+    'tasks', 'phases', 'handoffs', 'worker_outputs', 'sessions', 'phase_logs',
+    'evaluation_results', 'healing_attempts', 'plan_revisions', 'selection_audits', 'context_manifests',
+] as const;
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  SQL Schema — DDL executed on every open (CREATE IF NOT EXISTS)
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -279,11 +292,7 @@ export function initializeSchema(db: Database): void {
         try { db.run('ALTER TABLE worker_outputs ADD COLUMN stderr TEXT NOT NULL DEFAULT \'\''); } catch { /* already exists */ }
 
         // v9-10: Add workspace_id column to all tenant-owned tables (backfill with empty string sentinel)
-        const tenantTables = [
-            'tasks', 'phases', 'handoffs', 'worker_outputs', 'sessions', 'phase_logs',
-            'evaluation_results', 'healing_attempts', 'plan_revisions', 'selection_audits', 'context_manifests',
-        ];
-        for (const table of tenantTables) {
+        for (const table of TENANT_TABLES) {
             try { db.run(`ALTER TABLE ${table} ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`); } catch { /* already exists */ }
         }
 

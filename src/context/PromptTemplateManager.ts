@@ -234,9 +234,11 @@ export class PromptTemplateManager {
         const deps: string[] = [];
         const frameworks: string[] = [];
 
-        // Simple TOML-like parsing for dependencies array
-        // Matches lines like: "fastapi>=0.100.0", 'django', etc.
-        const depMatches = content.matchAll(/["']([a-zA-Z0-9_-]+)/g);
+        // QUAL-4: Scope regex to dependency-related TOML sections only
+        const depContent = PromptTemplateManager.extractTomlDepSections(content);
+
+        // Match quoted package names only within dependency sections
+        const depMatches = depContent.matchAll(/["']([a-zA-Z0-9_-]+)/g);
         const seen = new Set<string>();
         for (const m of depMatches) {
             const pkgName = m[1].toLowerCase();
@@ -262,6 +264,29 @@ export class PromptTemplateManager {
             dependencies: deps.slice(0, MAX_DEPENDENCIES),
             frameworks,
         };
+    }
+
+    /**
+     * QUAL-4: Extract content from dependency-related TOML sections.
+     * Scans for `[project.dependencies]`, `[tool.poetry.dependencies]`,
+     * `[tool.poetry.dev-dependencies]`, `[dependency-groups.*]`, and
+     * `[project.optional-dependencies.*]` headers, and returns
+     * only the content between those headers and the next `[` header.
+     */
+    private static extractTomlDepSections(content: string): string {
+        const depHeaderPattern = /^\[(project\.(?:dependencies|optional-dependencies\.\w+)|tool\.poetry\.(?:dev-)?dependencies|dependency-groups\.\w+)\]\s*$/gm;
+        const sections: string[] = [];
+        let match: RegExpExecArray | null;
+
+        while ((match = depHeaderPattern.exec(content)) !== null) {
+            const startIdx = match.index + match[0].length;
+            // Find end: next top-level section header or end of file
+            const nextSection = content.indexOf('\n[', startIdx);
+            const endIdx = nextSection !== -1 ? nextSection : content.length;
+            sections.push(content.slice(startIdx, endIdx));
+        }
+
+        return sections.join('\n');
     }
 
     // ── Go ──────────────────────────────────────────────────────────────────

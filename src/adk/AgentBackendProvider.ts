@@ -5,6 +5,7 @@
 // support (Antigravity, Ollama, Claude API, OpenAI Assistants).
 
 import type { ADKSessionOptions, ADKSessionHandle } from './ADKController.js';
+import type { ExecutionMode } from './ExecutionModeResolver.js';
 
 /**
  * Abstract interface for agent backends.
@@ -39,4 +40,10 @@ export interface AgentBackendProvider {
         promptLength: number,
         smartSwitchTokenThreshold: number
     ): boolean;
+
+    /**
+     * Optional: Returns the resolved execution mode for this backend.
+     * Used by ADKController to log and route host-specific behavior.
+     */
+    getExecutionMode?(): Promise<ExecutionMode>;
 }

@@ -130,7 +130,7 @@ Create a `.coogent/workers.json` file at your workspace root:
 }
 ```
 
-Workspace profiles **override** built-in profiles with the same `id` and are merged with any additional profiles defined in VS Code settings (`coogent.workerProfiles`).
+Workspace profiles **override** built-in profiles with the same `id` and are merged with any additional profiles defined in VS Code settings (`coogent.customWorkers`).
 
 ### JSON Schema Autocomplete
 
@@ -149,8 +149,8 @@ View all loaded worker profiles in Mission Control:
 Worker profiles are loaded in priority order (highest wins):
 
 1. **Workspace file** — `.coogent/workers.json` (project-specific overrides)
-2. **VS Code settings** — `coogent.workerProfiles` (user-level customization)
-3. **Built-in defaults** — `defaults.json` (shipped with the extension)
+2. **VS Code settings** — `coogent.customWorkers` (user-level customization)
+3. **Built-in defaults** — `registry.json` (shipped with the extension)
 
 ---
 
