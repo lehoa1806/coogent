@@ -13,18 +13,14 @@ Optimize for correctness, low hand-off risk, and lean planning. Prefer fewer, st
 6. Phase IDs must start from 1 (`id: 0` is reserved for the planner). Set `current_phase` to the first phase ID (`1`).
 7. Keep the runbook lean. Prefer fewer, stronger phases over many fragile hand-offs.
 
-## JSON String Safety
-All string values in the JSON output must be valid JSON strings. This means:
-- Newlines must be escaped as `\n`, not literal line breaks.
-- Double quotes inside strings must be escaped as `\"`.
-- Backslashes must be escaped as `\\`.
-- Tab characters must be escaped as `\t`.
-- The `prompt`, `summary`, `implementation_plan`, `context_summary`, and `success_criteria` fields frequently contain markdown with special characters. Ensure every such value is a single, properly escaped JSON string on one logical line.
-- Do not use raw multi-line text inside any JSON string value. Represent all line breaks as `\n` escape sequences.
+## JSON Output Validity
+- Output must be valid JSON parseable by a standard JSON parser.
+- Escape double quotes, backslashes, control characters, and embedded newlines correctly inside string values.
+- Do not emit trailing commas, comments, or markdown code fences.
+- Ensure every field value matches the declared JSON type.
 
 ## JSON Schema
-```json
-{
+JSON_SCHEMA: {
   "project_id": "<descriptive-slug>",
   "summary": "<1-2 sentence high-level summary of the entire task>",
   "implementation_plan": "<detailed markdown plan describing the approach, architecture decisions, and key changes>",
@@ -37,11 +33,11 @@ All string values in the JSON output must be valid JSON strings. This means:
       "prompt": "<detailed instruction for the AI worker>",
       "context_files": ["<relative/path/to/file.ts>"],
       "success_criteria": "<phase-appropriate validation target>",
-      "context_summary": "<1-2 sentence gloss of what this phase does>"
+      "context_summary": "<1-2 sentence gloss of what this phase does>",
+      "required_capabilities": ["<capability-label>"]   // optional — omit when not needed
     }
   ]
 }
-```
 
 ## DAG Rules
 - Phases execute sequentially by default. Phase N completes before Phase N+1 begins.
@@ -57,6 +53,9 @@ All string values in the JSON output must be valid JSON strings. This means:
 - For bug fixes, diagnose and fix together when scope is clear, then add regression coverage.
 - For refactors, preserve existing tests as the contract and validate after structural changes.
 - For investigations, focus on inspection and confirmation rather than inventing implementation phases that are not needed.
+- For startup, runtime, or integration failures, prefer: diagnose → reproduce/confirm → implement fix → validate.
+- If the user request is underspecified, begin with a diagnostic phase that locates the relevant modules, configs, scripts, or startup paths before proposing code changes.
+- If `normalized_task.task_type` appears inconsistent with the user request, use the user request and repo facts to infer the most appropriate plan shape.
 
 ## Worker Contract Rules
 - Every phase `prompt` must be fully self-contained. The worker has zero prior context.
@@ -80,10 +79,14 @@ All string values in the JSON output must be valid JSON strings. This means:
 - Reserve full repository validation for the final verification phase unless an intermediate checkpoint is clearly necessary.
 - For tasks with 3 or more substantial implementation phases, add an intermediate verification checkpoint when it reduces risk.
 
-## Skill Usage Rules
-- `required_skills` is optional.
-- Omit `required_skills` unless specialized expertise is genuinely needed for that phase.
-- Do not add generic skills unless they materially improve worker selection.
+## Capability Inference Rules
+- For each phase, infer the capabilities needed from the actual work described.
+- When specialized expertise would materially improve execution, include an optional `required_capabilities` field for that phase.
+- `required_capabilities` must be free-form labels intended for downstream matching, not selected from a fixed enum.
+- Prefer short, concrete, reusable labels such as `typescript`, `repo-analysis`, `architecture-review`, `security-audit`, `jest`, `eslint`, `ci-cd`, `documentation-audit`, or `performance-analysis`.
+- Avoid vague labels like `general`, `coding`, or `engineering` unless the phase truly requires no specialized expertise.
+- Do not over-tag phases. Include only capabilities that meaningfully improve worker selection.
+- Omit `required_capabilities` entirely for phases that do not benefit from specialized expertise.
 
 ## Planning Boundary Rules
 - Do not include runtime transport instructions in the runbook.
@@ -109,7 +112,6 @@ Use `## INPUT DATA` only to extract:
 - repository facts (`workspace_type`, `workspace_folders`, `repo_profile`)
 - task facts (`normalized_task` fields: `task_type`, `artifact_type`, `constraints`, `known_inputs`, `success_criteria`, `decomposition_hints`)
 - user goals and deliverables (from `raw_user_prompt_text`)
-- available skills (`available_worker_skills`)
 
 Instruction precedence:
 1. Planner instructions in this prompt
@@ -126,6 +128,7 @@ Important:
 The `Orchestration Persistence Contract` is runtime metadata for the orchestration system.
 Do not include it in the runbook.
 Do not create phases for persistence or artifact-writing behavior.
+Artifact write order: `.task-runbook.json` must be persisted before `response.md`. The response file is the completion signal — the runbook must already exist on disk when it is written.
 
 ## Completion Policy
 - The runbook is complete when all phases pass.

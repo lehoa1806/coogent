@@ -177,27 +177,35 @@ export function wirePlanner(
             },
         });
 
-        // ── Runtime persistence: planner response.md (FR2) ────────────
-        // Persist raw planner output to the planner phase directory.
-        // This ensures response.md exists for every phase, including planner.
+        // ── Runtime persistence: .task-runbook.json THEN response.md ──
+        // Contract: .task-runbook.json must exist on disk before response.md,
+        // because response.md is the completion signal for downstream consumers.
+        // We await the runbook write, then fire-and-forget response.md.
         const rawOutput = plannerAgent.getLastRawOutput();
-        if (rawOutput && svc.currentSessionDir) {
+
+        // FR3: Persist the validated runbook first
+        if (svc.stateManager) {
+            svc.stateManager.saveRunbook(draft, 'PLAN_REVIEW' as EngineState)
+                .then(() => {
+                    log.info('[PlannerWiring] .task-runbook.json persisted (early write).');
+
+                    // FR2: Only after the runbook is on disk, persist response.md
+                    if (rawOutput && svc.currentSessionDir) {
+                        const plannerPhaseDir = path.join(svc.currentSessionDir, 'phase-000-planner');
+                        fs.mkdir(plannerPhaseDir, { recursive: true })
+                            .then(() => fs.writeFile(path.join(plannerPhaseDir, IPC_RESPONSE_FILE), rawOutput, 'utf-8'))
+                            .then(() => log.info('[PlannerWiring] Planner response.md persisted.'))
+                            .catch(err => log.warn('[PlannerWiring] Failed to persist planner response.md (non-fatal):', err));
+                    }
+                })
+                .catch(err => log.warn('[PlannerWiring] Failed to persist .task-runbook.json (non-fatal):', err));
+        } else if (rawOutput && svc.currentSessionDir) {
+            // No stateManager — fall back to writing response.md directly
             const plannerPhaseDir = path.join(svc.currentSessionDir, 'phase-000-planner');
             fs.mkdir(plannerPhaseDir, { recursive: true })
                 .then(() => fs.writeFile(path.join(plannerPhaseDir, IPC_RESPONSE_FILE), rawOutput, 'utf-8'))
-                .then(() => log.info('[PlannerWiring] Planner response.md persisted.'))
+                .then(() => log.info('[PlannerWiring] Planner response.md persisted (no stateManager).'))
                 .catch(err => log.warn('[PlannerWiring] Failed to persist planner response.md (non-fatal):', err));
-        }
-
-        // ── Runtime persistence: .task-runbook.json (FR3) ─────────────
-        // Persist the validated runbook to the task root immediately after
-        // successful planning, before user approval. PlanningController.planApproved()
-        // will write again on approval — this early write ensures the artifact
-        // exists for inspection even before approval.
-        if (svc.stateManager) {
-            svc.stateManager.saveRunbook(draft, 'PLAN_REVIEW' as EngineState)
-                .then(() => log.info('[PlannerWiring] .task-runbook.json persisted (early write).'))
-                .catch(err => log.warn('[PlannerWiring] Failed to persist .task-runbook.json (non-fatal):', err));
         }
 
         // S2 audit fix: Persist the planner system prompt for prompt lineage

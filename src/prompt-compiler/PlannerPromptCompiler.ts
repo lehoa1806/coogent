@@ -30,8 +30,6 @@ export interface CompileOptions {
     readonly fileTree?: string[];
     /** Pre-discovered tech stack info (overrides built-in discovery). */
     readonly techStack?: TechStackInfo;
-    /** Available worker skill tags for assignment in phases. */
-    readonly availableTags?: string[];
     /** Feedback from a previous run to inject into the prompt. */
     readonly feedback?: string;
 }
@@ -189,7 +187,7 @@ export class PlannerPromptCompiler {
         sections.push(skeleton);
 
         // 2. Build the INPUT DATA JSON object
-        const inputData = this.buildInputData(fingerprint, taskSpec, options);
+        const inputData = this.buildInputData(fingerprint, taskSpec);
         sections.push(`## INPUT DATA\nINPUT_DATA_JSON: ${JSON.stringify(inputData)}`);
 
         // 3. Feedback section (if provided) — kept separate since it is
@@ -213,7 +211,6 @@ export class PlannerPromptCompiler {
     private buildInputData(
         fp: RepoFingerprint,
         taskSpec: NormalizedTaskSpec,
-        options?: CompileOptions,
     ): Record<string, unknown> {
         // ── Repo profile ─────────────────────────────────────────────────
         const repoProfile: Record<string, unknown> = {
@@ -252,17 +249,11 @@ export class PlannerPromptCompiler {
             raw_user_prompt_text: taskSpec.rawUserPrompt,
         };
 
-        // ── Available worker skills ──────────────────────────────────────
-        const availableWorkerSkills = options?.availableTags && options.availableTags.length > 0
-            ? [...options.availableTags].sort()
-            : [];
-
         return {
             workspace_type: fp.workspaceType,
             workspace_folders: [...fp.workspaceFolders],
             repo_profile: repoProfile,
             normalized_task: normalizedTask,
-            available_worker_skills: availableWorkerSkills,
         };
     }
 

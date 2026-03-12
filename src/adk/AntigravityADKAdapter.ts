@@ -359,10 +359,11 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
             '',
             '## Orchestration Persistence Contract (Runtime Metadata — Non-Output)',
             'This section is runtime metadata for the orchestration system. Do not include it in the runbook.',
-            'The orchestration runtime must persist artifacts as follows:',
-            '- Parse and validate the planner output as runbook JSON',
-            `- Store the validated runbook at: ${runbookFile}`,
-            `- Store the planner's raw output at: ${responseFile}`
+            'The orchestration runtime must persist artifacts in this order:',
+            '1. Parse and validate the planner output as runbook JSON',
+            `2. Store the validated runbook at: ${runbookFile}`,
+            `3. Store the planner's raw output at: ${responseFile}`,
+            'The runbook file must exist on disk before the response file is written, because the response file is the completion signal.'
         ].join('\n');
 
         // Step 3: Inject the full prompt directly into the chat panel
