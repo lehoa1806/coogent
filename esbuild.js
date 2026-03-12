@@ -45,13 +45,34 @@ const buildOptions = {
     plugins: [copyWasmPlugin],
 };
 
+/** @type {import('esbuild').BuildOptions} */
+const stdioBuildOptions = {
+    entryPoints: ['src/mcp/stdio-server.ts'],
+    bundle: true,
+    outfile: 'out/stdio-server.js',
+    // Alias 'vscode' to a minimal shim (the real module is not available outside
+    // the VS Code extension host). The shim provides no-op stubs for the APIs
+    // used by ArtifactDB and PluginLoader.
+    alias: { 'vscode': './src/mcp/vscode-shim.ts' },
+    format: 'cjs',
+    platform: 'node',
+    target: 'node18',
+    sourcemap: !production,
+    minify: production,
+    logLevel: 'info',
+    plugins: [copyWasmPlugin],
+};
+
 async function main() {
     if (watch) {
         const ctx = await esbuild.context(buildOptions);
         await ctx.watch();
+        const stdioctx = await esbuild.context(stdioBuildOptions);
+        await stdioctx.watch();
         console.log('[esbuild] Watching for changes...');
     } else {
         await esbuild.build(buildOptions);
+        await esbuild.build(stdioBuildOptions);
     }
 }
 

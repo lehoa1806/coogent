@@ -215,6 +215,11 @@
           "default": false,
           "description": "Block phase execution when secrets are detected in context files (default: warn-only)."
         },
+        "coogent.blockOnPromptInjection": {
+          "type": "boolean",
+          "default": false,
+          "description": "Block phase execution when prompt injection patterns are detected in phase prompts (default: warn-only)."
+        },
         "coogent.enableEncryption": {
           "type": "boolean",
           "default": false,
@@ -332,6 +337,7 @@
     "build:webview": "cd webview-ui && npm run build",
     "dev:webview": "cd webview-ui && npm run dev",
     "build": "npm run compile && npm run build:webview",
+    "mcp:start": "node out/stdio-server.js",
     "lint": "tsc --noEmit && eslint src/ --max-warnings=50",
     "pretest": "npm run lint",
     "prepackage": "npm run compile -- --minify && npm run build:webview",

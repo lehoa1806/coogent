@@ -81,6 +81,8 @@ You: "Refactor the authentication module to use JWT"
 - **MCP Prompts** — 5 discoverable prompt templates (`plan_repo_task`, `review_generated_runbook`, `repair_failed_phase`, `consolidate_session`, `architecture_review_workspace`) for MCP client integration
 - **MCP Sampling** — Feature-gated LLM inference via MCP Sampling protocol for review and summarization workflows
 - **Database Backup & Recovery** — Periodic ArtifactDB snapshots with atomic writes and automatic rotation
+- **Multi-Window Safety** — Concurrent Antigravity windows share a global SQLite database with a cooperative reload-before-write merge strategy
+- **Workspace Tenanting** — Deterministic workspace identity enables per-workspace data isolation in a shared global database
 
 ## Screenshots
 

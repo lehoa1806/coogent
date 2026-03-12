@@ -102,6 +102,73 @@ export class SessionRepository {
     }
 
     /**
+     * ARCH-2: Retrieve a single session by its directory name.
+     * O(1) lookup via WHERE clause — avoids scanning the full list.
+     */
+    getByDirName(dirName: string): {
+        sessionDirName: string; sessionId: string; prompt: string; createdAt: number;
+        runbookJson: string | null; status: string | null;
+        consolidationReport: string | null; consolidationReportJson: string | null;
+        implementationPlan: string | null;
+    } | undefined {
+        const stmt = this.db.prepare(
+            `SELECT s.session_dir_name, s.session_id, s.prompt, s.created_at,
+                    t.runbook_json, t.status,
+                    t.consolidation_report, t.consolidation_report_json,
+                    t.implementation_plan
+             FROM sessions s
+             LEFT JOIN tasks t ON s.session_dir_name = t.master_task_id
+             WHERE s.session_dir_name = ? AND s.workspace_id = ?`
+        );
+        stmt.bind([dirName, this.workspaceId]);
+        if (!stmt.step()) { stmt.free(); return undefined; }
+        const row = stmt.getAsObject() as {
+            session_dir_name: string; session_id: string; prompt: string;
+            created_at: number; runbook_json: string | null; status: string | null;
+            consolidation_report: string | null; consolidation_report_json: string | null;
+            implementation_plan: string | null;
+        };
+        stmt.free();
+        return {
+            sessionDirName: row.session_dir_name, sessionId: row.session_id,
+            prompt: row.prompt, createdAt: row.created_at,
+            runbookJson: row.runbook_json, status: row.status,
+            consolidationReport: row.consolidation_report,
+            consolidationReportJson: row.consolidation_report_json,
+            implementationPlan: row.implementation_plan,
+        };
+    }
+
+    /**
+     * ARCH-2: Retrieve a single session by its session ID (UUID).
+     * O(1) lookup via WHERE clause — avoids scanning the full list.
+     */
+    getBySessionId(sessionId: string): {
+        sessionDirName: string; sessionId: string; prompt: string; createdAt: number;
+        runbookJson: string | null; status: string | null;
+    } | undefined {
+        const stmt = this.db.prepare(
+            `SELECT s.session_dir_name, s.session_id, s.prompt, s.created_at,
+                    t.runbook_json, t.status
+             FROM sessions s
+             LEFT JOIN tasks t ON s.session_dir_name = t.master_task_id
+             WHERE s.session_id = ? AND s.workspace_id = ?`
+        );
+        stmt.bind([sessionId, this.workspaceId]);
+        if (!stmt.step()) { stmt.free(); return undefined; }
+        const row = stmt.getAsObject() as {
+            session_dir_name: string; session_id: string; prompt: string;
+            created_at: number; runbook_json: string | null; status: string | null;
+        };
+        stmt.free();
+        return {
+            sessionDirName: row.session_dir_name, sessionId: row.session_id,
+            prompt: row.prompt, createdAt: row.created_at,
+            runbookJson: row.runbook_json, status: row.status,
+        };
+    }
+
+    /**
      * Retrieve the consolidation report for a specific session.
      * Returns `undefined` if the session is not found.
      */

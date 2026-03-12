@@ -423,8 +423,11 @@ export class PlannerAgent extends EventEmitter {
             if (this.planRetryCount <= maxRetries) {
                 log.warn(`[PlannerAgent] Malformed JSON — retrying (${this.planRetryCount}/${maxRetries})...`);
                 this.emit('plan:status', 'generating', `Retrying plan generation (attempt ${this.planRetryCount + 1})...`);
-                this.plan(this.userPrompt).catch(err => {
-                    this.emit('plan:error', err instanceof Error ? err : new Error(String(err)));
+                // REL-3: Use setImmediate to break call stack (no recursive plan() call)
+                setImmediate(() => {
+                    this.plan(this.userPrompt).catch(err => {
+                        this.emit('plan:error', err instanceof Error ? err : new Error(String(err)));
+                    });
                 });
                 return;
             }

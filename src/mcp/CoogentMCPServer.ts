@@ -200,6 +200,7 @@ export class CoogentMCPServer {
         // Initialise backup manager (default backup dir: <coogentDir>/backups/)
         const backupDir = path.join(coogentDir, 'backups');
         this.backupManager = new ArtifactDBBackup(dbPath, backupDir);
+        this.db.setBackupManager(this.backupManager);
 
         // Register protocol handlers now that DB is ready
         new MCPResourceHandler(this.server, this.db).register();

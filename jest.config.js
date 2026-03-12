@@ -9,7 +9,7 @@ module.exports = {
         '^vscode$': '<rootDir>/src/__mocks__/vscode.js',
     },
     transform: {
-        '^.+\\.ts$': 'ts-jest',
+        '^.+\\.ts$': ['ts-jest', { diagnostics: { ignoreCodes: ['TS151002'] } }],
         '^.+\\.md$': '<rootDir>/jest.mdTransform.js',
     },
     moduleFileExtensions: ['ts', 'js', 'json', 'md'],

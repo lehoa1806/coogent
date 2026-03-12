@@ -82,10 +82,11 @@
 
 ### Component Wiring (Decomposed Architecture)
 
-`extension.ts` (~270 lines) delegates to five extracted modules:
+`extension.ts` (~116 lines) is a thin orchestrator that delegates to six extracted modules:
 
+- **`activation.ts`** (~349 lines) — Composable initialization functions: `initializeLogging()`, `createServices()`, `startMCPServer()`, `registerSidebar()`, `wireEventSystems()`, `registerReactiveConfig()`, `registerRunbookWatcher()`, `cleanupOrphanWorkers()`
 - **`ServiceContainer`** — Typed registry holding all service instances (replaces 18 module-level `let` variables)
-- **`CommandRegistry`** — Registers all 14+ VS Code commands via `registerAll()`
+- **`CommandRegistry`** — Registers all 15 VS Code commands via `registerAllCommands()`
 - **`EngineWiring`** — Connects Engine ↔ ADK ↔ MCP ↔ Consolidation events
 - **`PlannerWiring`** — Connects PlannerAgent ↔ Engine events
 - **`agent-selection/`** — `AgentRegistry`, `AgentSelector`, `SelectionPipeline`, `WorkerPromptCompiler`, `PromptValidator`
@@ -206,30 +207,37 @@ The `CoogentMCPServer` is the single source of truth for all runtime artifacts.
 Artifacts are persisted in a **SQLite database** (via `sql.js` WASM) managed by `ArtifactDB`:
 
 - **Durability**: Database file (`artifacts.db`) stored under extension-managed storage for cross-session access
-- **Schema**: 11 tables with monotonic `schema_version` tracking
-- **In-Memory Cache**: Reads are served from an in-memory `sql.js` instance; writes flush to disk via `db.export()`
+- **Schema**: 12 tenant-owned tables + 1 system table, with monotonic `schema_version` tracking (current: v10)
+- **In-Memory Cache**: Reads are served from an in-memory `sql.js` instance; writes schedule a debounced flush to disk
+- **Multi-Window Safety**: Uses a reload-before-write merge strategy — see [Multi-Window ArtifactDB Concurrency](#multi-window-artifactdb-concurrency)
+- **Workspace Tenanting**: All tenant-owned tables include a `workspace_id` column — see [Workspace Identity & Tenanting](#workspace-identity--tenanting)
 
 #### Tables
 
 | Table | Purpose |
 |---|---|
-| `tasks` | Master task state (summary, implementation plan, consolidation report) |
+| `tasks` | Master task state (summary, implementation plan, consolidation report, status, timestamps) |
 | `phases` | Per-phase metadata and context |
-| `handoffs` | Phase completion artifacts (decisions, modified files, blockers) |
+| `handoffs` | Phase completion artifacts (decisions, modified files, blockers, downstream context) |
 | `worker_outputs` | Raw worker stdout/stderr capture |
-| `evaluation_results` | Evaluator outcomes (passed, reason, retryPrompt) |
+| `evaluation_results` | Evaluator outcomes (passed, reason, retryPrompt, evaluator type) |
 | `healing_attempts` | Self-healing retry records |
 | `sessions` | Session history and metadata |
-| `phase_logs` | Structured per-phase event log |
-| `plan_revisions` | Plan revision history for audit trail |
+| `phase_logs` | Structured per-phase event log (prompt, request context, exit code, timestamps) |
+| `plan_revisions` | Plan revision history for audit trail (draft JSON, raw LLM output, compilation manifest) |
 | `selection_audits` | Agent selection decision records |
-| `schema_version` | Migration version tracking |
+| `context_manifests` | Context pack assembly manifests for observability (per-phase budget and mode decisions) |
+| `schema_version` | Migration version tracking (system table, not tenant-scoped) |
+
+Schema DDL and migration logic are extracted into `ArtifactDBSchema.ts` (`src/mcp/ArtifactDBSchema.ts`). Migrations are idempotent — `initializeSchema()` is safe to call on every database open. Column additions use `ALTER TABLE ADD COLUMN` wrapped in try/catch for idempotency.
 
 ```typescript
-// Dual-layer architecture:
-const db = await ArtifactDB.create(dbPath);    // SQLite via sql.js WASM
-await db.upsertTask(masterTaskId, { summary }); // Write → SQLite + in-memory
-const task = db.getTask(masterTaskId);          // Read ← in-memory cache
+// Repository pattern (typed data access):
+const db = await ArtifactDB.create(dbPath, workspaceId);
+db.tasks.upsert(masterTaskId, { summary });    // Write → in-memory + schedule flush
+const task = db.tasks.get(masterTaskId);        // Read ← in-memory
+db.handoffs.upsert(masterTaskId, phaseId, handoffData);
+db.close();                                     // Final synchronous flush + free WASM
 ```
 
 ### Resources (Read)
@@ -614,9 +622,20 @@ All methods are **deterministic and stateless** — pure path computation with n
 
 ## ArtifactDB Backup & Recovery
 
-`ArtifactDBBackup` (~148 lines, `src/mcp/ArtifactDBBackup.ts`) manages periodic snapshots of the SQLite database for corruption recovery.
+The database uses **two complementary backup mechanisms**:
 
-### Operations
+### 1. Integrated Periodic Backup (`ArtifactDB.backupIfDue()`)
+
+After every successful flush, `ArtifactDB` checks whether enough time has elapsed (5-minute minimum interval) and creates a timestamped backup alongside the database file. Files are named `artifacts.db.backup-<epoch_ms>` and at most 3 are retained.
+
+- Triggered automatically — no user action required
+- Uses atomic copy (write to `.tmp`, then `rename`)
+- Best-effort — failures are logged but never thrown
+- Pruning deletes oldest backups beyond `MAX_BACKUPS` (3)
+
+### 2. Explicit Snapshot/Restore (`ArtifactDBBackup`)
+
+`ArtifactDBBackup` (~148 lines, `src/mcp/ArtifactDBBackup.ts`) provides an on-demand API for manual backup management.
 
 | Method | Behavior |
 |---|---|
@@ -628,7 +647,7 @@ All methods are **deterministic and stateless** — pure path computation with n
 ### Safety Properties
 
 - **Atomic writes**: All writes use temp-file + rename to prevent partial files on crash
-- **Lexicographic sorting**: ISO-timestamp filenames (`artifacts-2026-03-09T…`) sort chronologically
+- **Lexicographic sorting**: Timestamp-based filenames sort chronologically
 - **Best-effort rotation**: Delete failures are silently caught to avoid blocking on stale files
 - **Post-restore restart**: After restore, the in-memory `sql.js` instance must be reloaded (logged as a warning)
 
@@ -1000,20 +1019,30 @@ This avoids saturating the IPC channel with large payloads on every state change
 
 ```
 webview-ui/src/
-├── App.svelte              ← Root: tab navigation, theme sync
+├── App.svelte                    ← Root: tab navigation, theme sync
 ├── components/
-│   ├── PlanReview.svelte   ← Plan display and approval UI
-│   ├── PhaseDetails.svelte ← Per-phase status, output, handoff
-│   ├── PhaseHeader.svelte  ← Phase title, status badge, timing
-│   ├── PhaseActions.svelte ← Retry/skip/stop/restart buttons
-│   ├── PhaseHandoff.svelte ← Handoff artifact display
-│   ├── Terminal.svelte     ← Real-time worker output stream
-│   ├── Markdown.svelte     ← Rendered markdown with mermaid diagrams
-│   └── WorkerStudio.svelte ← Worker profile browser
+│   ├── ChatInput.svelte          ← User prompt input with @mentions and /commands
+│   ├── ExecutionControls.svelte  ← Start/pause/abort controls
+│   ├── GlobalHeader.svelte       ← Top header bar with session info
+│   ├── InputToolbar.svelte       ← Input area toolbar (file/image attach)
+│   ├── MarkdownRenderer.svelte   ← Rendered markdown with mermaid diagrams
+│   ├── PhaseActions.svelte       ← Retry/skip/stop/restart buttons
+│   ├── PhaseDetails.svelte       ← Per-phase status, output, handoff
+│   ├── PhaseHandoff.svelte       ← Handoff artifact display
+│   ├── PhaseHeader.svelte        ← Phase title, status badge, timing
+│   ├── PhaseNavigator.svelte     ← Phase list navigation sidebar
+│   ├── PlanReview.svelte         ← Plan display and approval UI
+│   ├── ReportModal.svelte        ← Consolidation report modal
+│   ├── SuggestionPopup.svelte    ← @mention and /command suggestion popup
+│   ├── ViewModeTabs.svelte       ← View mode tab selector
+│   ├── WorkerStudio.svelte       ← Worker profile browser
+│   └── WorkerTerminal.svelte     ← Real-time worker output stream
+├── lib/                          ← Shared utilities
 ├── stores/
-│   ├── appState.ts         ← Global reactive state ($state/$derived)
-│   └── mcpStore.ts         ← IPC fetch-with-correlation
-└── types.ts                ← Frontend type definitions
+│   ├── appState.ts               ← Global reactive state ($state/$derived)
+│   └── mcpStore.ts               ← IPC fetch-with-correlation
+├── styles/                       ← Global CSS
+└── types.ts                      ← Frontend type definitions
 ```
 
 ### Theme Parity
@@ -1059,22 +1088,24 @@ The `.vscodeignore` file excludes `src/`, `node_modules/`, `webview-ui/src/`, an
 | Runtime | Node.js 18+ (VS Code Extension Host) |
 | IDE | Antigravity IDE / VS Code ≥ 1.85 |
 | MCP | `@modelcontextprotocol/sdk` ^1.27 |
-| Persistence | `sql.js` (SQLite WASM) via `ArtifactDB` (11 tables) |
+| Persistence | `sql.js` (SQLite WASM) via `ArtifactDB` (12 tenant-owned tables + schema_version) |
 | Tokenizer | `js-tiktoken` (`cl100k_base`) with `CharRatioEncoder` fallback |
-| Schema Validation | AJV ^8.18 (inlined), Zod (handoff validation) |
+| Schema Validation | AJV ^8.18 (inlined), Zod ^4.3 (handoff validation) |
 | Markdown | `marked` ^17.0 |
 | Diagrams | `mermaid` ^11.12 |
-| UI | Svelte 5 + Vite |
+| UI | Svelte 5 + Vite (16 components) |
 | Bundler (Host) | esbuild ^0.20 |
-| Testing (Host) | Jest ^29.7 + ts-jest |
-| Testing (Webview) | Vitest |
+| Testing (Host) | Jest ^29.7 + ts-jest (88 test files) |
+| Testing (Webview) | Vitest (8 test files) |
 | Linting | ESLint ^8.57 + `@typescript-eslint` ^8.0 |
 | Pre-commit | Husky ^9.1 + lint-staged ^16.3 |
+| CI/CD | GitHub Actions (Node 18/20 matrix, ubuntu-latest) |
 
 ### Key Architecture Decisions
 
 | Decision | Rationale |
 |---|---|
+| Reload-before-write merge | Multi-window safe: re-reads disk, merges in-memory rows, atomic write |
 | WAL + atomic rename | Crash-safe persistence without external dependencies |
 | `execFile` over `exec` | Prevents shell injection in Git/evaluators |
 | `activeWorkerCount` over hierarchical FSM | Simpler parallel tracking without breaking the 9-state model |
@@ -1082,3 +1113,69 @@ The `.vscodeignore` file excludes `src/`, `node_modules/`, `webview-ui/src/`, an
 | UUIDv7 for session IDs | Lexicographically sortable, embeds creation timestamp |
 | Inlined JSON schema | Survives esbuild bundling; no ENOENT on `schemas/` path |
 | Native VS Code Git API | No `child_process` dependency for sandbox checks |
+| Workspace-scoped tenanting | SHA-256 prefix of workspace URI enables global DB with per-workspace isolation |
+
+---
+
+## Multi-Window ArtifactDB Concurrency
+
+Multiple Antigravity windows may share the same global SQLite database. `ArtifactDB` uses a **reload-before-write merge strategy** to prevent lost updates without requiring exclusive locks.
+
+### Strategy
+
+1. **In-memory writes**: All mutations go to the in-memory `sql.js` instance immediately
+2. **Debounced flush**: A 500ms debounce timer coalesces rapid writes into a single disk I/O
+3. **Reload-before-write**: Before writing, re-read the disk file into a temporary `sql.js` database
+4. **Merge**: INSERT OR REPLACE all in-memory rows into the disk-loaded copy (in-memory wins on PK conflicts)
+5. **Atomic write**: Export the merged copy, write to `.tmp`, then `rename` into place
+6. **Close**: Final synchronous flush (no debounce) to ensure deactivation safety
+
+### Concurrency Properties
+
+| Property | Detail |
+|---|---|
+| **No exclusive lock** | Multiple windows can flush concurrently — merge semantics prevent overwrites |
+| **Last-writer-wins per row** | INSERT OR REPLACE means the most recent flush's version of a row wins |
+| **Flush lock chain** | Within a single window, flushes are serialized via `flushLock` promise chain |
+| **Dirty tracking** | `_isDirty` flag tracks whether in-memory state has un-persisted changes |
+| **Slow flush warning** | Flushes exceeding 200ms are logged as warnings (observability) |
+| **File permissions** | Database file written with mode `0o600` (owner-only read/write) |
+
+### Tables Merged
+
+All tables listed in `TENANT_TABLES` are merged during reload-before-write, plus `schema_version`.
+
+---
+
+## Workspace Identity & Tenanting
+
+`WorkspaceIdentity` (`src/constants/WorkspaceIdentity.ts`) implements a deterministic workspace identity scheme per [ADR-002](../coogent_%20hybrid_storage/ADR-002-workspace-tenant-identity.md).
+
+### Identity Derivation
+
+| Step | Action |
+|---|---|
+| 1. Canonicalize | `path.resolve()` → lowercase → strip trailing separator |
+| 2. Hash | SHA-256 of canonicalized path |
+| 3. Truncate | First 16 hex characters (64 bits of collision resistance) |
+
+The resulting `workspace_id` is passed to `ArtifactDB.create()` and used as the tenant key for all artifact data. This enables a **global database** (shared across workspaces) with per-workspace data isolation.
+
+### Tenant-Scoped Queries
+
+All 12 tenant-owned tables include a `workspace_id` column with indexes for efficient filtering. Repository classes receive the `workspace_id` at construction and scope all queries accordingly.
+
+### Design Decision History
+
+The hybrid storage model (global ArtifactDB + workspace-local operational state) is documented in a suite of ADRs and PRDs in [`coogent_ hybrid_storage/`](../coogent_%20hybrid_storage/README.md):
+
+| Document | Topic |
+|---|---|
+| PRD-001 | Hybrid global storage foundation |
+| PRD-002 | Storage topology and data ownership clarity |
+| ADR-001 | Hybrid storage topology |
+| ADR-002 | Workspace tenant identity (SHA-256 derivation) |
+| ADR-003 | Global ArtifactDB tenanting |
+| ADR-004 | Global MCP registration and workspace context resolution |
+| ADR-005 | Local operational state boundary |
+| ADR-006 | Migration and compatibility strategy |

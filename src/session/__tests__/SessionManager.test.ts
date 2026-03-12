@@ -58,22 +58,27 @@ describe('SessionManager.deleteSession()', () => {
 
         // Create a mock ArtifactDB that resolves the UUID to the full dir name
         const mockDeleteSessionFromDB = jest.fn();
+        const sessionRow = {
+            sessionDirName: SESSION_DIR_NAME,
+            sessionId: SESSION_ID,
+            prompt: 'test',
+            createdAt: Date.now(),
+            runbookJson: null,
+            status: 'idle',
+            consolidationReport: null,
+            consolidationReportJson: null,
+            implementationPlan: null,
+        };
         const mockDB = {
             deleteSessionFromDB: mockDeleteSessionFromDB,
             sessions: {
-                list: jest.fn().mockReturnValue([
-                    {
-                        sessionDirName: SESSION_DIR_NAME,
-                        sessionId: SESSION_ID,
-                        prompt: 'test',
-                        createdAt: Date.now(),
-                        runbookJson: null,
-                        status: 'idle',
-                        consolidationReport: null,
-                        consolidationReportJson: null,
-                        implementationPlan: null,
-                    },
-                ]),
+                list: jest.fn().mockReturnValue([sessionRow]),
+                getBySessionId: jest.fn().mockImplementation((id: string) =>
+                    id === SESSION_ID ? sessionRow : undefined,
+                ),
+                getByDirName: jest.fn().mockImplementation((name: string) =>
+                    name === SESSION_DIR_NAME ? sessionRow : undefined,
+                ),
             },
         } as unknown as ArtifactDB;
 

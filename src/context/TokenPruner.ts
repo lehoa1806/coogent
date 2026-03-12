@@ -159,16 +159,18 @@ export class TokenPruner {
         let braceDepth = 0;
         let inFunctionBody = false;
         let functionStartDepth = 0;
+        let inBlockComment = false;
 
         for (const line of lines) {
             const trimmed = line.trim();
 
+            // QUAL-3: Count braces using lexer-aware helper
+            const braces = TokenPruner.countEffectiveBraces(line, inBlockComment);
+            inBlockComment = braces.endsInBlockComment;
+
             // Skip empty lines inside function bodies
             if (inFunctionBody) {
-                for (const ch of line) {
-                    if (ch === '{') braceDepth++;
-                    if (ch === '}') braceDepth--;
-                }
+                braceDepth += braces.open - braces.close;
                 if (braceDepth <= functionStartDepth) {
                     inFunctionBody = false;
                     result.push(line.replace(/\{[\s\S]*\}/, '{ /* ... */ }'));
@@ -181,12 +183,9 @@ export class TokenPruner {
                 /^(public|private|protected|static|async)\s+/.test(trimmed) ||
                 /^\w+.*\(.*\)\s*(\{|:)/.test(trimmed);
 
-            if (isFnSignature && line.includes('{')) {
+            if (isFnSignature && braces.open > 0) {
                 functionStartDepth = braceDepth;
-                for (const ch of line) {
-                    if (ch === '{') braceDepth++;
-                    if (ch === '}') braceDepth--;
-                }
+                braceDepth += braces.open - braces.close;
 
                 if (braceDepth > functionStartDepth) {
                     // Function body spans multiple lines
@@ -197,11 +196,62 @@ export class TokenPruner {
                     result.push(line);
                 }
             } else {
+                braceDepth += braces.open - braces.close;
                 result.push(line);
             }
         }
 
         return result.join('\n');
+    }
+
+    /**
+     * QUAL-3: Count braces in a line while respecting lexer state.
+     * Skips braces inside string literals, single-line comments, and
+     * block comments.
+     */
+    private static countEffectiveBraces(
+        line: string,
+        inBlockComment: boolean,
+    ): { open: number; close: number; endsInBlockComment: boolean } {
+        let open = 0;
+        let close = 0;
+        let inString: string | false = false;
+        let inLineComment = false;
+        let inBlock = inBlockComment;
+
+        for (let i = 0; i < line.length; i++) {
+            const ch = line[i];
+            const next = i + 1 < line.length ? line[i + 1] : '';
+
+            // Block comment state
+            if (inBlock) {
+                if (ch === '*' && next === '/') { inBlock = false; i++; }
+                continue;
+            }
+
+            // Line comment — rest of line is ignored
+            if (inLineComment) continue;
+
+            // String literal state
+            if (inString) {
+                if (ch === '\\') { i++; continue; } // skip escaped char
+                if (ch === inString) inString = false;
+                continue;
+            }
+
+            // Detect comment starts
+            if (ch === '/' && next === '/') { inLineComment = true; continue; }
+            if (ch === '/' && next === '*') { inBlock = true; i++; continue; }
+
+            // Detect string starts
+            if (ch === '"' || ch === "'" || ch === '`') { inString = ch; continue; }
+
+            // Count braces
+            if (ch === '{') open++;
+            if (ch === '}') close++;
+        }
+
+        return { open, close, endsInBlockComment: inBlock };
     }
 
     /**

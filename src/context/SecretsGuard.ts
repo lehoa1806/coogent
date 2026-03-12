@@ -13,6 +13,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { getCoogentDir } from '../constants/paths.js';
 import log from '../logger/log.js';
+import { isRegexSafe } from '../utils/regex-safety.js';
 
 export interface ScanResult {
     safe: boolean;
@@ -174,15 +175,22 @@ export class SecretsGuard {
     static scan(content: string, filePath: string, allowlist?: Allowlist): ScanResult {
         const findings: string[] = [];
 
-        // 1. API key patterns
+        // 1. API key patterns — SEC-1: report ALL occurrences, not just first
         for (const { name, regex } of SecretsGuard.API_KEY_PATTERNS) {
-            const match = regex.exec(content);
-            if (match) {
+            const globalRe = new RegExp(regex.source, 'g');
+            let matchCount = 0;
+            let match: RegExpExecArray | null;
+            while ((match = globalRe.exec(content)) !== null) {
                 const matchedValue = match[0];
                 if (allowlist && SecretsGuard.isAllowlisted(matchedValue, allowlist)) {
                     continue;
                 }
-                findings.push(`${name} pattern detected in ${filePath}`);
+                matchCount++;
+                findings.push(
+                    matchCount > 1
+                        ? `${name} pattern detected in ${filePath} (occurrence ${matchCount})`
+                        : `${name} pattern detected in ${filePath}`,
+                );
             }
         }
 
@@ -372,23 +380,11 @@ export class SecretsGuard {
 
     /**
      * S1-7 (SEC-6): Test if a regex pattern is safe from ReDoS.
-     * Runs a test string through the regex with a timeout.
-     * Returns false if the regex takes > 50ms on a crafted input.
+     * SEC-2: Delegates to shared `isRegexSafe` utility with stricter
+     * structural analysis + timing guard.
      */
     private static isRegexSafe(re: RegExp, source: string): boolean {
-        // Heuristic: patterns with nested quantifiers are high-risk
-        if (/([+*])\??[^)]*\1/.test(source) || /(\([^)]*\)){2,}[+*]/.test(source)) {
-            // Test with a crafted adversarial string
-            const testStr = 'a'.repeat(50) + '!';
-            const start = Date.now();
-            try {
-                re.test(testStr);
-            } catch {
-                return false;
-            }
-            return Date.now() - start < 50;
-        }
-        return true;
+        return isRegexSafe(re, source);
     }
 }
 

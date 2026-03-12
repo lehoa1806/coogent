@@ -29,11 +29,36 @@
 
 | Document | Description |
 |---|---|
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System architecture: FSM, DAG scheduling, MCP server, context pipeline, evaluators, persistence, decomposition patterns, plugin system, error codes, and tech stack |
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System architecture: FSM, DAG scheduling, MCP server, context pipeline, evaluators, persistence, multi-window concurrency, workspace identity & tenanting, decomposition patterns, plugin system, error codes, and tech stack |
 | **[USER_GUIDE.md](USER_GUIDE.md)** | Installation, all 18 configuration settings, usage workflows, multi-root workspace support |
-| **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)** | Local development, full project structure, debugging, 79-file test suite reference, build commands, code conventions, and contribution guidelines |
+| **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)** | Local development, full project structure, debugging, 96-file test suite reference, CI/CD pipeline, build commands, code conventions, and contribution guidelines |
 | **[API_REFERENCE.md](API_REFERENCE.md)** | MCP URIs, MCP tools, IPC message contracts, data model schemas, and branded types |
-| **[OPERATIONS.md](OPERATIONS.md)** | Packaging, deployment, migration runbook, troubleshooting guide, backup/recovery, and log locations |
+| **[OPERATIONS.md](OPERATIONS.md)** | Packaging, deployment, CI/CD pipeline, migration runbook, troubleshooting guide, backup/recovery, and log locations |
+
+---
+
+## CI/CD
+
+| File | Description |
+|---|---|
+| [ci.yml](../.github/workflows/ci.yml) | GitHub Actions CI pipeline (Node 18/20 matrix, lint → test → audit → package) |
+
+---
+
+## ADRs & PRDs (Hybrid Storage Design)
+
+Design documents in [`coogent_ hybrid_storage/`](../../coogent_%20hybrid_storage/README.md) covering the hybrid global storage architecture:
+
+| Document | Description |
+|---|---|
+| PRD-001 | Hybrid global storage foundation |
+| PRD-002 | Storage topology and data ownership clarity |
+| ADR-001 | Hybrid storage topology |
+| ADR-002 | Workspace tenant identity |
+| ADR-003 | Global ArtifactDB tenanting |
+| ADR-004 | Global MCP registration and workspace context resolution |
+| ADR-005 | Local operational state boundary |
+| ADR-006 | Migration and compatibility strategy |
 
 ---
 
@@ -55,3 +80,4 @@ For **contributors**: README → [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) → [A
 For **integrators**: [API_REFERENCE.md](API_REFERENCE.md) → [ARCHITECTURE.md](ARCHITECTURE.md)
 
 For **operators**: [USER_GUIDE.md](USER_GUIDE.md) → [OPERATIONS.md](OPERATIONS.md)
+

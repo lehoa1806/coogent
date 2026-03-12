@@ -1,70 +1,25 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // src/state/StateManager.ts — Runbook persistence, locking, and crash recovery
 // ─────────────────────────────────────────────────────────────────────────────
+// R4 refactor: Encryption, validation, and file locking are now delegated to
+//   RunbookEncryptor, RunbookValidator, and FileLock collaborators.
 // Sprint 4: Added AES-256-CBC encryption for WAL and runbook files.
 // Post-audit: Upgraded key management from PBKDF2-over-filepath to
 //             VS Code SecretStorage API (OS keychain-backed).
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import * as crypto from 'node:crypto';
-import Ajv from 'ajv';
 import { asTimestamp, type Runbook, type WALEntry, type EngineState } from '../types/index.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import { RUNBOOK_FILE, WAL_FILE, LOCK_FILE } from '../constants/paths.js';
 import log from '../logger/log.js';
+import { RunbookEncryptor, type SecretStorageLike } from './RunbookEncryptor.js';
+import { validateRunbookSchema } from './RunbookValidator.js';
+import { FileLock } from './FileLock.js';
 
-/**
- * Minimal interface matching VS Code's `SecretStorage` API.
- * Decoupled from the vscode module for unit-test portability.
- */
-export interface SecretStorageLike {
-    get(key: string): Thenable<string | undefined>;
-    store(key: string, value: string): Thenable<void>;
-}
-
-/** Prefix for encrypted content — allows auto-detection on read. */
-const ENCRYPTED_PREFIX = 'ENC:';
-
-// Inline JSON Schema — no external file dependency (esbuild-safe)
-const runbookSchema = {
-    $schema: 'http://json-schema.org/draft-07/schema#',
-    title: 'Coogent Task Runbook',
-    type: 'object',
-    required: ['project_id', 'status', 'current_phase', 'phases'],
-    additionalProperties: false,
-    properties: {
-        project_id: { type: 'string', minLength: 1 },
-        status: { type: 'string', enum: ['idle', 'running', 'paused_error', 'completed'] },
-        current_phase: { type: 'integer', minimum: 0 },
-        summary: { type: 'string' },
-        implementation_plan: { type: 'string' },
-        phases: {
-            type: 'array',
-            minItems: 1,
-            items: {
-                type: 'object',
-                required: ['id', 'status', 'prompt', 'context_files', 'success_criteria'],
-                additionalProperties: false,
-                properties: {
-                    id: { type: 'integer' },
-                    status: { type: 'string', enum: ['pending', 'running', 'completed', 'failed'] },
-                    prompt: { type: 'string', minLength: 1 },
-                    context_files: { type: 'array', items: { type: 'string', minLength: 1 } },
-                    success_criteria: { type: 'string', minLength: 1 },
-                    depends_on: { type: 'array', items: { type: 'integer' } },
-                    evaluator: { type: 'string', enum: ['exit_code', 'regex', 'toolchain', 'test_suite'] },
-                    max_retries: { type: 'integer', minimum: 0 },
-                    context_summary: { type: 'string' },
-                    mcpPhaseId: { type: 'string' },
-                },
-            },
-        },
-    },
-} as const;
-
-const ajv = new Ajv({ allErrors: true });
-const validateRunbook = ajv.compile<Runbook>(runbookSchema);
+// Re-export for backward compatibility — existing tests import from here
+export type { SecretStorageLike } from './RunbookEncryptor.js';
+export { RunbookValidationError } from './RunbookValidator.js';
 
 /**
  * Manages all `.task-runbook.json` I/O.
@@ -87,24 +42,15 @@ const validateRunbook = ajv.compile<Runbook>(runbookSchema);
 export class StateManager {
     private runbookPath: string;
     private walPath: string;
-    private lockPath: string;
     private sessionDir: string;
     private dirEnsured = false;
 
     /** In-memory cache of the last-read runbook. */
     private cachedRunbook: Runbook | null = null;
 
-    /** Whether we currently hold the file lock. */
-    private isLocked = false;
-
-    /** Whether to encrypt WAL and runbook files on disk. */
-    private readonly encryptionEnabled: boolean;
-
-    /** Encryption key — loaded from SecretStorage or generated on first use. */
-    private encryptionKey: Buffer | null = null;
-
-    /** VS Code SecretStorage instance (optional — encryption degrades gracefully without it). */
-    private readonly secretStorage: SecretStorageLike | undefined;
+    /** R4: Delegated collaborators */
+    private readonly encryptor: RunbookEncryptor;
+    private readonly lock: FileLock;
 
     /** Optional ArtifactDB for runbook persistence — set via setArtifactDB(). */
     private artifactDb: ArtifactDB | undefined;
@@ -133,9 +79,8 @@ export class StateManager {
         this.sessionDir = sessionDir;
         this.runbookPath = path.join(sessionDir, RUNBOOK_FILE);
         this.walPath = path.join(sessionDir, WAL_FILE);
-        this.lockPath = path.join(sessionDir, LOCK_FILE);
-        this.encryptionEnabled = enableEncryption;
-        this.secretStorage = secretStorage;
+        this.encryptor = new RunbookEncryptor(enableEncryption, secretStorage);
+        this.lock = new FileLock(path.join(sessionDir, LOCK_FILE));
     }
 
     /** Ensure session directory exists (called once before first write). */
@@ -165,7 +110,7 @@ export class StateManager {
         this.sessionDir = dir;
         this.runbookPath = path.join(dir, RUNBOOK_FILE);
         this.walPath = path.join(dir, WAL_FILE);
-        this.lockPath = path.join(dir, LOCK_FILE);
+        this.lock.setLockPath(path.join(dir, LOCK_FILE));
         this.dirEnsured = false;   // force re-creation on next write
     }
 
@@ -179,7 +124,7 @@ export class StateManager {
      * @throws {RunbookValidationError} If the runbook fails schema validation.
      */
     public async loadRunbook(): Promise<Runbook | null> {
-        await this.initEncryption();
+        await this.encryptor.init();
 
         // ── DB-first read (C1 audit fix: DB is authoritative) ──────────
         if (this.artifactDb && this.masterTaskId) {
@@ -187,7 +132,7 @@ export class StateManager {
                 const task = this.artifactDb.tasks.get(this.masterTaskId);
                 if (task?.runbookJson) {
                     const parsed: unknown = JSON.parse(task.runbookJson);
-                    const runbook = this.validateSchema(parsed);
+                    const runbook = validateRunbookSchema(parsed);
                     this.cachedRunbook = runbook;
                     log.info('[StateManager] Runbook loaded from DB (authoritative).');
                     return runbook;
@@ -200,9 +145,9 @@ export class StateManager {
         // ── IPC file fallback (WAL/crash recovery only) ────────────────
         try {
             const raw = await fs.readFile(this.runbookPath, 'utf-8');
-            const content = this.maybeDecrypt(raw);
+            const content = this.encryptor.maybeDecrypt(raw);
             const parsed: unknown = JSON.parse(content);
-            const runbook = this.validateSchema(parsed);
+            const runbook = validateRunbookSchema(parsed);
             this.cachedRunbook = runbook;
             log.info('[StateManager] Runbook loaded from IPC file (fallback).');
 
@@ -271,11 +216,11 @@ export class StateManager {
         engineState: EngineState
     ): Promise<void> {
         // Enforce schema validation on the write path (P0-3)
-        this.validateSchema(runbook);
+        validateRunbookSchema(runbook);
 
-        await this.initEncryption();
+        await this.encryptor.init();
         await this.ensureDir();
-        await this.acquireLock();
+        await this.lock.acquire();
         try {
             // ── C1 audit fix: DB is authoritative — write first, throw on failure ──
             if (this.artifactDb && this.masterTaskId) {
@@ -292,12 +237,12 @@ export class StateManager {
                 currentPhase: runbook.current_phase,
                 snapshot: runbook,
             };
-            const walContent = this.maybeEncrypt(JSON.stringify(walEntry, null, 2));
+            const walContent = this.encryptor.maybeEncrypt(JSON.stringify(walEntry, null, 2));
             await fs.writeFile(this.walPath, walContent, 'utf-8');
 
             // Atomic write: temp → rename
             const tmpPath = this.runbookPath + '.tmp';
-            const runbookContent = this.maybeEncrypt(JSON.stringify(runbook, null, 2));
+            const runbookContent = this.encryptor.maybeEncrypt(JSON.stringify(runbook, null, 2));
             await fs.writeFile(tmpPath, runbookContent, 'utf-8');
             await fs.rename(tmpPath, this.runbookPath);
 
@@ -306,7 +251,7 @@ export class StateManager {
 
             this.cachedRunbook = runbook;
         } finally {
-            await this.releaseLock();
+            await this.lock.release();
         }
     }
 
@@ -321,9 +266,9 @@ export class StateManager {
      * @returns `true` if WAL recovery was performed.
      */
     public async recoverFromCrash(): Promise<boolean> {
-        await this.initEncryption();
+        await this.encryptor.init();
         // FIRST: Always clean stale locks from crashed processes
-        await this.cleanStaleLock();
+        await this.lock.cleanStale();
 
         // THEN: Replay WAL if present — check existence first to avoid ENOENT
         try {
@@ -334,7 +279,7 @@ export class StateManager {
 
         try {
             const walRawEncoded = await fs.readFile(this.walPath, 'utf-8');
-            const walRaw = this.maybeDecrypt(walRawEncoded);
+            const walRaw = this.encryptor.maybeDecrypt(walRawEncoded);
             let walEntry: WALEntry;
             try {
                 walEntry = JSON.parse(walRaw) as WALEntry;
@@ -348,7 +293,7 @@ export class StateManager {
 
             // Validate schema before restoring from WAL (prevents restoring corrupted data)
             try {
-                this.validateSchema(walEntry.snapshot);
+                validateRunbookSchema(walEntry.snapshot);
             } catch (validationErr) {
                 log.warn('[StateManager] WAL snapshot failed schema validation. Deleting WAL...', validationErr);
                 await fs.unlink(this.walPath).catch(() => { });
@@ -359,7 +304,7 @@ export class StateManager {
             log.info(`[StateManager] WAL found (ts=${walEntry.timestamp}). Recovering...`);
 
             // MUST acquire lock to avoid race conditions with other writers during recovery
-            await this.acquireLock();
+            await this.lock.acquire();
             try {
                 // Atomic write: temp → rename
                 const tmpPath = this.runbookPath + '.tmp';
@@ -391,104 +336,12 @@ export class StateManager {
                 await this.cleanOrphanedTmpFiles();
                 return true;
             } finally {
-                await this.releaseLock();
+                await this.lock.release();
             }
         } catch (err: unknown) {
             log.error('[StateManager] Recovery failed:', err);
             throw err;
         }
-    }
-
-    /**
-     * Remove stale lockfiles left by a process that died without releasing.
-     * Checks if the PID in the lockfile is still alive; if dead, removes it.
-     * See 02-review.md § P0-2.
-     */
-    private async cleanStaleLock(): Promise<void> {
-        try {
-            const pidStr = await fs.readFile(this.lockPath, 'utf-8');
-            const pid = parseInt(pidStr.trim(), 10);
-
-            if (isNaN(pid)) {
-                // Corrupt lockfile — remove it unconditionally
-                await fs.unlink(this.lockPath).catch(() => { });
-                log.info('[StateManager] Removed corrupt lockfile.');
-                return;
-            }
-
-            try {
-                process.kill(pid, 0); // Check if process is alive (signal 0)
-                // Process is alive — lock is legitimate, do NOT remove
-                log.warn(`[StateManager] Lockfile held by live PID ${pid}.`);
-            } catch {
-                // Process is dead — lock is stale
-                await fs.unlink(this.lockPath).catch(() => { });
-                log.info(`[StateManager] Removed stale lockfile (dead PID ${pid}).`);
-            }
-        } catch (err: unknown) {
-            if (isNodeError(err) && err.code === 'ENOENT') {
-                return; // No lockfile — nothing to clean
-            }
-            // Unexpected error — log but don't throw (recovery should proceed)
-            log.warn('[StateManager] cleanStaleLock error:', err);
-        }
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    //  File Locking
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Acquire an **advisory** file lock via lockfile (O_CREAT | O_EXCL).
-     *
-     * **W-7 Design Note**: This lock only guards against *external* processes
-     * (e.g., another VS Code window or a text editor) modifying the runbook
-     * file concurrently. The primary write serialization within this process
-     * is the in-process `writeLock` async mutex (see L87), which prevents
-     * interleaving from concurrent async paths (worker exit + user pause).
-     *
-     * The 100ms busy-poll is acceptable because contention from external
-     * processes is rare and short-lived.
-     *
-     * @param timeoutMs Maximum wait before throwing (default: 5000ms).
-     */
-    private async acquireLock(timeoutMs = 5000): Promise<void> {
-        // W-3 fix: Skip re-acquisition if we already hold the lock
-        if (this.isLocked) return;
-        const deadline = Date.now() + timeoutMs;
-        let staleLockCleaned = false;
-
-        while (Date.now() < deadline) {
-            try {
-                await fs.writeFile(this.lockPath, String(process.pid), { flag: 'wx' });
-                this.isLocked = true;
-                return;
-            } catch (err: unknown) {
-                if (isNodeError(err) && err.code === 'EEXIST') {
-                    // On first EEXIST, try cleaning stale lock (#32)
-                    if (!staleLockCleaned) {
-                        await this.cleanStaleLock();
-                        staleLockCleaned = true;
-                    } else {
-                        await sleep(100);
-                    }
-                    continue;
-                }
-                throw err;
-            }
-        }
-
-        throw new Error(
-            `[StateManager] Failed to acquire lock within ${timeoutMs}ms. ` +
-            `The runbook may be locked by another process.`
-        );
-    }
-
-    /** Release the exclusive lock. */
-    private async releaseLock(): Promise<void> {
-        if (!this.isLocked) return;
-        try { await fs.unlink(this.lockPath); } catch { /* best-effort */ }
-        this.isLocked = false;
     }
 
     /**
@@ -510,139 +363,16 @@ export class StateManager {
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    //  Encryption (Sprint 4 → Post-Audit Hardening)
+    //  Backward Compatibility — initEncryption()
     // ═══════════════════════════════════════════════════════════════════════════
-
-    /** SecretStorage key under which the encryption key is stored. */
-    private static readonly SECRET_KEY_ID = 'coogent.encryptionKey';
 
     /**
      * Initialise the encryption key from VS Code SecretStorage.
-     *
-     * - If a key already exists in SecretStorage, it is loaded.
-     * - If no key exists, a random 32-byte key is generated and stored.
-     * - If no SecretStorage is available, falls back to in-memory random key
-     *   (ephemeral — lost on extension restart, suitable for test environments).
-     *
-     * Must be called once before any encrypt/decrypt operations when
-     * `enableEncryption` is true. Called automatically by `loadRunbook()`
-     * and `saveRunbook()` if not yet initialized.
+     * Delegates to RunbookEncryptor — preserved for backward compatibility
+     * with tests that call this method directly.
      */
     public async initEncryption(): Promise<void> {
-        if (this.encryptionKey) return;
-        if (!this.encryptionEnabled) return;
-
-        if (this.secretStorage) {
-            const stored = await this.secretStorage.get(StateManager.SECRET_KEY_ID);
-            if (stored) {
-                this.encryptionKey = Buffer.from(stored, 'hex');
-                log.info('[StateManager] Encryption key loaded from SecretStorage.');
-            } else {
-                this.encryptionKey = crypto.randomBytes(32);
-                await this.secretStorage.store(
-                    StateManager.SECRET_KEY_ID,
-                    this.encryptionKey.toString('hex')
-                );
-                log.info('[StateManager] New encryption key generated and stored in SecretStorage.');
-            }
-        } else {
-            // No SecretStorage available — generate ephemeral key (test/CI environments)
-            this.encryptionKey = crypto.randomBytes(32);
-            log.warn(
-                '[StateManager] No SecretStorage available — using ephemeral encryption key. ' +
-                'Encrypted data will not survive extension restarts.'
-            );
-        }
-    }
-
-    /**
-     * Get the encryption key, initializing from SecretStorage if needed.
-     * @throws Error if encryption is enabled but key is not initialized.
-     */
-    private getEncryptionKey(): Buffer {
-        if (this.encryptionKey) return this.encryptionKey;
-        throw new Error(
-            '[StateManager] Encryption key not initialized. ' +
-            'Call initEncryption() before encrypt/decrypt operations.'
-        );
-    }
-
-    /**
-     * Encrypt plaintext using AES-256-CBC. Returns `ENC:<iv>:<ciphertext>` (base64).
-     * Only encrypts if encryption is enabled; otherwise returns plaintext.
-     */
-    private maybeEncrypt(plaintext: string): string {
-        if (!this.encryptionEnabled) return plaintext;
-
-        const key = this.getEncryptionKey();
-        const iv = crypto.randomBytes(16);
-        const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
-        const encrypted = Buffer.concat([
-            cipher.update(plaintext, 'utf-8'),
-            cipher.final(),
-        ]);
-        return `${ENCRYPTED_PREFIX}${iv.toString('base64')}:${encrypted.toString('base64')}`;
-    }
-
-    /**
-     * Decrypt content if it starts with the ENC: prefix.
-     * Migration-safe: plaintext content passes through unchanged.
-     */
-    private maybeDecrypt(content: string): string {
-        if (!content.startsWith(ENCRYPTED_PREFIX)) return content;
-
-        const key = this.getEncryptionKey();
-        const payload = content.slice(ENCRYPTED_PREFIX.length);
-        const colonIdx = payload.indexOf(':');
-        if (colonIdx === -1) {
-            log.warn('[StateManager] Malformed encrypted content — missing IV separator.');
-            throw new Error('Malformed encrypted content');
-        }
-
-        const iv = Buffer.from(payload.slice(0, colonIdx), 'base64');
-        const ciphertext = Buffer.from(payload.slice(colonIdx + 1), 'base64');
-        const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-        const decrypted = Buffer.concat([
-            decipher.update(ciphertext),
-            decipher.final(),
-        ]);
-        return decrypted.toString('utf-8');
-    }
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    //  Schema Validation (ajv)
-    // ═══════════════════════════════════════════════════════════════════════════
-
-    /**
-     * Validate parsed JSON against the runbook JSON Schema.
-     * @throws {RunbookValidationError} With human-readable error details.
-     */
-    private validateSchema(data: unknown): Runbook {
-        if (validateRunbook(data)) {
-            return data;
-        }
-
-        const errors = (validateRunbook.errors ?? [])
-            .map(e => `  ${e.instancePath || '/'}: ${e.message}`)
-            .join('\n');
-
-        throw new RunbookValidationError(
-            `Runbook schema validation failed:\n${errors}`,
-            validateRunbook.errors ?? []
-        );
-    }
-}
-
-/**
- * Error thrown when a runbook file fails JSON Schema validation.
- */
-export class RunbookValidationError extends Error {
-    constructor(
-        message: string,
-        public readonly validationErrors: readonly object[]
-    ) {
-        super(message);
-        this.name = 'RunbookValidationError';
+        return this.encryptor.init();
     }
 }
 
@@ -653,8 +383,4 @@ export class RunbookValidationError extends Error {
 function isNodeError(err: unknown): err is NodeJS.ErrnoException {
     return (err instanceof Error && 'code' in err) ||
         (typeof err === 'object' && err !== null && 'code' in err && 'message' in err);
-}
-
-function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
 }

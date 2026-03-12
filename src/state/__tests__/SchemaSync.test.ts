@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Schema consistency test — ensures the inline schema in StateManager.ts
+// Schema consistency test — ensures the inline schema in RunbookValidator.ts
 // stays in sync with schemas/runbook.schema.json (#96)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -24,7 +24,7 @@ function stripCosmetic(obj: unknown): unknown {
 }
 
 describe('Runbook schema sync (#96)', () => {
-    // The inline schema in StateManager.ts is the source of truth for the
+    // The inline schema in RunbookValidator.ts is the source of truth for the
     // ajv validator. The external runbook.schema.json is the IDE/editor copy.
     // This test ensures they don't drift.
 
@@ -44,8 +44,8 @@ describe('Runbook schema sync (#96)', () => {
         // same enum values, same types.
         const externalStructural = stripCosmetic(external);
 
-        // Read the inline schema from the StateManager source file
-        const smPath = path.resolve(__dirname, '../StateManager.ts');
+        // Read the inline schema from the RunbookValidator source file
+        const smPath = path.resolve(__dirname, '../RunbookValidator.ts');
         const smSource = fs.readFileSync(smPath, 'utf-8');
 
         // Extract the inline schema object literal between

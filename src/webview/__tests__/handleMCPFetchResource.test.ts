@@ -15,6 +15,10 @@ import { routeWebviewMessage, type MessageRouterDeps } from '../messageRouter.js
 /** Flush pending microtasks so fire-and-forget promise chains settle. */
 const flushPromises = () => new Promise<void>(resolve => setImmediate(resolve));
 
+afterEach(() => {
+    jest.clearAllTimers();
+});
+
 function createMockDeps(opts: {
     currentSessionDirName?: string;
     mcpClientBridge?: { readResource: jest.Mock } | null;
