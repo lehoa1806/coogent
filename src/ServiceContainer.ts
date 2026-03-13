@@ -71,6 +71,9 @@ export class ServiceContainer {
     /** Workspace-level .coogent directory. Used for session/IPC data. */
     coogentDir: string | undefined;
 
+    /** Absolute path to the extension install directory (context.extensionPath). */
+    extensionPath: string | undefined;
+
     /** Accumulated worker stdout for handoff extraction (capped at 2 MB). */
     readonly workerOutputAccumulator = new Map<number, string>();
 
@@ -186,31 +189,9 @@ export class ServiceContainer {
      * Called during `deactivate()`.
      */
     releaseAll(): void {
-        this.stateManager = undefined;
-        this.engine = undefined;
-        this.adkController = undefined;
-        this.contextScoper = undefined;
-        this.logger = undefined;
-        this.gitManager = undefined;
-        this.gitSandbox = undefined;
-        this.outputRegistry = undefined;
-        this.plannerAgent = undefined;
-        this.sessionManager = undefined;
-        this.handoffExtractor = undefined;
-        this.consolidationAgent = undefined;
-        this.currentSessionDir = undefined;
-        this.currentSessionDirName = undefined;
-        this.currentSessionId = undefined;
-        this.mcpServer = undefined;
-        this.mcpBridge = undefined;
-        this.sidebarMenu = undefined;
-        this.agentRegistry = undefined;
-        this.contextPackBuilder = undefined;
-        this.sessionHistoryService = undefined;
-        this.mcpReady = undefined;
-        this.workspaceRoots = undefined;
-        this.storageBase = undefined;
-        this.coogentDir = undefined;
+        for (const key of Object.keys(RESOLVABLE_KEYS) as (keyof ResolvableServices)[]) {
+            (this as Record<string, unknown>)[key] = undefined;
+        }
         this.workerOutputAccumulator.clear();
         this.workerStderrAccumulator.clear();
         this.sandboxBranchCreatedForSession.clear();
@@ -247,6 +228,7 @@ export type ResolvableServices = {
     workspaceRoots: string[];
     storageBase: string;
     coogentDir: string;
+    extensionPath: string;
 };
 
 /** Key set used by `getActiveServices()` to enumerate resolvable properties. */
@@ -276,4 +258,5 @@ const RESOLVABLE_KEYS: Record<keyof ResolvableServices, true> = {
     workspaceRoots: true,
     storageBase: true,
     coogentDir: true,
+    extensionPath: true,
 };

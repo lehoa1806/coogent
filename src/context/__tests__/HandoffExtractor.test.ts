@@ -242,6 +242,11 @@ describe('HandoffExtractor', () => {
                     blockers: ['Need tests'],
                     completedAt: 1700000000000,
                     nextStepsContext: 'Bar module ready',
+                    summary: 'Implemented the bar module with full type safety',
+                    rationale: 'TypeScript was chosen for strict type checking',
+                    remainingWork: ['Add unit tests', 'Write docs'],
+                    constraints: ['Must use existing DB schema'],
+                    warnings: ['Performance not optimized yet'],
                 },
                 'phase-002-00000000-0000-0000-0000-000000000000': {
                     phaseId: 'phase-002-00000000-0000-0000-0000-000000000000',
@@ -283,6 +288,12 @@ describe('HandoffExtractor', () => {
             // CF-1 Pull Model: should include tool directives, not raw file content
             expect(ctx).toContain('get_modified_file_content');
             expect(ctx).toContain('src/bar.ts');
+            // Enriched fields should be present for phase 1
+            expect(ctx).toContain('Implemented the bar module with full type safety');
+            expect(ctx).toContain('TypeScript was chosen for strict type checking');
+            expect(ctx).toContain('Add unit tests');
+            expect(ctx).toContain('Must use existing DB schema');
+            expect(ctx).toContain('Performance not optimized yet');
         });
 
         it('should handle missing handoff reports gracefully', async () => {
@@ -298,6 +309,102 @@ describe('HandoffExtractor', () => {
             const ctx = await extractor.buildNextContext(phase);
             expect(ctx).toContain('Phase 99 Handoff');
             expect(ctx).toContain('No handoff report found');
+        });
+
+        it('should render enriched section headings when fields are populated', async () => {
+            const masterTaskId = 'test-enriched';
+            const mockHandoffs: Record<string, any> = {
+                'phase-010-00000000-0000-0000-0000-000000000000': {
+                    phaseId: 'phase-010-00000000-0000-0000-0000-000000000000',
+                    masterTaskId,
+                    decisions: ['D1'],
+                    modifiedFiles: [],
+                    blockers: [],
+                    completedAt: 1700000000000,
+                    nextStepsContext: 'next',
+                    summary: 'Phase summary text',
+                    rationale: 'Phase rationale text',
+                    remainingWork: ['R1', 'R2'],
+                    constraints: ['C1'],
+                    warnings: ['W1'],
+                },
+            };
+            const mockDB = {
+                handoffs: { get: (_tid: string, pid: string) => mockHandoffs[pid] ?? undefined },
+            };
+            extractor.setArtifactDB(mockDB as any, masterTaskId);
+            extractor.setPhaseIdMap([
+                { id: 10, mcpPhaseId: 'phase-010-00000000-0000-0000-0000-000000000000' },
+            ]);
+
+            const phase: Phase = {
+                id: asPhaseId(11),
+                status: 'pending',
+                prompt: 'Test',
+                context_files: [],
+                success_criteria: 'exit_code:0',
+                depends_on: [asPhaseId(10)],
+            };
+
+            const ctx = await extractor.buildNextContext(phase);
+
+            expect(ctx).toContain('### Summary');
+            expect(ctx).toContain('Phase summary text');
+            expect(ctx).toContain('### Rationale');
+            expect(ctx).toContain('Phase rationale text');
+            expect(ctx).toContain('### Remaining Work');
+            expect(ctx).toContain('- R1');
+            expect(ctx).toContain('- R2');
+            expect(ctx).toContain('### Constraints');
+            expect(ctx).toContain('- C1');
+            expect(ctx).toContain('### Warnings');
+            expect(ctx).toContain('W1');
+        });
+
+        it('should omit enriched sections when fields are absent', async () => {
+            const masterTaskId = 'test-legacy';
+            const mockHandoffs: Record<string, any> = {
+                'phase-020-00000000-0000-0000-0000-000000000000': {
+                    phaseId: 'phase-020-00000000-0000-0000-0000-000000000000',
+                    masterTaskId,
+                    decisions: ['D1'],
+                    modifiedFiles: [],
+                    blockers: [],
+                    completedAt: 1700000000000,
+                    nextStepsContext: 'next',
+                    // No enriched fields
+                },
+            };
+            const mockDB = {
+                handoffs: { get: (_tid: string, pid: string) => mockHandoffs[pid] ?? undefined },
+            };
+            extractor.setArtifactDB(mockDB as any, masterTaskId);
+            extractor.setPhaseIdMap([
+                { id: 20, mcpPhaseId: 'phase-020-00000000-0000-0000-0000-000000000000' },
+            ]);
+
+            const phase: Phase = {
+                id: asPhaseId(21),
+                status: 'pending',
+                prompt: 'Test',
+                context_files: [],
+                success_criteria: 'exit_code:0',
+                depends_on: [asPhaseId(20)],
+            };
+
+            const ctx = await extractor.buildNextContext(phase);
+
+            // Core sections present
+            expect(ctx).toContain('### Decisions');
+            expect(ctx).toContain('### Unresolved Issues');
+            expect(ctx).toContain('### Next Steps Context');
+
+            // Enriched sections absent
+            expect(ctx).not.toContain('### Summary');
+            expect(ctx).not.toContain('### Rationale');
+            expect(ctx).not.toContain('### Remaining Work');
+            expect(ctx).not.toContain('### Constraints');
+            expect(ctx).not.toContain('### Warnings');
         });
     });
 

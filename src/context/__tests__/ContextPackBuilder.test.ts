@@ -343,4 +343,34 @@ describe('ContextPackBuilder', () => {
             expect(metaDecision!.omitted).toBe(true);
         }
     });
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  10. Directory paths in contextFiles → gracefully skipped (EISDIR fix)
+    // ─────────────────────────────────────────────────────────────────────
+
+    it('skips directory paths in contextFiles without EISDIR crash', async () => {
+        // Create a directory and a real file
+        await fs.mkdir(path.join(tmpDir, 'src', 'utils'), { recursive: true });
+        await writeLines(tmpDir, 'src/real.ts', 10);
+
+        const mockDb = createMockArtifactDB();
+        const builder = new ContextPackBuilder(mockDb as unknown as ArtifactDB, encoder, tmpDir);
+
+        // Should NOT throw EISDIR
+        const { pack, manifest } = await builder.build(
+            defaultInput({ contextFiles: ['src/utils', 'src/real.ts'] }),
+        );
+
+        // Directory should be skipped, real file should be present
+        const realEntry = pack.fileContexts.find(f => f.path === 'src/real.ts');
+        expect(realEntry).toBeDefined();
+        expect(realEntry!.mode).toBe('full');
+
+        const dirEntry = pack.fileContexts.find(f => f.path === 'src/utils');
+        expect(dirEntry).toBeUndefined();
+
+        // Manifest should not contain a decision for the skipped directory
+        const dirDecision = manifest.fileDecisions.find(d => d.path === 'src/utils');
+        expect(dirDecision).toBeUndefined();
+    });
 });

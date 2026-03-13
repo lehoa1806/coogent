@@ -5,7 +5,7 @@
 // Handles dispatchReadyPhases, advanceSchedule, stall watchdog, resumePending.
 
 import log from '../logger/log.js';
-import { EngineState, EngineEvent, asTimestamp, type Phase } from '../types/index.js';
+import { EngineState, EngineEvent, asTimestamp, type Phase, type Runbook } from '../types/index.js';
 import type { EngineInternals } from './EngineInternals.js';
 import { SelectionPipeline, SubtaskSpecBuilder, type SubtaskDraft } from '../agent-selection/index.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
@@ -97,75 +97,14 @@ export class DispatchController {
         }
 
         for (const phase of readyPhases) {
-            // Agent selection pipeline (when enabled)
-            if (this.useAgentSelection) {
-                const selectionOk = await this.runAgentSelection(phase);
-                if (!selectionOk) {
-                    // Validation failed — transition to ERROR_PAUSED
-                    this.engine.transition(EngineEvent.PHASE_FAIL);
-                    this.engine.emitUIMessage({
-                        type: 'LOG_ENTRY',
-                        payload: {
-                            timestamp: asTimestamp(),
-                            level: 'error',
-                            message: `Phase ${phase.id}: agent selection pipeline validation failed. Pausing execution.`,
-                        },
-                    });
-                    continue;
-                }
-            } else if (this.enableShadowMode) {
-                // S3-4: Shadow mode — run pipeline for observability only
-                try {
-                    await this.runAgentSelection(phase, true /* shadowMode */);
-                } catch (err) {
-                    log.warn(`[DispatchController] Shadow mode selection failed for phase ${phase.id}:`, err);
-                }
-            }
+            const guardResult = this.runAgentSelectionGuard(phase);
+            const shouldDispatch = typeof guardResult === 'boolean'
+                ? guardResult
+                : await guardResult;
+            if (!shouldDispatch) continue;
 
-            // Build context pack before dispatch (best-effort, non-blocking on failure)
-            // V2-A 1.1: Resolve builder lazily to avoid async race with MCP init
-            const resolvedBuilder = typeof this.contextPackBuilderOrGetter === 'function'
-                ? this.contextPackBuilderOrGetter()
-                : this.contextPackBuilderOrGetter;
-            if (resolvedBuilder) {
-                try {
-                    // V2-A 1.1: await MCP readiness before accessing ArtifactDB
-                    if (this.mcpReady) {
-                        await this.mcpReady;
-                    }
-
-                    // Resolve upstream mcpPhaseIds from dependency numeric IDs
-                    const upstreamPhaseIds: string[] = [];
-                    if (phase.depends_on && runbook) {
-                        const phaseMap = new Map(runbook.phases.map(p => [p.id, p]));
-                        for (const depId of phase.depends_on) {
-                            const depPhase = phaseMap.get(depId);
-                            if (depPhase?.mcpPhaseId && depPhase.status === 'completed') {
-                                upstreamPhaseIds.push(depPhase.mcpPhaseId);
-                            }
-                        }
-                    }
-
-                    const packResult = await resolvedBuilder.build({
-                        sessionId: this.sessionDirName,
-                        taskId: runbook.project_id,
-                        phaseId: String(phase.id),
-                        prompt: phase.prompt,
-                        contextFiles: phase.context_files ?? [],
-                        upstreamPhaseIds,
-                        maxTokens: this.contextBudgetTokens,
-                        ...(phase.requiresFullFileContext !== undefined
-                            ? { requiresFullFileContext: phase.requiresFullFileContext }
-                            : {}),
-                    });
-                    log.info(
-                        `[DispatchController] Context pack built for phase ${phase.id}: ` +
-                        `${packResult.manifest.totals.totalTokens} tokens`,
-                    );
-                } catch (err) {
-                    log.warn(`[DispatchController] Context pack build failed for phase ${phase.id}:`, err);
-                }
-            }
+            const packResult = this.buildContextPack(phase, runbook);
+            if (packResult) await packResult;
 
             phase.status = 'running';
             this.engine.incrementActiveWorkerCount();
@@ -373,6 +312,107 @@ export class DispatchController {
         await this.engine.persist();
         this.startStallWatchdog();
         this.dispatchReadyPhases();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Dispatch sub-steps (extracted from dispatchReadyPhases)
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Run the agent selection guard for a phase.
+     *
+     * When `useAgentSelection` is enabled, runs the full selection pipeline
+     * and returns `false` (skip dispatch) if validation fails.
+     * When only `enableShadowMode` is active, runs the pipeline for
+     * observability without affecting dispatch (always returns `true`).
+     *
+     * @returns `true` if dispatch should proceed, `false` to skip the phase.
+     */
+    private runAgentSelectionGuard(phase: Phase): boolean | Promise<boolean> {
+        if (this.useAgentSelection) {
+            return this.runAgentSelection(phase).then(selectionOk => {
+                if (!selectionOk) {
+                    // Validation failed — transition to ERROR_PAUSED
+                    this.engine.transition(EngineEvent.PHASE_FAIL);
+                    this.engine.emitUIMessage({
+                        type: 'LOG_ENTRY',
+                        payload: {
+                            timestamp: asTimestamp(),
+                            level: 'error',
+                            message: `Phase ${phase.id}: agent selection pipeline validation failed. Pausing execution.`,
+                        },
+                    });
+                    return false;
+                }
+                return true;
+            });
+        }
+        if (this.enableShadowMode) {
+            // S3-4: Shadow mode — run pipeline for observability only
+            return this.runAgentSelection(phase, true /* shadowMode */)
+                .then(() => true as const)
+                .catch(err => {
+                    log.warn(`[DispatchController] Shadow mode selection failed for phase ${phase.id}:`, err);
+                    return true as const;
+                });
+        }
+        return true;
+    }
+
+    /**
+     * Build a context pack before dispatching a phase.
+     *
+     * Best-effort: failures are logged but do not block dispatch.
+     * Resolves the builder lazily (V2-A 1.1) and awaits MCP readiness
+     * before accessing ArtifactDB.
+     */
+    private buildContextPack(phase: Phase, runbook: Runbook): void | Promise<void> {
+        // V2-A 1.1: Resolve builder lazily to avoid async race with MCP init
+        const resolvedBuilder = typeof this.contextPackBuilderOrGetter === 'function'
+            ? this.contextPackBuilderOrGetter()
+            : this.contextPackBuilderOrGetter;
+        if (!resolvedBuilder) return;
+
+        const doBuild = async (): Promise<void> => {
+            // V2-A 1.1: await MCP readiness before accessing ArtifactDB
+            if (this.mcpReady) {
+                await this.mcpReady;
+            }
+
+            // Resolve upstream mcpPhaseIds from dependency numeric IDs
+            const upstreamPhaseIds: string[] = [];
+            if (phase.depends_on) {
+                const phaseMap = new Map(runbook.phases.map(p => [p.id, p]));
+                for (const depId of phase.depends_on) {
+                    const depPhase = phaseMap.get(depId);
+                    if (depPhase?.mcpPhaseId && depPhase.status === 'completed') {
+                        upstreamPhaseIds.push(depPhase.mcpPhaseId);
+                    }
+                }
+            }
+
+            const packResult = await resolvedBuilder.build({
+                sessionId: this.sessionDirName,
+                taskId: runbook.project_id,
+                phaseId: String(phase.id),
+                prompt: phase.prompt,
+                contextFiles: phase.context_files ?? [],
+                upstreamPhaseIds,
+                maxTokens: this.contextBudgetTokens,
+                ...(phase.requiresFullFileContext !== undefined
+                    ? { requiresFullFileContext: phase.requiresFullFileContext }
+                    : {}),
+            });
+            log.info(
+                `[DispatchController] Context pack built for phase ${phase.id}: ` +
+                `${packResult.manifest.totals.totalTokens} tokens`,
+            );
+        };
+
+        // eslint-disable-next-line consistent-return
+        return doBuild().catch(err => {
+            log.warn(`[DispatchController] Context pack build failed for phase ${phase.id}:`, err);
+        });
     }
 
     // ─────────────────────────────────────────────────────────────────────

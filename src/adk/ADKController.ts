@@ -586,8 +586,11 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
             );
         }
 
+        // Only prepend `## Task` when the prompt doesn't already include one
+        // (retries arrive with `## Task (Retry N/M)` baked in).
+        const needsTaskHeader = !phase.prompt.trimStart().startsWith('## Task');
         const sections: string[] = [
-            `## Task`,
+            ...(needsTaskHeader ? [`## Task`] : []),
             phase.prompt,
             ``,
             `## Critical Rules`,

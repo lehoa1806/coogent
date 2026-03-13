@@ -121,6 +121,16 @@ export class ContextPackBuilder {
 
         for (const filePath of targetFiles) {
             const absPath = path.resolve(this.workspaceRoot, filePath);
+
+            // Guard: skip directory paths (prevents EISDIR on readFile)
+            try {
+                const fstat = await fs.stat(absPath);
+                if (fstat.isDirectory()) {
+                    log.warn(`[ContextPackBuilder] Skipping directory: ${filePath}`);
+                    continue;
+                }
+            } catch { /* stat failure — handled by mode selector */ }
+
             const upstream = changedFileMap.get(filePath);
             const isSameFileContinuation = upstream !== undefined;
 

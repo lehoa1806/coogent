@@ -744,4 +744,39 @@ describe('Engine', () => {
         // Phase 1 should now be dispatched
         expect(executeSpy).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }));
     });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  READY-1: retry() works from READY state (restored session)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    it('READY-1: retry works from READY state — restored session with failed phase', async () => {
+        const executeSpy = jest.fn();
+        engine.on('phase:execute', executeSpy);
+
+        // Load and start
+        await engine.loadRunbook();
+        await engine.start();
+        expect(engine.getState()).toBe('EXECUTING_WORKER');
+
+        // Fail phase 0
+        await engine.onWorkerExited(0, 1);
+        expect(engine.getState()).toBe('ERROR_PAUSED');
+
+        // Abort → IDLE
+        await engine.abort();
+        expect(engine.getState()).toBe('IDLE');
+
+        // Simulate session restore: reload the runbook → READY
+        await engine.loadRunbook();
+        expect(engine.getState()).toBe('READY');
+        // Phase 0 is still 'failed' from the persisted runbook on disk
+        expect(engine.getRunbook()!.phases[0].status).toBe('pending');
+
+        // Retry from READY — should now succeed
+        // Mark phase as failed (simulating what the restored runbook would have)
+        (engine.getRunbook()!.phases[0] as any).status = 'failed';
+        await engine.retry(0);
+        expect(engine.getState()).toBe('EXECUTING_WORKER');
+        expect(engine.getRunbook()!.phases[0].status).toBe('running');
+    });
 });

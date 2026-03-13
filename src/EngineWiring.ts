@@ -86,6 +86,37 @@ export function wireEngine(
         }
     }
 
+    /**
+     * Drain and return accumulated stdout/stderr for a phase, cleaning up all
+     * associated flush state.  Used by `worker:exited`, `worker:timeout`, and
+     * `worker:crash` handlers to avoid repeating the same 6-line sequence.
+     */
+    function drainWorkerAccumulators(phaseId: number): { stdout: string; stderr: string } {
+        clearFlushInterval(phaseId);
+        outputRegistry?.flushAndRemove(phaseId);
+        const stdout = workerOutputAccumulator.get(phaseId) ?? '';
+        const stderr = workerStderrAccumulator.get(phaseId) ?? '';
+        workerOutputAccumulator.delete(phaseId);
+        workerStderrAccumulator.delete(phaseId);
+        return { stdout, stderr };
+    }
+
+    /**
+     * Append a chunk to an accumulator map with a hard size cap.
+     * Shared by the stdout and stderr branches of `worker:output`.
+     */
+    function appendToAccumulator(
+        map: Map<number, string>, phaseId: number, chunk: string, maxSize: number,
+    ): void {
+        const existing = map.get(phaseId) ?? '';
+        if (existing.length + chunk.length <= maxSize) {
+            map.set(phaseId, existing + chunk);
+        } else if (existing.length < maxSize) {
+            const remaining = maxSize - existing.length;
+            map.set(phaseId, existing + chunk.slice(0, remaining));
+        }
+    }
+
     // ── Engine → Webview (ui:message) ──────────────────────────────────
     engine.on('ui:message', (message: HostToWebviewMessage) => {
         MissionControlPanel.broadcast(message);
@@ -225,52 +256,26 @@ export function wireEngine(
 
     // ── ADK → Engine (worker lifecycle) ────────────────────────────────
     adkController.on('worker:exited', (phaseId, exitCode) => {
-        // F-5 audit fix: Clear incremental flush interval before final flush
-        clearFlushInterval(phaseId);
-
-        outputRegistry?.flushAndRemove(phaseId);
-
-        const accumulatedOutput = workerOutputAccumulator.get(phaseId) ?? '';
-        const accumulatedStderr = workerStderrAccumulator.get(phaseId) ?? '';
-        workerOutputAccumulator.delete(phaseId);
-        workerStderrAccumulator.delete(phaseId);
+        const { stdout, stderr } = drainWorkerAccumulators(phaseId);
 
         resultProcessor.processWorkerExit(
             phaseId,
             exitCode,
-            accumulatedOutput,
-            accumulatedStderr,
+            stdout,
+            stderr,
             svc.currentSessionDir,
         ).catch(log.onError);
     });
 
     adkController.on('worker:timeout', (phaseId) => {
-        // F-5 audit fix: Clear incremental flush interval
-        clearFlushInterval(phaseId);
-
-        outputRegistry?.flushAndRemove(phaseId);
-
-        const accOut = workerOutputAccumulator.get(phaseId) ?? '';
-        const accErr = workerStderrAccumulator.get(phaseId) ?? '';
-        workerOutputAccumulator.delete(phaseId);
-        workerStderrAccumulator.delete(phaseId);
-
-        resultProcessor.processWorkerFailure(phaseId, 'timeout', accOut, accErr)
+        const { stdout, stderr } = drainWorkerAccumulators(phaseId);
+        resultProcessor.processWorkerFailure(phaseId, 'timeout', stdout, stderr)
             .catch(log.onError);
     });
 
     adkController.on('worker:crash', (phaseId) => {
-        // F-5 audit fix: Clear incremental flush interval
-        clearFlushInterval(phaseId);
-
-        outputRegistry?.flushAndRemove(phaseId);
-
-        const accOut = workerOutputAccumulator.get(phaseId) ?? '';
-        const accErr = workerStderrAccumulator.get(phaseId) ?? '';
-        workerOutputAccumulator.delete(phaseId);
-        workerStderrAccumulator.delete(phaseId);
-
-        resultProcessor.processWorkerFailure(phaseId, 'crash', accOut, accErr)
+        const { stdout, stderr } = drainWorkerAccumulators(phaseId);
+        resultProcessor.processWorkerFailure(phaseId, 'crash', stdout, stderr)
             .catch(log.onError);
     });
 
@@ -281,27 +286,13 @@ export function wireEngine(
         outputRegistry?.getOrCreate(phaseId, stream).append(chunk);
         logger?.logPhaseOutput(phaseId, stream, chunk).catch(log.onError);
 
-        // Accumulate stdout for handoff extraction (capped at 2 MB)
+        // Accumulate stdout / stderr for handoff extraction (capped at 2 MB)
         const MAX_ACCUMULATOR_SIZE = 2 * 1024 * 1024;
         if (stream === 'stdout') {
-            const existing = workerOutputAccumulator.get(phaseId) ?? '';
-            if (existing.length + chunk.length <= MAX_ACCUMULATOR_SIZE) {
-                workerOutputAccumulator.set(phaseId, existing + chunk);
-            } else if (existing.length < MAX_ACCUMULATOR_SIZE) {
-                const remaining = MAX_ACCUMULATOR_SIZE - existing.length;
-                workerOutputAccumulator.set(phaseId, existing + chunk.slice(0, remaining));
-            }
+            appendToAccumulator(workerOutputAccumulator, phaseId, chunk, MAX_ACCUMULATOR_SIZE);
         }
-
-        // S3 audit fix: Accumulate stderr for persistence (capped at 2 MB)
         if (stream === 'stderr') {
-            const existing = workerStderrAccumulator.get(phaseId) ?? '';
-            if (existing.length + chunk.length <= MAX_ACCUMULATOR_SIZE) {
-                workerStderrAccumulator.set(phaseId, existing + chunk);
-            } else if (existing.length < MAX_ACCUMULATOR_SIZE) {
-                const remaining = MAX_ACCUMULATOR_SIZE - existing.length;
-                workerStderrAccumulator.set(phaseId, existing + chunk.slice(0, remaining));
-            }
+            appendToAccumulator(workerStderrAccumulator, phaseId, chunk, MAX_ACCUMULATOR_SIZE);
         }
 
         // F-5 audit fix: Start incremental flush interval if not already running

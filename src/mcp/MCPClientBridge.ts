@@ -206,26 +206,32 @@ export class MCPClientBridge {
     /**
      * Submit the handoff data for a completed phase.
      *
-     * @param masterTaskId  Master task ID.
-     * @param phaseId       Phase ID that just completed.
-     * @param decisions     Key decisions made during the phase.
-     * @param modifiedFiles Relative paths of files created or modified.
-     * @param blockers      Unresolved issues or blockers.
+     * @param masterTaskId     Master task ID.
+     * @param phaseId          Phase ID that just completed.
+     * @param decisions        Key decisions made during the phase.
+     * @param modifiedFiles    Relative paths of files created or modified.
+     * @param blockers         Unresolved issues or blockers.
+     * @param nextStepsContext Optional free-text guidance for downstream phases.
      */
     async submitPhaseHandoff(
         masterTaskId: string,
         phaseId: string,
         decisions: string[],
         modifiedFiles: string[],
-        blockers: string[]
+        blockers: string[],
+        nextStepsContext?: string,
     ): Promise<void> {
-        await this.callTool(MCP_TOOLS.SUBMIT_PHASE_HANDOFF, {
+        const args: Record<string, unknown> = {
             masterTaskId,
             phaseId,
             decisions,
             modified_files: modifiedFiles,
             blockers,
-        });
+        };
+        if (nextStepsContext !== undefined) {
+            args['next_steps_context'] = nextStepsContext;
+        }
+        await this.callTool(MCP_TOOLS.SUBMIT_PHASE_HANDOFF, args);
     }
 
     /**
