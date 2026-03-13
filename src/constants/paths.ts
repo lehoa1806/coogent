@@ -174,6 +174,18 @@ export function getMCPServerDir(): string {
     return path.join(getGlobalCoogentDir(), MCP_SERVER_DIR);
 }
 
+/** MCP config filename for external AI tools (Antigravity IDE, Cursor, etc.). */
+export const MCP_CONFIG_FILE = 'mcp_config.json';
+
+/**
+ * Absolute path to the MCP config file that external AI tools read.
+ *
+ * Location: `~/.gemini/antigravity/mcp_config.json`
+ */
+export function getMCPConfigPath(): string {
+    return path.join(os.homedir(), '.gemini', 'antigravity', MCP_CONFIG_FILE);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Session-Level Path Builders
 //  Root: workspaceRoot / .coogent /

@@ -33,6 +33,7 @@
 | **[user-guide.md](user-guide.md)** | Installation, all 18 configuration settings, usage workflows, multi-root workspace support |
 | **[developer-guide.md](developer-guide.md)** | Local development, full project structure, debugging, 113-file test suite reference, CI/CD pipeline, build commands, code conventions, and contribution guidelines |
 | **[api-reference.md](api-reference.md)** | MCP URIs, MCP tools, IPC message contracts, data model schemas, and branded types |
+| **[mcp-setup.md](mcp-setup.md)** | MCP setup guide: auto-configuration, manual fallback, and troubleshooting for external AI tool connectivity |
 | **[operations.md](operations.md)** | Packaging, deployment, CI/CD pipeline, migration runbook, troubleshooting guide, backup/recovery, and log locations |
 | **[context-management.md](context-management.md)** | Context management workflow: ETSL pattern, handoff extraction, state schemas, storage mechanism, and error recovery |
 

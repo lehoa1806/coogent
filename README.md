@@ -165,6 +165,7 @@ See [docs/site-map.md](docs/site-map.md) for the full documentation index, inclu
 - [User Guide](docs/user-guide.md)
 - [Developer & Contributor Guide](docs/developer-guide.md)
 - [API & Integration Reference](docs/api-reference.md)
+- [MCP Setup Guide](docs/mcp-setup.md)
 - [Deployment & Operations](docs/operations.md)
 - [Changelog](CHANGELOG.md)
 
