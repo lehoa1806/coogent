@@ -436,7 +436,7 @@ describe('HandoffExtractor', () => {
                     get: () => ({
                         phases: {
                             get: () => ({
-                                implementationPlan: '# Existing plan\nAlready submitted.',
+                                executionPlan: '# Existing plan\nAlready submitted.',
                             }),
                         },
                     }),

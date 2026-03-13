@@ -185,9 +185,9 @@ function handleMessage(msg: HostToWebviewMessage): void {
             break;
         }
 
-        // ── Implementation plan ──────────────────────────────────────────
-        case 'IMPLEMENTATION_PLAN': {
-            appState.implementationPlan = msg.payload.plan;
+        // ── Execution plan ──────────────────────────────────────────────
+        case 'EXECUTION_PLAN': {
+            appState.executionPlan = msg.payload.plan;
             break;
         }
 

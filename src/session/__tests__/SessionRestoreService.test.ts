@@ -78,7 +78,7 @@ function createMockMCPServer(
         getArtifactDB: jest.fn().mockReturnValue({}),
         getTaskState: jest.fn().mockReturnValue({
             summary: 'Test summary',
-            implementationPlan: 'Test plan',
+            executionPlan: 'Test plan',
         }),
         getWorkerOutputs: jest.fn().mockReturnValue({
             'phase-001': 'output-1',

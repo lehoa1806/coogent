@@ -43,8 +43,8 @@ export interface SessionSummary {
     isActive: boolean;
     /** Whether a consolidation report is available for this session. */
     hasConsolidationReport: boolean;
-    /** Whether an implementation plan is available for this session. */
-    hasImplementationPlan: boolean;
+    /** Whether an execution plan is available for this session. */
+    hasExecutionPlan: boolean;
 }
 
 /** Shape of a row returned by `SessionRepository.list()`. */
@@ -57,7 +57,7 @@ interface SessionRow {
     status: string | null;
     consolidationReport: string | null;
     consolidationReportJson: string | null;
-    implementationPlan: string | null;
+    executionPlan: string | null;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -193,7 +193,7 @@ export class SessionManager {
                             );
                             summary.isActive = isActive;
                             summary.hasConsolidationReport = Boolean(row.consolidationReport);
-                            summary.hasImplementationPlan = Boolean(row.implementationPlan);
+                            summary.hasExecutionPlan = Boolean(row.executionPlan);
                             summaries.push(summary);
                             continue;
                         }
@@ -217,7 +217,7 @@ export class SessionManager {
                         : '(empty)',
                     isActive,
                     hasConsolidationReport: Boolean(row.consolidationReport),
-                    hasImplementationPlan: Boolean(row.implementationPlan),
+                    hasExecutionPlan: Boolean(row.executionPlan),
                 });
             }
         } catch (err) {
@@ -377,17 +377,17 @@ export class SessionManager {
      * Retrieve the implementation plan for a specific session.
      * Reads exclusively from the ArtifactDB.
      */
-    public async getImplementationPlan(
+    public async getExecutionPlan(
         sessionDirName: string
     ): Promise<string | null> {
         if (!this.db) return null;
 
         try {
-            const result = this.db.sessions.getImplementationPlan(sessionDirName);
+            const result = this.db.sessions.getExecutionPlan(sessionDirName);
             if (result === undefined) return null;
             return result;
         } catch (err) {
-            log.warn('[SessionManager] getImplementationPlan failed:', err);
+            log.warn('[SessionManager] getExecutionPlan failed:', err);
             return null;
         }
     }
@@ -467,7 +467,7 @@ export class SessionManager {
                 : firstPrompt,
             isActive: false,
             hasConsolidationReport: false,
-            hasImplementationPlan: false,
+            hasExecutionPlan: false,
         };
     }
 }

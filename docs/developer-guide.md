@@ -43,6 +43,12 @@ npm run dev:webview        # Watch mode with HMR
 
 #### Full Build
 
+> [!IMPORTANT]
+> Always checkout the `master` branch before building to ensure you are compiling from the latest stable source:
+> ```bash
+> git checkout master && git pull
+> ```
+
 ```bash
 npm run build              # Both targets in one command
 ```
@@ -494,13 +500,19 @@ const primary = getPrimaryRoot();         // string — first root (fallback)
 
 ### Where Session State Lives
 
-Session data is stored under `ExtensionContext.storageUri` (extension-managed storage), **not** inside the workspace. The path is typically:
+Session data follows the **hybrid storage model** — durable state is stored globally, operational state is workspace-local:
 
 ```
-~/.vscode/extensions/storage/coogent/
-├── artifacts.db          ← SQLite database
+# Global (durable)
+~/Library/Application Support/Antigravity/coogent/
+├── artifacts.db          ← SQLite database (tenant-scoped via workspace_id)
+└── backups/              ← Rotating DB snapshots
+
+# Workspace-local (operational)
+<workspaceRoot>/.coogent/
 ├── ipc/<session-id>/     ← Runbook, WAL, lock files
-└── sessions/             ← Session history
+├── sessions/             ← Session history
+└── logs/                 ← JSONL logs
 ```
 
 This is critical for multi-root support — storing state inside a workspace folder would be ambiguous when multiple roots are open.

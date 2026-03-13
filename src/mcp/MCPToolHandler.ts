@@ -116,7 +116,7 @@ export class MCPToolHandler {
             const deps = this.getDeps();
 
             switch (name) {
-                case MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN:
+                case MCP_TOOLS.SUBMIT_EXECUTION_PLAN:
                     return handleSubmitImplementationPlan(deps, args);
                 case MCP_TOOLS.SUBMIT_PHASE_HANDOFF:
                     return handleSubmitPhaseHandoff(deps, args);

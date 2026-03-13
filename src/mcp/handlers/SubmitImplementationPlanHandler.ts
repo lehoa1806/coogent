@@ -44,7 +44,7 @@ export function handleSubmitImplementationPlan(
         );
     } else {
         // Master-level plan → persist via DB
-        deps.db.tasks.upsert(masterTaskId, { implementationPlan: markdownContent });
+        deps.db.tasks.upsert(masterTaskId, { executionPlan: markdownContent });
         log.info(
             `[MCPToolHandler] Master implementation plan saved: ${masterTaskId}`
         );

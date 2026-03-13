@@ -125,7 +125,7 @@ export class MCPResourceHandler {
                         if (phase.planRequired === false) {
                             // Agent type doesn't produce execution plans
                             content = 'Execution plan is not applicable for this phase type.';
-                        } else if (!phase.implementationPlan) {
+                        } else if (!phase.executionPlan) {
                             if (phase.handoff) {
                                 // Phase completed without submitting a plan — return informational
                                 // message instead of throwing, since many workers legitimately
@@ -138,7 +138,7 @@ export class MCPResourceHandler {
                                 );
                             }
                         } else {
-                            content = phase.implementationPlan;
+                            content = phase.executionPlan;
                         }
                         break;
                     case 'handoff':
@@ -164,12 +164,12 @@ export class MCPResourceHandler {
                         content = task.summary;
                         break;
                     case 'execution_plan':
-                        if (!task.implementationPlan) {
+                        if (!task.executionPlan) {
                             throw new Error(
                                 `Resource not yet available: execution plan has not been submitted for task ${parsed.masterTaskId}.`
                             );
                         }
-                        content = task.implementationPlan;
+                        content = task.executionPlan;
                         break;
                     case 'consolidation_report':
                         if (!task.consolidationReport) {

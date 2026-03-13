@@ -30,7 +30,7 @@ const HOST_TO_WEBVIEW_TYPES: HostToWebviewMessageType[] = [
     'CONSOLIDATION_REPORT',
     'PHASE_OUTPUT',
     'PLAN_SUMMARY',
-    'IMPLEMENTATION_PLAN',
+    'EXECUTION_PLAN',
     'MCP_RESOURCE_DATA',
     'SUGGESTION_DATA',
     'ATTACHMENT_SELECTED',
@@ -94,7 +94,7 @@ function validateHostMessage(msg: HostToWebviewMessage): string {
         case 'CONSOLIDATION_REPORT': return msg.payload.report;
         case 'PHASE_OUTPUT': return msg.payload.chunk;
         case 'PLAN_SUMMARY': return msg.payload.summary;
-        case 'IMPLEMENTATION_PLAN': return msg.payload.plan;
+        case 'EXECUTION_PLAN': return msg.payload.plan;
         case 'MCP_RESOURCE_DATA': return msg.payload.requestId;
         case 'SUGGESTION_DATA': return String(msg.payload.mentions.length);
         case 'ATTACHMENT_SELECTED': return String(msg.payload.paths.length);
@@ -182,7 +182,7 @@ describe('IPC Message Contract Tests', () => {
             expect(HOST_TO_WEBVIEW_TYPES).toContain('PLAN_DRAFT');
             expect(HOST_TO_WEBVIEW_TYPES).toContain('PLAN_STATUS');
             expect(HOST_TO_WEBVIEW_TYPES).toContain('PLAN_SUMMARY');
-            expect(HOST_TO_WEBVIEW_TYPES).toContain('IMPLEMENTATION_PLAN');
+            expect(HOST_TO_WEBVIEW_TYPES).toContain('EXECUTION_PLAN');
         });
     });
 

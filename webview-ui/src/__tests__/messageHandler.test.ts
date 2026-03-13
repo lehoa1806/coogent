@@ -49,7 +49,7 @@ describe('messageHandler', () => {
             terminalOutput: '',
             planDraft: null,
             consolidationReport: null,
-            implementationPlan: null,
+            executionPlan: null,
             conversationMode: 'isolated',
             planStatus: null,
             planFileTree: [],

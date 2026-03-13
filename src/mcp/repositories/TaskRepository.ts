@@ -24,7 +24,7 @@ export class TaskRepository {
         masterTaskId: string,
         fields: {
             summary?: string;
-            implementationPlan?: string;
+            executionPlan?: string;
             consolidationReport?: string;
             consolidationReportJson?: string;
             runbookJson?: string;
@@ -44,10 +44,10 @@ export class TaskRepository {
                     [fields.summary, masterTaskId, this.workspaceId]
                 );
             }
-            if (fields.implementationPlan !== undefined) {
+            if (fields.executionPlan !== undefined) {
                 this.db.run(
                     'UPDATE tasks SET execution_plan = ? WHERE master_task_id = ? AND workspace_id = ?',
-                    [fields.implementationPlan, masterTaskId, this.workspaceId]
+                    [fields.executionPlan, masterTaskId, this.workspaceId]
                 );
             }
             if (fields.consolidationReport !== undefined) {
@@ -127,7 +127,7 @@ export class TaskRepository {
                 plan_required: number | null;
             };
             phases.set(phaseRow.phase_id, {
-                implementationPlan: phaseRow.execution_plan ?? undefined,
+                executionPlan: phaseRow.execution_plan ?? undefined,
                 planRequired: phaseRow.plan_required === null
                     ? undefined
                     : phaseRow.plan_required === 1,
@@ -183,7 +183,7 @@ export class TaskRepository {
         return {
             masterTaskId: taskRow.master_task_id,
             summary: taskRow.summary ?? undefined,
-            implementationPlan: taskRow.execution_plan ?? undefined,
+            executionPlan: taskRow.execution_plan ?? undefined,
             consolidationReport: taskRow.consolidation_report ?? undefined,
             consolidationReportJson: taskRow.consolidation_report_json ?? undefined,
             runbookJson: taskRow.runbook_json ?? undefined,

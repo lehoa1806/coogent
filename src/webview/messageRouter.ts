@@ -545,12 +545,12 @@ function handleRequestPlan(deps: MessageRouterDeps): void {
         'No implementation plan available for this session.',
         deps,
         () =>
-            deps.mcpServer?.getTaskState(masterTaskId)?.implementationPlan
+            deps.mcpServer?.getTaskState(masterTaskId)?.executionPlan
             ?? deps.engine.getRunbook()?.execution_plan
     ).then(plan => {
         if (plan) {
             log.info(`[MissionControl] handleRequestPlan: plan loaded (${plan.length} chars)`);
-            deps.sendToWebview({ type: 'IMPLEMENTATION_PLAN', payload: { plan } });
+            deps.sendToWebview({ type: 'EXECUTION_PLAN', payload: { plan } });
         }
     }).catch(err => handleError(err, deps));
 }

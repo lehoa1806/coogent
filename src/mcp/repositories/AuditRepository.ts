@@ -20,7 +20,7 @@ export class AuditRepository {
     upsertPlanRevision(
         masterTaskId: string,
         fields: {
-            feedback?: string; draftJson: string; implementationPlanMd?: string;
+            feedback?: string; draftJson: string; executionPlanMd?: string;
             status?: string; rawLlmOutput?: string | undefined; compilationManifest?: string | undefined;
         }
     ): void {
@@ -37,7 +37,7 @@ export class AuditRepository {
             `INSERT INTO plan_revisions (master_task_id, version, workspace_id, feedback, draft_json, execution_plan_md, status, created_at, raw_llm_output, compilation_manifest)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [masterTaskId, nextVersion, this.workspaceId, fields.feedback ?? null, fields.draftJson,
-                fields.implementationPlanMd ?? null, fields.status ?? 'draft', Date.now(),
+                fields.executionPlanMd ?? null, fields.status ?? 'draft', Date.now(),
                 fields.rawLlmOutput ?? null, fields.compilationManifest ?? null]
         );
         this.scheduleFlush();
@@ -46,7 +46,7 @@ export class AuditRepository {
     /** Retrieve all plan revisions for a task, ordered by version. */
     getPlanRevisions(masterTaskId: string): Array<{
         version: number; feedback: string | null; draftJson: string;
-        implementationPlanMd: string | null; status: string; createdAt: number;
+        executionPlanMd: string | null; status: string; createdAt: number;
     }> {
         const stmt = this.db.prepare(
             'SELECT version, feedback, draft_json, execution_plan_md, status, created_at FROM plan_revisions WHERE master_task_id = ? AND workspace_id = ? ORDER BY version'
@@ -54,7 +54,7 @@ export class AuditRepository {
         stmt.bind([masterTaskId, this.workspaceId]);
         const results: Array<{
             version: number; feedback: string | null; draftJson: string;
-            implementationPlanMd: string | null; status: string; createdAt: number;
+            executionPlanMd: string | null; status: string; createdAt: number;
         }> = [];
         while (stmt.step()) {
             const row = stmt.getAsObject() as {
@@ -63,7 +63,7 @@ export class AuditRepository {
             };
             results.push({
                 version: row.version, feedback: row.feedback, draftJson: row.draft_json,
-                implementationPlanMd: row.execution_plan_md, status: row.status, createdAt: row.created_at,
+                executionPlanMd: row.execution_plan_md, status: row.status, createdAt: row.created_at,
             });
         }
         stmt.free();

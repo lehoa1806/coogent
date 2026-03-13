@@ -610,7 +610,7 @@ interface MockArtifactDB {
     };
     tasks: {
         upsert(masterTaskId: string, fields: Record<string, unknown>): void;
-        get(masterTaskId: string): { summary?: string; implementationPlan?: string } | undefined;
+        get(masterTaskId: string): { summary?: string; executionPlan?: string } | undefined;
         delete(masterTaskId: string): void;
     };
     phases: {
@@ -636,7 +636,7 @@ function buildMockArtifactDB(): MockArtifactDB {
     };
     const sessionsRows: SessionRow[] = [];
 
-    const tasksMap = new Map<string, { summary?: string; implementationPlan?: string; runbook_json?: string }>();
+    const tasksMap = new Map<string, { summary?: string; executionPlan?: string; runbook_json?: string }>();
 
     const phaseOutputs = new Map<string, Record<string, string>>();
 
@@ -665,7 +665,7 @@ function buildMockArtifactDB(): MockArtifactDB {
             tasksMap.set(masterTaskId, { ...existing, ...fields });
         },
         get(masterTaskId: string) {
-            return tasksMap.get(masterTaskId) as { summary?: string; implementationPlan?: string } | undefined;
+            return tasksMap.get(masterTaskId) as { summary?: string; executionPlan?: string } | undefined;
         },
         delete(masterTaskId: string) {
             tasksMap.delete(masterTaskId);

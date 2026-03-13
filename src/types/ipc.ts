@@ -157,10 +157,10 @@ export interface PlanSummaryMessage {
 }
 
 /** Execution plan message — markdown content of execution_plan.md. */
-export interface ImplementationPlanMessage {
-    readonly type: 'IMPLEMENTATION_PLAN';
+export interface ExecutionPlanMessage {
+    readonly type: 'EXECUTION_PLAN';
     readonly payload: {
-        /** Markdown-formatted implementation plan. */
+        /** Markdown-formatted execution plan. */
         plan: string;
     };
 }
@@ -219,7 +219,7 @@ export type HostToWebviewMessage =
     | ConsolidationReportMessage
     | PhaseOutputMessage
     | PlanSummaryMessage
-    | ImplementationPlanMessage
+    | ExecutionPlanMessage
     | MCPResourceDataMessage
     | SuggestionDataMessage
     | AttachmentSelectedMessage
@@ -358,7 +358,7 @@ export interface CmdRequestReportMessage {
     readonly type: 'CMD_REQUEST_REPORT';
 }
 
-/** User requests the implementation plan for the current session. */
+/** User requests the execution plan for the current session. */
 export interface CmdRequestPlanMessage {
     readonly type: 'CMD_REQUEST_PLAN';
 }

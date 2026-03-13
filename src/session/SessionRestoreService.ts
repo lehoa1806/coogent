@@ -195,11 +195,11 @@ export class SessionRestoreService {
                     log.info(`[SessionRestoreService] Summary restored for "${sessionDirName}"`);
                 }
 
-                // Implementation plan lives on the TaskState — re-upsert
+                // Execution plan lives on the TaskState — re-upsert
                 // is not needed because getTaskState reads directly from DB
                 // and the MCP resource handler resolves it on demand.
-                if (taskState.implementationPlan) {
-                    log.info(`[SessionRestoreService] Implementation plan present for "${sessionDirName}"`);
+                if (taskState.executionPlan) {
+                    log.info(`[SessionRestoreService] Execution plan present for "${sessionDirName}"`);
                 }
             } else {
                 const msg = `No TaskState found in DB for "${sessionDirName}" — MCP state may be incomplete`;

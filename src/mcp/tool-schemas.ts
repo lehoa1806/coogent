@@ -39,8 +39,8 @@ export type MCPTextContent = { content: Array<{ type: 'text'; text: string }> };
 //  Tool Schema Definitions
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export const SUBMIT_IMPLEMENTATION_PLAN_SCHEMA = {
-    name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+export const SUBMIT_EXECUTION_PLAN_SCHEMA = {
+    name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
     description:
         'Submit an implementation plan (Markdown) at the master-task or phase level.',
     inputSchema: {
@@ -314,7 +314,7 @@ export const GET_SYMBOL_CONTEXT_SCHEMA = {
  * All tool schemas combined for the ListTools response.
  */
 export const ALL_TOOL_SCHEMAS = [
-    SUBMIT_IMPLEMENTATION_PLAN_SCHEMA,
+    SUBMIT_EXECUTION_PLAN_SCHEMA,
     SUBMIT_PHASE_HANDOFF_SCHEMA,
     SUBMIT_CONSOLIDATION_REPORT_SCHEMA,
     GET_MODIFIED_FILE_CONTENT_SCHEMA,

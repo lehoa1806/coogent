@@ -81,7 +81,7 @@ export function parseResourceURI(uri: string): ParsedResourceURI | null {
     // Task-level resources: coogent://tasks/{id}/summary|execution_plan|consolidation_report
     if (segments.length === 1) {
         const leaf = segments[0];
-        if (leaf === 'summary' || leaf === 'execution_plan' || leaf === 'consolidation_report') {
+        if (leaf === 'summary' || leaf === 'execution_plan' || leaf === 'consolidation_report' || leaf === 'consolidation_report_json') {
             return { masterTaskId, resource: leaf };
         }
         return null;

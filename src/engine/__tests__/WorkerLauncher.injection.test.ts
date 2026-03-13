@@ -121,7 +121,7 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
                 expect.objectContaining({ prompt: expect.any(String) }),
                 60_000,
                 'master-task-1',
-                expect.objectContaining({ implementationPlan: expect.any(String) }),
+                expect.objectContaining({ executionPlan: expect.any(String) }),
             );
             expect((adk.spawnWorker as jest.Mock).mock.calls[0]).toHaveLength(4);
         });
@@ -270,7 +270,7 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
     // ─────────────────────────────────────────────────────────────────────
 
     describe('MCP resource URIs', () => {
-        it('always includes implementationPlan URI', async () => {
+        it('always includes executionPlan URI', async () => {
             const adk = createMockADK('antigravity');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
@@ -278,8 +278,8 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
             await launcher.launch(createPhase(), 60_000, 'master-task-9', createMockServiceContainer());
 
             const mcpUris = (adk.spawnWorker as jest.Mock).mock.calls[0][3];
-            expect(mcpUris).toHaveProperty('implementationPlan');
-            expect(mcpUris.implementationPlan).toContain('master-task-9');
+            expect(mcpUris).toHaveProperty('executionPlan');
+            expect(mcpUris.executionPlan).toContain('master-task-9');
         });
     });
 

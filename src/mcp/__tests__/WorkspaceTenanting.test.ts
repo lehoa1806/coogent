@@ -242,22 +242,22 @@ describe('Workspace Tenanting — cross-workspace data isolation', () => {
     });
 
     // ─────────────────────────────────────────────────────────────────────
-    //  SessionRepository — getImplementationPlan() scopes by workspace
+    //  SessionRepository — getExecutionPlan() scopes by workspace
     // ─────────────────────────────────────────────────────────────────────
 
-    it('SessionRepository.getImplementationPlan returns undefined for another workspace', () => {
+    it('SessionRepository.getExecutionPlan returns undefined for another workspace', () => {
         const sessionsA = new SessionRepository(rawDb, noop, WS_ALPHA);
         const sessionsB = new SessionRepository(rawDb, noop, WS_BETA);
         const tasksA = new TaskRepository(rawDb, noop, WS_ALPHA);
 
         sessionsA.upsert('dir-alpha', 'session-alpha', 'Alpha prompt', 1000);
-        tasksA.upsert('dir-alpha', { implementationPlan: 'Alpha plan' });
+        tasksA.upsert('dir-alpha', { executionPlan: 'Alpha plan' });
 
         // Workspace A can read it
-        expect(sessionsA.getImplementationPlan('dir-alpha')).toBe('Alpha plan');
+        expect(sessionsA.getExecutionPlan('dir-alpha')).toBe('Alpha plan');
 
         // Workspace B cannot read it
-        expect(sessionsB.getImplementationPlan('dir-alpha')).toBeUndefined();
+        expect(sessionsB.getExecutionPlan('dir-alpha')).toBeUndefined();
     });
 
     // ─────────────────────────────────────────────────────────────────────

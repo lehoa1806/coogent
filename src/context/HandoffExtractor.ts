@@ -279,7 +279,7 @@ export class HandoffExtractor {
             try {
                 const task = this.db.tasks.get(masterTaskId);
                 const phase = task?.phases.get(phaseId);
-                if (phase?.implementationPlan) {
+                if (phase?.executionPlan) {
                     log.info(
                         `[HandoffExtractor] Implementation plan already exists for ` +
                         `${masterTaskId}/${phaseId} — skipping extraction.`

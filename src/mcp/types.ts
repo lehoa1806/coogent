@@ -58,7 +58,7 @@ export interface PhaseHandoff {
 
 export interface PhaseArtifacts {
     /** Phase-level Markdown execution plan. */
-    implementationPlan?: string | undefined;
+    executionPlan?: string | undefined;
     /** Handoff data produced when the phase completes. */
     handoff?: PhaseHandoff | undefined;
     /**
@@ -80,7 +80,7 @@ export interface TaskState {
     /** Short human-readable summary of the task. */
     summary?: string | undefined;
     /** Master-level Markdown execution plan. */
-    implementationPlan?: string | undefined;
+    executionPlan?: string | undefined;
     /** Reducer agent's final Markdown consolidation report. */
     consolidationReport?: string | undefined;
     /** Structured consolidation report as JSON (stringified ConsolidationReport). */
@@ -169,7 +169,7 @@ export const RESOURCE_URIS = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const MCP_TOOLS = {
-    SUBMIT_IMPLEMENTATION_PLAN: 'submit_execution_plan',
+    SUBMIT_EXECUTION_PLAN: 'submit_execution_plan',
     SUBMIT_PHASE_HANDOFF: 'submit_phase_handoff',
     SUBMIT_CONSOLIDATION_REPORT: 'submit_consolidation_report',
     GET_MODIFIED_FILE_CONTENT: 'get_modified_file_content',

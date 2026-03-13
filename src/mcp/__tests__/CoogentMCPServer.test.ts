@@ -74,7 +74,7 @@ describe('CoogentMCPServer — State Store', () => {
     it('getOrCreateTask creates a new task entry if it does not exist', async () => {
         // Submitting a plan forces task creation via getOrCreateTask
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Plan',
@@ -88,7 +88,7 @@ describe('CoogentMCPServer — State Store', () => {
 
     it('getOrCreateTask returns existing task on repeated calls', async () => {
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Plan v1',
@@ -96,7 +96,7 @@ describe('CoogentMCPServer — State Store', () => {
         });
 
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Plan v2',
@@ -106,13 +106,13 @@ describe('CoogentMCPServer — State Store', () => {
         const task = server.getTaskState(VALID_MASTER_TASK_ID);
         expect(task).toBeDefined();
         // Latest value wins
-        expect(task!.implementationPlan).toBe('# Plan v2');
+        expect(task!.executionPlan).toBe('# Plan v2');
     });
 
     it('task state correctly nests phases', async () => {
         // Create phase-level artifacts
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 phaseId: VALID_PHASE_ID,
@@ -121,7 +121,7 @@ describe('CoogentMCPServer — State Store', () => {
         });
 
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 phaseId: VALID_PHASE_ID_2,
@@ -132,8 +132,8 @@ describe('CoogentMCPServer — State Store', () => {
         const task = server.getTaskState(VALID_MASTER_TASK_ID);
         expect(task).toBeDefined();
         expect(task!.phases.size).toBe(2);
-        expect(task!.phases.get(VALID_PHASE_ID)?.implementationPlan).toBe('# Phase 1 Plan');
-        expect(task!.phases.get(VALID_PHASE_ID_2)?.implementationPlan).toBe('# Phase 2 Plan');
+        expect(task!.phases.get(VALID_PHASE_ID)?.executionPlan).toBe('# Phase 1 Plan');
+        expect(task!.phases.get(VALID_PHASE_ID_2)?.executionPlan).toBe('# Phase 2 Plan');
     });
 });
 
@@ -161,7 +161,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
     it('reading task summary returns the summary', async () => {
         // Seed state: submit a plan to create the task
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Plan',
@@ -184,7 +184,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
 
     it('reading task execution_plan returns the plan', async () => {
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Master Plan Content',
@@ -222,7 +222,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
 
     it('reading phase execution_plan returns the phase plan', async () => {
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 phaseId: VALID_PHASE_ID,
@@ -319,7 +319,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
     it('reading phase execution_plan throws when phase has no handoff and no plan', async () => {
         // Create task entry via a plan at master level (so the task exists)
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Master Plan',
@@ -350,7 +350,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
     it('reading a resource with no data throws (resource not yet available)', async () => {
         // Create the task but don't set a summary
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Plan (summary never set)',
@@ -398,7 +398,7 @@ describe('CoogentMCPServer — Tool Handlers', () => {
 
     it('submit_execution_plan at master level stores correctly', async () => {
         const result = await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Master Level Plan',
@@ -407,12 +407,12 @@ describe('CoogentMCPServer — Tool Handlers', () => {
 
         expect(result).toBeDefined();
         const task = server.getTaskState(VALID_MASTER_TASK_ID);
-        expect(task!.implementationPlan).toBe('# Master Level Plan');
+        expect(task!.executionPlan).toBe('# Master Level Plan');
     });
 
     it('submit_execution_plan at phase level stores correctly', async () => {
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 phaseId: VALID_PHASE_ID,
@@ -423,7 +423,7 @@ describe('CoogentMCPServer — Tool Handlers', () => {
         const task = server.getTaskState(VALID_MASTER_TASK_ID);
         const phase = task!.phases.get(VALID_PHASE_ID);
         expect(phase).toBeDefined();
-        expect(phase!.implementationPlan).toBe('# Phase Level Plan');
+        expect(phase!.executionPlan).toBe('# Phase Level Plan');
     });
 
     // ── submit_phase_handoff ─────────────────────────────────────────────
@@ -477,7 +477,7 @@ describe('CoogentMCPServer — Tool Handlers', () => {
     it('get_modified_file_content reads file from workspace', async () => {
         // Seed the store so the authorization check passes
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Plan',
@@ -518,7 +518,7 @@ describe('CoogentMCPServer — Tool Handlers', () => {
     it('get_modified_file_content throws for non-existent file when task is registered', async () => {
         // Seed the store so auth check passes
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Plan',
@@ -542,7 +542,7 @@ describe('CoogentMCPServer — Tool Handlers', () => {
     it('tools reject invalid masterTaskId format', async () => {
         await expect(
             client.callTool({
-                name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+                name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
                 arguments: {
                     masterTaskId: 'not-a-valid-id',
                     markdown_content: '# Plan',
@@ -591,14 +591,14 @@ describe('CoogentMCPServer — URI Parsing (via resource reads)', () => {
 
         // Seed data so resource reads succeed
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Plan',
             },
         });
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 phaseId: VALID_PHASE_ID,
@@ -690,7 +690,7 @@ describe('CoogentMCPServer — ListResources', () => {
 
     it('returns task-level and phase-level resources after seeding', async () => {
         await client.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 phaseId: VALID_PHASE_ID,
@@ -768,7 +768,7 @@ describe('CoogentMCPServer — Persistence across restart', () => {
         const { server: srv1, client: cli1 } = await createConnectedPair(tmpDir);
 
         await cli1.callTool({
-            name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             arguments: {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Persisted Plan',
@@ -953,7 +953,7 @@ describe('CoogentMCPServer — D-3: validateStringArray enforcement', () => {
             try {
                 // Seed store so R-3 auth gate passes
                 await cli.callTool({
-                    name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+                    name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
                     arguments: {
                         masterTaskId: VALID_MASTER_TASK_ID,
                         markdown_content: '# Plan',
