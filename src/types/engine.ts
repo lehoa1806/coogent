@@ -8,7 +8,7 @@
 
 /**
  * The 9 deterministic states of the execution engine.
- * See ARCHITECTURE.md § State Machine for the transition diagram.
+ * See architecture.md § State Machine for the transition diagram.
  */
 export enum EngineState {
     /** No runbook loaded. Waiting for user action. */

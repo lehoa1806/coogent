@@ -6,7 +6,7 @@ Thank you for your interest in contributing to Coogent!
 
 For full development setup, project structure, debugging, testing, and build instructions, see:
 
-**[Developer & Contributor Guide →](docs/DEVELOPER_GUIDE.md)**
+**[Developer & Contributor Guide →](docs/developer-guide.md)**
 
 ## Quick Reference
 
@@ -22,7 +22,7 @@ For full development setup, project structure, debugging, testing, and build ins
 
 1. Fork and clone the repository
 2. Create a feature branch from `main`
-3. Follow the code conventions in the [Developer Guide](docs/DEVELOPER_GUIDE.md#code-style--conventions)
+3. Follow the code conventions in the [Developer Guide](docs/developer-guide.md#code-style--conventions)
 4. Add tests for new functionality
 5. Run `npm run ci` and ensure all checks pass
 6. Submit a pull request with a clear description of changes

@@ -18,7 +18,11 @@
 
 ### Package the Extension
 
+Always build from the `master` branch to ensure a stable, release-ready build:
+
 ```bash
+git checkout master
+git pull origin master
 npm run prepackage             # Minified build (Extension Host + Webview)
 npm run package                # Produces coogent-<version>.vsix
 ```
@@ -30,7 +34,7 @@ npm run package                # Produces coogent-<version>.vsix
 Cmd+Shift+P → "Extensions: Install from VSIX…" → select .vsix
 
 # Via CLI:
-code --install-extension coogent-0.2.0.vsix
+code --install-extension coogent-<version>.vsix
 ```
 
 ### Verify
@@ -49,7 +53,7 @@ code --install-extension coogent-0.2.0.vsix
 | Step | Command / Action | Pass Criteria |
 |---|---|---|
 | Type check | `npm run lint` | 0 errors |
-| Test suite | `npm test` | 89 host + 8 webview test files pass |
+| Test suite | `npm test` | 89 host + 24 webview test files pass |
 | Security audit | `npm audit --audit-level=high` | No high/critical vulnerabilities |
 | CI pipeline | `npm run ci` | All above in sequence |
 | Version bump | Update `version` in `package.json` | Semantic versioning |
@@ -143,7 +147,7 @@ All steps must pass before a PR can be merged. The CI pipeline produces a VSIX a
 
 ## Log Locations
 
-> **Note**: Log paths are resolved from `StorageBase.getLogsDir()`, which derives from `ExtensionContext.storageUri` (extension-managed storage). The deprecated `.coogent/` workspace directory is no longer used for logs.
+> **Note**: Log paths are resolved from `StorageBase.getLogsDir()`, which derives from the workspace root (`<workspaceRoot>/.coogent/logs/`). The global durable storage (ArtifactDB, backups) is routed to the Antigravity application data directory — see [Architecture — Storage & Path Management](architecture.md#storage--path-management).
 
 | Log | Path | Format | Content |
 |---|---|---|---|
@@ -215,4 +219,4 @@ await backup.rotateBackups(5); // keep last 5
 
 - Files: `artifacts-<ISO-timestamp>.db` (self-contained SQLite copies)
 - Default retention: 3 most recent backups
-- Location: Derived from `StorageBase.getBackupDir()` — see [Architecture — Storage & Path Management](ARCHITECTURE.md#storage--path-management)
+- Location: Derived from `StorageBase.getBackupDir()` — see [Architecture — Storage & Path Management](architecture.md#storage--path-management)

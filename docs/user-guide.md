@@ -30,19 +30,23 @@ Search for **"Coogent — Multi-Agent Engine"** in the Extensions panel and clic
 ### From VSIX
 
 ```
-Cmd+Shift+P → "Extensions: Install from VSIX…" → select coogent-0.3.0.vsix
+Cmd+Shift+P → "Extensions: Install from VSIX…" → select coogent-<version>.vsix
 ```
 
 **CLI Installation**:
 ```bash
-code --install-extension coogent-0.3.0.vsix
+code --install-extension coogent-<version>.vsix
 ```
 
 ### From Source
 
+Always build from the `master` branch to ensure a stable, release-ready build:
+
 ```bash
 git clone https://github.com/lehoa1806/coogent.git
 cd coogent
+git checkout master
+git pull origin master
 npm install
 npm run build
 ```
@@ -97,7 +101,7 @@ All settings are under `coogent.*` in VS Code Settings (`Cmd+,`):
 | `coogent.blockOnSecretsDetection` | boolean | `false` | Block phase execution when `SecretsGuard` detects secrets in context files. Default is warn-only (secrets are redacted but execution proceeds). |
 | `coogent.enableEncryption` | boolean | `false` | Encrypt `.task-runbook.json` files at rest using a key stored in VS Code `SecretStorage`. |
 | `coogent.requirePluginApproval` | boolean | `true` | Require user approval before activating MCP plugins. Disable to auto-load all plugins. |
-| `coogent.enableSampling` | boolean | `false` | Enable MCP Sampling for optional AI-assisted review and summarization workflows. See [Architecture — MCP Sampling](ARCHITECTURE.md#mcp-sampling). |
+| `coogent.enableSampling` | boolean | `false` | Enable MCP Sampling for optional AI-assisted review and summarization workflows. See [Architecture — MCP Sampling](architecture.md#mcp-sampling). |
 
 ---
 
@@ -171,7 +175,7 @@ The primary workflow for most tasks.
    ![Mission Control — Planning Phase](images/mission-control-planning.png)
 
 3. **Review the plan**
-   - Read the implementation plan in the Mission Control panel
+   - Read the execution plan in the Mission Control panel
    - Each phase shows: prompt, target files, success criteria, and dependencies
    - **Approve** to proceed, or **regenerate** with feedback
 

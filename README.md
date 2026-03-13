@@ -13,7 +13,7 @@
   <a href="#installation">Installation</a> •
   <a href="#how-it-works">How It Works</a> •
   <a href="#features">Features</a> •
-  <a href="docs/SITE_MAP.md">Documentation</a> •
+  <a href="docs/site-map.md">Documentation</a> •
   <a href="CONTRIBUTING.md">Contributing</a>
 </p>
 
@@ -107,8 +107,10 @@ You: "Refactor the authentication module to use JWT"
 ### From VSIX
 
 ```bash
-# Build the VSIX package first
+# Build the VSIX package first — always build from master
 cd coogent
+git checkout master
+git pull origin master
 npm install
 npm run prepackage    # Minified extension host + webview build
 npm run package       # Creates coogent-<version>.vsix
@@ -153,17 +155,17 @@ All settings live under `coogent.*` in VS Code Settings:
 | `conversationMode` | `isolated` | Worker mode: `isolated`, `continuous`, `smart-switch` |
 | `logLevel` | `info` | Log verbosity (`trace` through `off`) |
 
-> See [USER_GUIDE.md](docs/USER_GUIDE.md#configuration) for all 18 settings including security flags, encryption, and sampling.
+> See [user-guide.md](docs/user-guide.md#configuration) for all 18 settings including security flags, encryption, and sampling.
 
 ## Documentation
 
-See [docs/SITE_MAP.md](docs/SITE_MAP.md) for the full documentation index, including:
+See [docs/site-map.md](docs/site-map.md) for the full documentation index, including:
 
-- [Architecture & Technical Design](docs/ARCHITECTURE.md)
-- [User Guide](docs/USER_GUIDE.md)
-- [Developer & Contributor Guide](docs/DEVELOPER_GUIDE.md)
-- [API & Integration Reference](docs/API_REFERENCE.md)
-- [Deployment & Operations](docs/OPERATIONS.md)
+- [Architecture & Technical Design](docs/architecture.md)
+- [User Guide](docs/user-guide.md)
+- [Developer & Contributor Guide](docs/developer-guide.md)
+- [API & Integration Reference](docs/api-reference.md)
+- [Deployment & Operations](docs/operations.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

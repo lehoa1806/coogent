@@ -132,7 +132,7 @@ Communication between the Extension Host and the Svelte Webview uses `postMessag
 | `CMD_PLAN_RETRY_PARSE` | — | Re-parse cached timeout output |
 | `CMD_SET_CONVERSATION_MODE` | `{ mode }` | Set conversation mode |
 | `CMD_REQUEST_REPORT` | — | Request consolidation report |
-| `CMD_REQUEST_PLAN` | — | Request implementation plan |
+| `CMD_REQUEST_PLAN` | — | Request execution plan |
 | `CMD_REVIEW_DIFF` | `{ phaseId }` | Review diff for a phase |
 | `CMD_RESUME_PENDING` | — | Resume all pending phases |
 | `MCP_FETCH_RESOURCE` | `{ uri, requestId }` | Fetch an artifact by URI |

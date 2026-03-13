@@ -63,7 +63,7 @@ npm run build              # Both targets in one command
 ```
 coogent/
 ├── src/
-│   ├── extension.ts              ← Activation entry point (~116 lines, thin orchestrator)
+│   ├── extension.ts              ← Activation entry point (~119 lines, thin orchestrator)
 │   ├── activation.ts             ← Composable init functions (logging, services, MCP, wiring)
 │   ├── ServiceContainer.ts       ← Typed service registry (replaces module-level vars)
 │   ├── CommandRegistry.ts        ← VS Code command registrations (15 commands)
@@ -157,8 +157,7 @@ coogent/
 ├── jest.config.js                ← Test runner config (ts-jest + ESM)
 ├── tsconfig.json                 ← TypeScript configuration (strict)
 │
-└── .coogent/                     ← Runtime data directory (gitignored)
-    ├── artifacts.db              ← SQLite database (MCP state persistence)
+└── .coogent/                     ← Runtime operational data directory (gitignored)
     ├── ipc/<session-id>/         ← Runbook, WAL, lock files
     └── logs/<run-id>/            ← JSONL telemetry logs
 ```
@@ -180,7 +179,7 @@ The `AgentRegistry` class (`src/agent-selection/AgentRegistry.ts`) manages agent
 
 ### SelectionPipeline
 
-The `SelectionPipeline` orchestrates the full flow: `AgentSelector.select()` → `WorkerPromptCompiler.compile()` → `PromptValidator.validate()` → audit record. See [ARCHITECTURE.md](ARCHITECTURE.md#agent-registry--selection-pipeline) for the full algorithm.
+The `SelectionPipeline` orchestrates the full flow: `AgentSelector.select()` → `WorkerPromptCompiler.compile()` → `PromptValidator.validate()` → audit record. See [architecture.md](architecture.md#agent-registry--selection-pipeline) for the full algorithm.
 
 ### Adding New Built-In Profiles
 
@@ -267,14 +266,14 @@ The most common source of bugs. To trace:
 ### Run Tests
 
 ```bash
-npm test                           # All 88 test files (serial, leak detection)
+npm test                           # All 89 test files (serial, leak detection)
 npx jest --verbose                 # With detailed output
 npx jest src/engine                # Run specific module
 npx jest --watch                   # Watch mode
 npx jest --listTests               # List all test files
 ```
 
-### Test Suites (89 host files + 8 webview files)
+### Test Suites (89 host files + 24 webview files)
 
 #### Core Engine (`src/engine/__tests__/`)
 
@@ -440,8 +439,8 @@ Every push to `main` and every pull request triggers the GitHub Actions CI workf
 |---|---|---|
 | Install | `npm ci` | Deterministic dependency install |
 | Lint | `npm run lint` | TypeScript type check + ESLint |
-| Test (host) | `npm test` | 88 Jest test files (serial, leak detection) |
-| Test (webview) | `npm run test:webview` | 8 Vitest test files |
+| Test (host) | `npm test` | 89 Jest test files (serial, leak detection) |
+| Test (webview) | `npm run test:webview` | 24 Vitest test files |
 | Audit | `npm audit --audit-level=high` | Security vulnerability scan |
 | Build | `npm run prepackage` | Minified production build |
 | Package | `npm run package` | Create `.vsix` distribution |

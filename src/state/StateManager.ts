@@ -36,7 +36,7 @@ export { RunbookValidationError } from './RunbookValidator.js';
  *   `<storageUri>/ipc/<id>/.wal.json`
  *   `<storageUri>/ipc/<id>/.lock`
  *
- * See ARCHITECTURE.md § Persistence Strategy for the full design.
+ * See architecture.md § Persistence Strategy for the full design.
  * See 02-review.md § R10 — singleton removed for multi-workspace support.
  */
 export class StateManager {
