@@ -115,6 +115,11 @@ export class MCPToolHandler {
             const args = (request.params.arguments ?? {}) as Record<string, unknown>;
             const deps = this.getDeps();
 
+            // Cross-process sync: reload from disk if the file has changed.
+            // Ensures read tools (get_phase_handoff, get_file_slice, etc.)
+            // see data written by the extension host.
+            await this.db.reloadIfStale();
+
             try {
                 switch (name) {
                     case MCP_TOOLS.SUBMIT_EXECUTION_PLAN:

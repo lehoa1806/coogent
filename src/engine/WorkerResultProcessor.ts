@@ -77,6 +77,7 @@ export interface ResultProcessorMCPBridge {
 export interface ResultProcessorMCPServer {
     upsertWorkerOutput(taskId: string, phaseId: string, output: string, stderr: string): void;
     upsertPhaseLog(taskId: string, phaseId: string, data: Record<string, unknown>): void;
+    forceFlush(): Promise<void>;
 }
 
 /** Minimal interface for the engine used by the result processor. */
@@ -156,6 +157,10 @@ export class WorkerResultProcessor {
                                     warnings: report.warnings ?? undefined,
                                 },
                             );
+
+                            // Force flush to disk so the stdio MCP server sees
+                            // the handoff when the next dependent phase reads it.
+                            await this.mcpServer?.forceFlush();
 
                             // Handoff persisted via MCP tool handler which
                             // validates + persists transactionally. If the

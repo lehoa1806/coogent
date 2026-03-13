@@ -496,4 +496,83 @@ export class ArtifactDB {
             log.warn(`[ArtifactDB] Backup failed: ${err}`);
         }
     }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Cross-Process Sync — Write-side
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * Cancel any pending debounced flush and flush immediately to disk.
+     *
+     * Call this after critical writes (implementation plan, phase handoff)
+     * to ensure the data is visible to other processes (e.g. the stdio
+     * MCP server) that share the same database file.
+     */
+    async forceFlush(): Promise<void> {
+        if (this.flushTimer !== undefined) {
+            clearTimeout(this.flushTimer);
+            this.flushTimer = undefined;
+        }
+        if (this._isDirty) {
+            await this.flushAsync();
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Cross-Process Sync — Read-side
+    // ─────────────────────────────────────────────────────────────────────
+
+    /** Last observed mtime of the database file (epoch ms). */
+    private _lastDiskMtimeMs = 0;
+
+    /**
+     * Re-read the database file from disk and merge its rows INTO the
+     * in-memory database. Disk rows win via INSERT OR REPLACE.
+     *
+     * This preserves the existing `Database` reference so all repository
+     * instances (TaskRepository, PhaseRepository, etc.) remain valid.
+     *
+     * Called by `reloadIfStale()` when the disk file has changed.
+     */
+    async reloadFromDisk(): Promise<void> {
+        let diskData: Buffer | null = null;
+        try {
+            diskData = await fsp.readFile(this.dbPath);
+        } catch {
+            return; // ENOENT — no disk file to reload from
+        }
+
+        const diskDb = new this.SQL.Database(diskData);
+        try {
+            initializeSchema(diskDb);
+            // Merge disk rows INTO in-memory DB (disk wins via INSERT OR REPLACE).
+            // The existing this.db reference is preserved — all repository
+            // instances continue to work without re-creation.
+            ArtifactDB.mergeInto(this.db, diskDb);
+        } finally {
+            diskDb.close();
+        }
+
+        log.info('[ArtifactDB] Reloaded from disk (cross-process sync).');
+    }
+
+    /**
+     * Check the database file's mtime and reload from disk only if it has
+     * changed since the last check. The `stat()` syscall costs microseconds,
+     * making this safe to call before every read operation.
+     *
+     * Used by the stdio MCP server to pick up data written by the extension
+     * host process (implementation plans, phase handoffs, etc.).
+     */
+    async reloadIfStale(): Promise<void> {
+        try {
+            const stat = await fsp.stat(this.dbPath);
+            if (stat.mtimeMs > this._lastDiskMtimeMs) {
+                this._lastDiskMtimeMs = stat.mtimeMs;
+                await this.reloadFromDisk();
+            }
+        } catch {
+            // stat failed — disk file may not exist yet; nothing to reload
+        }
+    }
 }

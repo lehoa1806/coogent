@@ -74,6 +74,7 @@ function createHandler(
         tasks: { get: jest.fn(), upsert: jest.fn() },
         phases: { upsertPlan: jest.fn() },
         handoffs: { upsert: jest.fn(), get: jest.fn() },
+        reloadIfStale: jest.fn().mockResolvedValue(undefined),
     } as unknown as ArtifactDB;
 
     const emitter = new EventEmitter();

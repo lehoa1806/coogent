@@ -98,6 +98,12 @@ export class MCPResourceHandler {
     private registerReadResource(): void {
         this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
             const uri = request.params.uri;
+
+            // Cross-process sync: reload from disk if the file has changed
+            // since the last check. Ensures data written by the extension host
+            // (implementation plans, phase handoffs) is visible to this process.
+            await this.db.reloadIfStale();
+
             const parsed = parseResourceURI(uri);
 
             if (!parsed) {
