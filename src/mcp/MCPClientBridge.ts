@@ -200,7 +200,7 @@ export class MCPClientBridge {
             args['phaseId'] = phaseId;
         }
 
-        await this.callTool(MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN, args);
+        await this.callTool(MCP_TOOLS.SUBMIT_EXECUTION_PLAN, args);
     }
 
     /**

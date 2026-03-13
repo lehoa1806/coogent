@@ -185,7 +185,7 @@
                 `coogent://tasks/${masterTaskId}/phases/${phaseIdStr}/handoff`,
             );
             phasePlanStore = createMCPResource<string>(
-                `coogent://tasks/${masterTaskId}/phases/${phaseIdStr}/implementation_plan`,
+                `coogent://tasks/${masterTaskId}/phases/${phaseIdStr}/execution_plan`,
             );
 
             handoffData = handoffStore.state;

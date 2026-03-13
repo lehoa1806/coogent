@@ -67,7 +67,7 @@ describe('SessionManager.deleteSession()', () => {
             status: 'idle',
             consolidationReport: null,
             consolidationReportJson: null,
-            implementationPlan: null,
+            executionPlan: null,
         };
         const mockDB = {
             deleteSessionCascade: mockDeleteSessionCascade,
@@ -184,7 +184,7 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                     {
                         sessionDirName: dir2,
@@ -195,7 +195,7 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -234,7 +234,7 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                     {
                         sessionDirName: dir2,
@@ -245,7 +245,7 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -295,7 +295,7 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         status: 'completed',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -332,7 +332,7 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -366,7 +366,7 @@ describe('SessionManager.listSessions() (DB-only)', () => {
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -424,7 +424,7 @@ describe('SessionManager.listSessions() — setArtifactDB wiring regression', ()
                         status: null,
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -476,7 +476,7 @@ describe('SessionManager.listSessions() — session history population', () => {
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                     {
                         sessionDirName: '20260303-100000-cccc3333-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -487,7 +487,7 @@ describe('SessionManager.listSessions() — session history population', () => {
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                     {
                         sessionDirName: '20260302-100000-bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -498,7 +498,7 @@ describe('SessionManager.listSessions() — session history population', () => {
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -567,7 +567,7 @@ describe('SessionManager.listSessions() — session history population', () => {
                         status: 'in_progress',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                     {
                         sessionDirName: '20260310-090000-bbbb2222-bbbb-cccc-dddd-eeeeeeeeeeee',
@@ -578,7 +578,7 @@ describe('SessionManager.listSessions() — session history population', () => {
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -737,7 +737,7 @@ describe('SessionManager.listSessions() — hasConsolidationReport field', () =>
                         status: 'completed',
                         consolidationReport: '# Full Consolidation Report',
                         consolidationReportJson: '{"phases":[]}',
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -769,7 +769,7 @@ describe('SessionManager.listSessions() — hasConsolidationReport field', () =>
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -809,7 +809,7 @@ describe('SessionManager.listSessions() — hasConsolidationReport field', () =>
                         status: 'completed',
                         consolidationReport: '# Report for alpha',
                         consolidationReportJson: '{"outcome":"success"}',
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -831,10 +831,10 @@ describe('SessionManager.listSessions() — hasConsolidationReport field', () =>
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  getImplementationPlan() — Implementation plan retrieval tests
+//  getExecutionPlan() — Implementation plan retrieval tests
 // ═════════════════════════════════════════════════════════════════════════════
 
-describe('SessionManager.getImplementationPlan()', () => {
+describe('SessionManager.getExecutionPlan()', () => {
     let tmpDir: string;
 
     beforeEach(async () => {
@@ -850,7 +850,7 @@ describe('SessionManager.getImplementationPlan()', () => {
         const mockDB = {
             sessions: {
                 list: jest.fn().mockReturnValue([]),
-                getImplementationPlan: jest.fn().mockReturnValue('## Approach\nDo the thing.'),
+                getExecutionPlan: jest.fn().mockReturnValue('## Approach\nDo the thing.'),
             },
         } as unknown as ArtifactDB;
 
@@ -861,10 +861,10 @@ describe('SessionManager.getImplementationPlan()', () => {
             mockDB,
         );
 
-        const result = await mgr.getImplementationPlan(dirName);
+        const result = await mgr.getExecutionPlan(dirName);
 
         expect(result).toBe('## Approach\nDo the thing.');
-        expect(mockDB.sessions.getImplementationPlan).toHaveBeenCalledWith(dirName);
+        expect(mockDB.sessions.getExecutionPlan).toHaveBeenCalledWith(dirName);
     });
 
     it('should return null when no plan exists', async () => {
@@ -872,7 +872,7 @@ describe('SessionManager.getImplementationPlan()', () => {
         const mockDB = {
             sessions: {
                 list: jest.fn().mockReturnValue([]),
-                getImplementationPlan: jest.fn().mockReturnValue(undefined),
+                getExecutionPlan: jest.fn().mockReturnValue(undefined),
             },
         } as unknown as ArtifactDB;
 
@@ -883,7 +883,7 @@ describe('SessionManager.getImplementationPlan()', () => {
             mockDB,
         );
 
-        const result = await mgr.getImplementationPlan(dirName);
+        const result = await mgr.getExecutionPlan(dirName);
 
         expect(result).toBeNull();
     });
@@ -894,7 +894,7 @@ describe('SessionManager.getImplementationPlan()', () => {
             'current-session-id',
         );
 
-        const result = await mgr.getImplementationPlan('20260310-120000-any-uuid');
+        const result = await mgr.getExecutionPlan('20260310-120000-any-uuid');
 
         expect(result).toBeNull();
     });
@@ -904,7 +904,7 @@ describe('SessionManager.getImplementationPlan()', () => {
         const mockDB = {
             sessions: {
                 list: jest.fn().mockReturnValue([]),
-                getImplementationPlan: jest.fn().mockImplementation(() => {
+                getExecutionPlan: jest.fn().mockImplementation(() => {
                     throw new Error('DB read failure');
                 }),
             },
@@ -917,17 +917,17 @@ describe('SessionManager.getImplementationPlan()', () => {
             mockDB,
         );
 
-        const result = await mgr.getImplementationPlan(dirName);
+        const result = await mgr.getExecutionPlan(dirName);
 
         expect(result).toBeNull();
     });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════
-//  listSessions() — hasImplementationPlan field tests
+//  listSessions() — hasExecutionPlan field tests
 // ═════════════════════════════════════════════════════════════════════════════
 
-describe('SessionManager.listSessions() — hasImplementationPlan field', () => {
+describe('SessionManager.listSessions() — hasExecutionPlan field', () => {
     let tmpDir: string;
 
     beforeEach(async () => {
@@ -938,7 +938,7 @@ describe('SessionManager.listSessions() — hasImplementationPlan field', () => 
         await fs.rm(tmpDir, { recursive: true, force: true });
     });
 
-    it('should set hasImplementationPlan to true when implementationPlan is present', async () => {
+    it('should set hasExecutionPlan to true when executionPlan is present', async () => {
         const mockDB = {
             sessions: {
                 list: jest.fn().mockReturnValue([
@@ -951,7 +951,7 @@ describe('SessionManager.listSessions() — hasImplementationPlan field', () => 
                         status: 'completed',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: '## Plan\nDo the thing.',
+                        executionPlan: '## Plan\nDo the thing.',
                     },
                 ]),
             },
@@ -967,10 +967,10 @@ describe('SessionManager.listSessions() — hasImplementationPlan field', () => 
         const sessions = await mgr.listSessions();
 
         expect(sessions.length).toBe(1);
-        expect(sessions[0].hasImplementationPlan).toBe(true);
+        expect(sessions[0].hasExecutionPlan).toBe(true);
     });
 
-    it('should set hasImplementationPlan to false when implementationPlan is null', async () => {
+    it('should set hasExecutionPlan to false when executionPlan is null', async () => {
         const mockDB = {
             sessions: {
                 list: jest.fn().mockReturnValue([
@@ -983,7 +983,7 @@ describe('SessionManager.listSessions() — hasImplementationPlan field', () => 
                         status: 'idle',
                         consolidationReport: null,
                         consolidationReportJson: null,
-                        implementationPlan: null,
+                        executionPlan: null,
                     },
                 ]),
             },
@@ -999,6 +999,6 @@ describe('SessionManager.listSessions() — hasImplementationPlan field', () => 
         const sessions = await mgr.listSessions();
 
         expect(sessions.length).toBe(1);
-        expect(sessions[0].hasImplementationPlan).toBe(false);
+        expect(sessions[0].hasExecutionPlan).toBe(false);
     });
 });

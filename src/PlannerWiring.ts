@@ -114,7 +114,7 @@ export function wirePlanner(
                         db.audits.upsertPlanRevision(getSessionDirName(), {
                             feedback,
                             draftJson: JSON.stringify(currentDraft),
-                            implementationPlanMd: implPlanMd,
+                            executionPlanMd: implPlanMd,
                         });
                         log.info('[PlannerWiring] Plan revision persisted (rejected draft + feedback).');
                     } catch (err) {
@@ -148,7 +148,7 @@ export function wirePlanner(
                 try {
                     db.audits.upsertPlanRevision(getSessionDirName(), {
                         draftJson: JSON.stringify(approvedDraft),
-                        implementationPlanMd: buildImplementationPlanMarkdown(approvedDraft),
+                        executionPlanMd: buildImplementationPlanMarkdown(approvedDraft),
                         status: 'approved',
                     });
                     log.info('[PlannerWiring] Approved plan revision persisted.');
@@ -224,7 +224,7 @@ export function wirePlanner(
                 try {
                     db.audits.upsertPlanRevision(getSessionDirName(), {
                         draftJson: JSON.stringify(draft),
-                        implementationPlanMd: buildImplementationPlanMarkdown(draft),
+                        executionPlanMd: buildImplementationPlanMarkdown(draft),
                         // BL-5 audit fix: Persist raw LLM output for audit trail
                         rawLlmOutput: plannerAgent.getLastRawOutput(),
                         // F-6 audit fix: Persist compilation manifest for auditability

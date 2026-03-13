@@ -52,12 +52,12 @@ describe('Consolidation & Implementation Plan dataflow', () => {
         const plan = '# Master Plan\n\n## Phase 1\n- Step A\n- Step B';
 
         getDB().tasks.upsert(VALID_MASTER_TASK_ID, {
-            implementationPlan: plan,
+            executionPlan: plan,
         });
 
         const task = getDB().tasks.get(VALID_MASTER_TASK_ID);
         expect(task).toBeDefined();
-        expect(task!.implementationPlan).toBe(plan);
+        expect(task!.executionPlan).toBe(plan);
     });
 
     // ─── Test 2: Phase-level implementation plan ────────────────────────────
@@ -85,7 +85,7 @@ describe('Consolidation & Implementation Plan dataflow', () => {
         expect(task).toBeDefined();
         expect(task!.phases.size).toBe(1);
         expect(task!.phases.get(VALID_PHASE_ID)).toBeDefined();
-        expect(task!.phases.get(VALID_PHASE_ID)!.implementationPlan).toBe(
+        expect(task!.phases.get(VALID_PHASE_ID)!.executionPlan).toBe(
             phasePlan
         );
     });
@@ -194,21 +194,21 @@ describe('Consolidation & Implementation Plan dataflow', () => {
         const updatedPlan = '# Updated Plan\n- Step 1 (revised)\n- Step 2';
 
         getDB().tasks.upsert(VALID_MASTER_TASK_ID, {
-            implementationPlan: originalPlan,
+            executionPlan: originalPlan,
         });
 
         // Verify original
         let task = getDB().tasks.get(VALID_MASTER_TASK_ID);
-        expect(task!.implementationPlan).toBe(originalPlan);
+        expect(task!.executionPlan).toBe(originalPlan);
 
         // Overwrite
         getDB().tasks.upsert(VALID_MASTER_TASK_ID, {
-            implementationPlan: updatedPlan,
+            executionPlan: updatedPlan,
         });
 
         // Verify updated
         task = getDB().tasks.get(VALID_MASTER_TASK_ID);
-        expect(task!.implementationPlan).toBe(updatedPlan);
+        expect(task!.executionPlan).toBe(updatedPlan);
     });
 
     // ─── Test 7: Consolidation report & impl plan coexist on same task ──────
@@ -231,14 +231,14 @@ describe('Consolidation & Implementation Plan dataflow', () => {
 
         // Store all three in one call
         getDB().tasks.upsert(VALID_MASTER_TASK_ID, {
-            implementationPlan: plan,
+            executionPlan: plan,
             consolidationReport: mdReport,
             consolidationReportJson: jsonReport,
         });
 
         const task = getDB().tasks.get(VALID_MASTER_TASK_ID);
         expect(task).toBeDefined();
-        expect(task!.implementationPlan).toBe(plan);
+        expect(task!.executionPlan).toBe(plan);
         expect(task!.consolidationReport).toBe(mdReport);
         expect(task!.consolidationReportJson).toBe(jsonReport);
     });

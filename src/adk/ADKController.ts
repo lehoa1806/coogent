@@ -41,7 +41,7 @@ export interface ADKSessionOptions {
      */
     mcpResourceUris?: {
         /** URI to the master-level execution plan. e.g. coogent://tasks/{id}/execution_plan */
-        implementationPlan?: string;
+        executionPlan?: string;
         /** URIs to parent phase handoff artifacts — one per depends_on entry. e.g. coogent://tasks/{id}/phases/{parentPhaseId}/handoff */
         parentHandoffs?: string[];  // PLURAL — supports all parent dependencies in multi-phase DAGs
     };
@@ -173,7 +173,7 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
         timeoutMs = 900_000,
         masterTaskId?: string,
         mcpResourceUris?: {
-            implementationPlan?: string;
+            executionPlan?: string;
             parentHandoffs?: string[];  // PLURAL — supports multi-dependency DAG phases
         },
     ): Promise<WorkerHandle | null> {
@@ -562,7 +562,7 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
     private buildInjectionPrompt(
         phase: Phase,
         mcpResourceUris?: {
-            implementationPlan?: string;
+            executionPlan?: string;
             parentHandoffs?: string[];  // PLURAL — one URI per depends_on parent
         },
     ): string {
@@ -614,8 +614,8 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
         if (mcpResourceUris) {
             const uriLines: string[] = [];
 
-            if (mcpResourceUris.implementationPlan) {
-                uriLines.push(`- Implementation Plan: ${mcpResourceUris.implementationPlan}`);
+            if (mcpResourceUris.executionPlan) {
+                uriLines.push(`- Implementation Plan: ${mcpResourceUris.executionPlan}`);
             }
             // Iterate all parent handoff URIs — supports multi-dependency DAG phases
             if (mcpResourceUris.parentHandoffs && mcpResourceUris.parentHandoffs.length > 0) {

@@ -54,7 +54,7 @@ describe('MCPClientBridge — Connection Lifecycle', () => {
 
         const task = server.getTaskState(VALID_MASTER_TASK_ID);
         expect(task).toBeDefined();
-        expect(task!.implementationPlan).toBe('# Plan via bridge');
+        expect(task!.executionPlan).toBe('# Plan via bridge');
     });
 
     it('connect() is idempotent — second call is a no-op', async () => {
@@ -67,7 +67,7 @@ describe('MCPClientBridge — Connection Lifecycle', () => {
             VALID_MASTER_TASK_ID,
             '# Plan'
         );
-        expect(server.getTaskState(VALID_MASTER_TASK_ID)!.implementationPlan).toBe('# Plan');
+        expect(server.getTaskState(VALID_MASTER_TASK_ID)!.executionPlan).toBe('# Plan');
     });
 
     it('disconnect() closes transport cleanly', async () => {
@@ -138,7 +138,7 @@ describe('MCPClientBridge — Core Operations', () => {
 
     it('callTool() delegates to MCP client', async () => {
         const result = await bridge.callTool(
-            MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
+            MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
             {
                 masterTaskId: VALID_MASTER_TASK_ID,
                 markdown_content: '# Direct call',
@@ -147,7 +147,7 @@ describe('MCPClientBridge — Core Operations', () => {
 
         expect(result).toBeDefined();
         const task = server.getTaskState(VALID_MASTER_TASK_ID);
-        expect(task!.implementationPlan).toBe('# Direct call');
+        expect(task!.executionPlan).toBe('# Direct call');
     });
 });
 
@@ -284,7 +284,7 @@ describe('MCPClientBridge — Convenience Methods', () => {
         );
 
         const task = server.getTaskState(VALID_MASTER_TASK_ID);
-        expect(task!.implementationPlan).toBe('# Master Plan');
+        expect(task!.executionPlan).toBe('# Master Plan');
     });
 
     it('submitImplementationPlan stores at phase level when phaseId given', async () => {
@@ -295,7 +295,7 @@ describe('MCPClientBridge — Convenience Methods', () => {
         );
 
         const task = server.getTaskState(VALID_MASTER_TASK_ID);
-        expect(task!.phases.get(VALID_PHASE_ID)?.implementationPlan).toBe('# Phase Plan');
+        expect(task!.phases.get(VALID_PHASE_ID)?.executionPlan).toBe('# Phase Plan');
     });
 
     it('submitPhaseHandoff stores handoff correctly', async () => {

@@ -141,7 +141,7 @@ export interface AppState {
     consolidationReport: string | null;
     /** Whether the report/plan modal is open. */
     reportModalOpen: boolean;
-    implementationPlan: string | null;
+    executionPlan: string | null;
     conversationMode: ConversationMode;
     planStatus: { status: string; message?: string } | null;
     planFileTree: string[];
@@ -177,7 +177,7 @@ export const DEFAULT_APP_STATE: AppState = {
     terminalOutput: '',
     consolidationReport: null,
     reportModalOpen: false,
-    implementationPlan: null,
+    executionPlan: null,
     conversationMode: 'isolated',
     planStatus: null,
     planFileTree: [],
@@ -212,7 +212,7 @@ export type HostToWebviewMessage =
     | { type: 'CONSOLIDATION_REPORT'; payload: { report: string } }
     | { type: 'PHASE_OUTPUT'; payload: { phaseId: number; stream: 'stdout' | 'stderr'; chunk: string } }
     | { type: 'PLAN_SUMMARY'; payload: { summary: string } }
-    | { type: 'IMPLEMENTATION_PLAN'; payload: { plan: string } }
+    | { type: 'EXECUTION_PLAN'; payload: { plan: string } }
     | { type: 'MCP_RESOURCE_DATA'; payload: { requestId: string; data: string | object; error?: string } }
     | { type: 'SUGGESTION_DATA'; payload: { mentions: { label: string; description: string; insert: string }[]; workflows: { label: string; description: string; insert: string }[] } }
     | { type: 'ATTACHMENT_SELECTED'; payload: { paths: string[] } }

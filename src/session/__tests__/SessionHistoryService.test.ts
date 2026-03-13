@@ -35,7 +35,7 @@ const MOCK_SESSIONS: SessionSummary[] = [
         firstPrompt: 'Build feature X',
         isActive: false,
         hasConsolidationReport: false,
-        hasImplementationPlan: false,
+        hasExecutionPlan: false,
     },
     {
         sessionId: 'def-456',
@@ -47,7 +47,7 @@ const MOCK_SESSIONS: SessionSummary[] = [
         firstPrompt: 'Fix bug Y',
         isActive: false,
         hasConsolidationReport: false,
-        hasImplementationPlan: false,
+        hasExecutionPlan: false,
     },
 ];
 
@@ -83,7 +83,7 @@ function createMockSessionManager(): SessionManager {
         setCurrentSessionId: jest.fn(),
         getCurrentSessionDirName: jest.fn().mockReturnValue('20260309-105927-current-uuid'),
         getConsolidationReport: jest.fn().mockResolvedValue(null),
-        getImplementationPlan: jest.fn().mockResolvedValue(null),
+        getExecutionPlan: jest.fn().mockResolvedValue(null),
     } as unknown as SessionManager;
 }
 
@@ -310,12 +310,12 @@ describe('SessionHistoryService', () => {
         });
     });
 
-    // ── 8. getImplementationPlan delegates to SessionManager ─────────────
+    // ── 8. getExecutionPlan delegates to SessionManager ─────────────
 
-    describe('getImplementationPlan', () => {
-        it('should delegate to SessionManager.getImplementationPlan()', async () => {
+    describe('getExecutionPlan', () => {
+        it('should delegate to SessionManager.getExecutionPlan()', async () => {
             const sessionManager = createMockSessionManager();
-            (sessionManager.getImplementationPlan as jest.Mock).mockResolvedValue('## Plan\nDo the thing.');
+            (sessionManager.getExecutionPlan as jest.Mock).mockResolvedValue('## Plan\nDo the thing.');
             const restoreService = createMockRestoreService(makeRestoreResult(SESSION_DIR_NAME, true));
             const deleteService = createMockDeleteService(makeDeleteResult(SESSION_DIR_NAME, true));
 
@@ -323,9 +323,9 @@ describe('SessionHistoryService', () => {
                 sessionManager, restoreService, deleteService,
             );
 
-            const result = await service.getImplementationPlan(SESSION_DIR_NAME);
+            const result = await service.getExecutionPlan(SESSION_DIR_NAME);
 
-            expect(sessionManager.getImplementationPlan).toHaveBeenCalledWith(SESSION_DIR_NAME);
+            expect(sessionManager.getExecutionPlan).toHaveBeenCalledWith(SESSION_DIR_NAME);
             expect(result).toBe('## Plan\nDo the thing.');
         });
 
@@ -339,9 +339,9 @@ describe('SessionHistoryService', () => {
                 sessionManager, restoreService, deleteService,
             );
 
-            const result = await service.getImplementationPlan(SESSION_DIR_NAME);
+            const result = await service.getExecutionPlan(SESSION_DIR_NAME);
 
-            expect(sessionManager.getImplementationPlan).toHaveBeenCalledWith(SESSION_DIR_NAME);
+            expect(sessionManager.getExecutionPlan).toHaveBeenCalledWith(SESSION_DIR_NAME);
             expect(result).toBeNull();
         });
     });

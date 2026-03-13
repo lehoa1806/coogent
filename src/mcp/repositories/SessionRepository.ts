@@ -62,7 +62,7 @@ export class SessionRepository {
         sessionDirName: string; sessionId: string; prompt: string; createdAt: number;
         runbookJson: string | null; status: string | null;
         consolidationReport: string | null; consolidationReportJson: string | null;
-        implementationPlan: string | null;
+        executionPlan: string | null;
     }> {
         const stmt = this.db.prepare(
             `SELECT s.session_dir_name, s.session_id, s.prompt, s.created_at,
@@ -79,7 +79,7 @@ export class SessionRepository {
             sessionDirName: string; sessionId: string; prompt: string; createdAt: number;
             runbookJson: string | null; status: string | null;
             consolidationReport: string | null; consolidationReportJson: string | null;
-            implementationPlan: string | null;
+            executionPlan: string | null;
         }> = [];
         while (stmt.step()) {
             const row = stmt.getAsObject() as {
@@ -94,7 +94,7 @@ export class SessionRepository {
                 runbookJson: row.runbook_json, status: row.status,
                 consolidationReport: row.consolidation_report,
                 consolidationReportJson: row.consolidation_report_json,
-                implementationPlan: row.execution_plan,
+                executionPlan: row.execution_plan,
             });
         }
         stmt.free();
@@ -109,7 +109,7 @@ export class SessionRepository {
         sessionDirName: string; sessionId: string; prompt: string; createdAt: number;
         runbookJson: string | null; status: string | null;
         consolidationReport: string | null; consolidationReportJson: string | null;
-        implementationPlan: string | null;
+        executionPlan: string | null;
     } | undefined {
         const stmt = this.db.prepare(
             `SELECT s.session_dir_name, s.session_id, s.prompt, s.created_at,
@@ -135,7 +135,7 @@ export class SessionRepository {
             runbookJson: row.runbook_json, status: row.status,
             consolidationReport: row.consolidation_report,
             consolidationReportJson: row.consolidation_report_json,
-            implementationPlan: row.execution_plan,
+            executionPlan: row.execution_plan,
         };
     }
 
@@ -199,7 +199,7 @@ export class SessionRepository {
      * Retrieve the execution plan for a specific session.
      * Returns `undefined` if the session is not found.
      */
-    getImplementationPlan(sessionDirName: string): string | null | undefined {
+    getExecutionPlan(sessionDirName: string): string | null | undefined {
         const stmt = this.db.prepare(
             `SELECT t.execution_plan
              FROM sessions s

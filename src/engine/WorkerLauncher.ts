@@ -43,7 +43,7 @@ export interface WorkerLauncherADK {
         timeoutMs: number,
         masterTaskId?: string,
         mcpResourceUris?: {
-            implementationPlan?: string;
+            executionPlan?: string;
             parentHandoffs?: string[];
         },
     ): Promise<unknown>;
@@ -219,10 +219,10 @@ export class WorkerLauncher {
 
         // MCP warm-start URIs
         const mcpResourceUris: {
-            implementationPlan?: string;
+            executionPlan?: string;
             parentHandoffs?: string[];
         } = {
-            implementationPlan: RESOURCE_URIS.taskPlan(masterTaskId),
+            executionPlan: RESOURCE_URIS.taskPlan(masterTaskId),
         };
 
         if (phase.depends_on && (phase.depends_on as unknown[]).length > 0 && engine) {

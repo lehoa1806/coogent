@@ -14,9 +14,9 @@
     } from "../stores/mcpStore.svelte.js";
     import MarkdownRenderer from "./MarkdownRenderer.svelte";
 
-    // ── Legacy appState data (pushed via CONSOLIDATION_REPORT / IMPLEMENTATION_PLAN) ──
+    // ── Legacy appState data (pushed via CONSOLIDATION_REPORT / EXECUTION_PLAN) ──
     let legacyReport = $derived(appState.consolidationReport);
-    let legacyPlan = $derived(appState.implementationPlan);
+    let legacyPlan = $derived(appState.executionPlan);
 
     // ── MCP resource stores ──────────────────────────────────────────────
     let reportStore: MCPResourceHandle<string> | null = $state(null);
@@ -43,7 +43,7 @@
     let showPlan = $derived(legacyPlan != null && !showReport);
     let visible = $derived(appState.reportModalOpen && (showReport || showPlan));
     let title = $derived(
-        showReport ? "📊 Consolidation Report" : "📋 Implementation Plan",
+        showReport ? "📊 Consolidation Report" : "📋 Execution Plan",
     );
 
     // ── Create MCP stores when modal becomes visible ─────────────────────
@@ -60,7 +60,7 @@
             // Create plan store on demand
             if (showPlan && !planStore) {
                 planStore = createMCPResource<string>(
-                    `coogent://tasks/${taskId}/implementation_plan`,
+                    `coogent://tasks/${taskId}/execution_plan`,
                 );
                 planMcpData = planStore.state;
             }

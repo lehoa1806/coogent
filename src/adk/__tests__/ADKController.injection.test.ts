@@ -72,7 +72,7 @@ describe('ADKController — Injection Prompt Construction', () => {
         });
 
         await controller.spawnWorker(basePhase, 5000, 'master-123', {
-            implementationPlan: 'coogent://tasks/master-123/execution_plan',
+            executionPlan: 'coogent://tasks/master-123/execution_plan',
             parentHandoffs: [
                 'coogent://tasks/master-123/phases/phase-001/handoff',
                 'coogent://tasks/master-123/phases/phase-002/handoff',

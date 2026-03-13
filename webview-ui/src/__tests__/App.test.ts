@@ -42,7 +42,7 @@ beforeEach(() => {
         masterSummary: '',
         planStatus: null,
         consolidationReport: null,
-        implementationPlan: null,
+        executionPlan: null,
     });
 });
 
