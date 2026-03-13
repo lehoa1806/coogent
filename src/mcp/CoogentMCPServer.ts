@@ -311,6 +311,18 @@ export class CoogentMCPServer {
     }
 
     /**
+     * Force-flush the in-memory database to disk immediately.
+     * Call this after critical writes (implementation plan, phase handoff)
+     * to ensure data is visible to other processes sharing the same DB file
+     * (e.g. the stdio MCP server).
+     */
+    async forceFlush(): Promise<void> {
+        if (this.db) {
+            await this.db.forceFlush();
+        }
+    }
+
+    /**
      * Called on CMD_RESET when switching away from a session.
      * No data is deleted — session switching only resets the UI.
      * All task and phase data is preserved in SQLite for historical access.

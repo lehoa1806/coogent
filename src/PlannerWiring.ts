@@ -252,7 +252,12 @@ export function wirePlanner(
         if (mcpBridge) {
             const implPlanContent = buildImplementationPlanMarkdown(draft);
             mcpBridge.submitImplementationPlan(getSessionDirName(), implPlanContent)
-                .then(() => log.info('[Coogent] Implementation plan stored in MCP state.'))
+                .then(async () => {
+                    log.info('[Coogent] Implementation plan stored in MCP state.');
+                    // Force flush to disk so the stdio MCP server sees the plan
+                    // when workers read it via MCP resource URIs.
+                    await mcpServer?.forceFlush();
+                })
                 .catch(err => log.error('[Coogent] Failed to store implementation plan in MCP:', err));
 
             // F-4 audit fix: Write debug clones outside IPC tree
