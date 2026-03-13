@@ -4,7 +4,7 @@
 
 import type { Phase, FileResolver } from '../types/index.js';
 import { resolve as pathResolve, dirname, relative, extname, join, isAbsolute } from 'node:path';
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, stat } from 'node:fs/promises';
 import * as ts from 'typescript';
 import { COOGENT_DIR } from '../constants/paths.js';
 import {
@@ -459,7 +459,11 @@ export class ASTFileResolver implements FileResolver {
             try { await access(p); return true; } catch { return false; }
         };
 
-        if (await exists(candidate)) return candidate;
+        if (await exists(candidate)) {
+            const s = await stat(candidate);
+            if (s.isFile()) return candidate;
+            // Directory — fall through to index file resolution below
+        }
 
         const extensions = ['.ts', '.tsx', '.js', '.jsx', '.py', '.swift', '.h', '.hpp', '.c', '.cpp'];
         for (const ext of extensions) {

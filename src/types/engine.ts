@@ -97,6 +97,9 @@ export const STATE_TRANSITIONS: Record<
     [EngineState.READY]: {
         [EngineEvent.START]: EngineState.EXECUTING_WORKER,
         [EngineEvent.RESUME]: EngineState.EXECUTING_WORKER,
+        // Session restore lands here with potentially failed phases — allow retry/skip
+        [EngineEvent.RETRY]: EngineState.EXECUTING_WORKER,
+        [EngineEvent.SKIP_PHASE]: EngineState.READY,
         [EngineEvent.ABORT]: EngineState.IDLE,
         [EngineEvent.RESET]: EngineState.IDLE,
     },

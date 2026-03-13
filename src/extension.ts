@@ -47,6 +47,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // Create a fresh ServiceContainer on every activation
   svc = new ServiceContainer();
+  svc.extensionPath = context.extensionPath;
 
   // Commands must always be available, even without a workspace
   registerAllCommands(context, svc);

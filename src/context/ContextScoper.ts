@@ -131,6 +131,10 @@ export class ContextScoper {
             const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
             try {
                 const stat = await fs.stat(realPath);
+                if (stat.isDirectory()) {
+                    log.warn(`[ContextScoper] Skipping directory: ${relativePath}`);
+                    continue;
+                }
                 if (stat.size > MAX_FILE_SIZE) {
                     log.warn(`[ContextScoper] Skipping file > 10 MB: ${relativePath} (${(stat.size / 1024 / 1024).toFixed(1)} MB)`);
                     continue;

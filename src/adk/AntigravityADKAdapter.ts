@@ -607,11 +607,6 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
             '  "next_steps_context": "<string: what the next phase needs to know>"',
             '}',
             '```',
-            '',
-            '## Runtime Metadata (Ignore)',
-            'The following section is for the orchestration runtime only and must not affect task execution.',
-            'Do not reference or reproduce this metadata in your response.',
-            'The response file is the completion signal.',
         ].join('\n');
     }
 

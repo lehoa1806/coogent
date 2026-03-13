@@ -182,4 +182,28 @@ describe('ContextScoper', () => {
         // Cleanup external dir
         await fs.rm(externalDir, { recursive: true, force: true });
     });
+
+    it('should skip directories in context_files without EISDIR crash', async () => {
+        // Create a directory that looks like a file path in context_files
+        await fs.mkdir(path.join(tmpDir, 'src'), { recursive: true });
+        await fs.mkdir(path.join(tmpDir, 'src', 'utils'), { recursive: true });
+        await fs.writeFile(path.join(tmpDir, 'real-file.txt'), 'real content');
+
+        const phase = {
+            id: asPhaseId(1), status: 'pending', prompt: '',
+            context_files: ['src/utils', 'real-file.txt'],
+            success_criteria: '',
+        } as Phase;
+
+        // Should NOT throw EISDIR — directory should be skipped
+        const res = await scoper.assemble(phase, tmpDir);
+
+        expect(res.ok).toBe(true);
+        if (res.ok) {
+            // Directory should be skipped, real file should be present
+            expect(res.payload).toContain('<<<FILE: real-file.txt>>>');
+            expect(res.payload).toContain('real content');
+            expect(res.payload).not.toContain('<<<FILE: src/utils>>>');
+        }
+    });
 });

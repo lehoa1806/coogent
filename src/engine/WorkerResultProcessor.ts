@@ -20,6 +20,7 @@ export interface ResultProcessorHandoffExtractor {
         decisions?: string[];
         modified_files?: string[];
         unresolved_issues?: string[];
+        next_steps_context?: string;
     } | null>;
     extractImplementationPlan(
         output: string,
@@ -36,6 +37,7 @@ export interface ResultProcessorMCPBridge {
         decisions: string[],
         modifiedFiles: string[],
         unresolvedIssues: string[],
+        nextStepsContext?: string,
     ): Promise<void>;
     submitImplementationPlan(
         sessionId: string,
@@ -118,7 +120,8 @@ export class WorkerResultProcessor {
                                 phaseIdStr,
                                 report.decisions ?? [],
                                 report.modified_files ?? [],
-                                report.unresolved_issues ?? []
+                                report.unresolved_issues ?? [],
+                                report.next_steps_context ?? undefined,
                             );
 
                             // IPC-FIX: Extract and persist implementation plan from worker output.

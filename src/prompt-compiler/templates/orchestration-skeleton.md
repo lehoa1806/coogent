@@ -12,6 +12,7 @@ Optimize for correctness, low hand-off risk, and lean planning. Prefer fewer, st
 5. Set `success_criteria` to a concrete, phase-appropriate validation target. Prefer a specific verification command when available. Use `"exit_code:0"` only when no better validation signal exists.
 6. Phase IDs must start from 1 (`id: 0` is reserved for the planner). Set `current_phase` to the first phase ID (`1`).
 7. Keep the runbook lean. Prefer fewer, stronger phases over many fragile hand-offs.
+8. **No piped output** — Do NOT pipe command output through another command (e.g., `| cat`, `| tee`, `| grep`). Run commands directly so built-in reporters and interactive features work correctly. This applies to any commands in phase prompts or success_criteria.
 
 ## JSON Output Validity
 - Output must be valid JSON parseable by a standard JSON parser.

@@ -166,6 +166,14 @@ export function getGlobalBackupDir(): string {
     return path.join(getGlobalCoogentDir(), BACKUPS_DIR);
 }
 
+/** MCP stdio server deployment directory name. */
+export const MCP_SERVER_DIR = 'mcp';
+
+/** Absolute path to the global MCP server deployment directory. */
+export function getMCPServerDir(): string {
+    return path.join(getGlobalCoogentDir(), MCP_SERVER_DIR);
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Session-Level Path Builders
 //  Root: workspaceRoot / .coogent /

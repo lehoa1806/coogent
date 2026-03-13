@@ -29,6 +29,7 @@ import { HandoffExtractor } from './context/HandoffExtractor.js';
 import { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 import { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
 import { MCPClientBridge } from './mcp/MCPClientBridge.js';
+import { deployMCPServer } from './mcp/MCPServerDeployer.js';
 import { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
 import { AgentRegistry } from './agent-selection/AgentRegistry.js';
@@ -197,6 +198,13 @@ export function startMCPServer(svc: ServiceContainer, primaryRoot: string): void
 
     // Ensure global durable storage directory exists
     fsSync.mkdirSync(globalDir, { recursive: true });
+
+    // Deploy stdio server bundle to global Antigravity directory
+    if (svc.extensionPath) {
+        deployMCPServer(svc.extensionPath);
+    } else {
+        log.warn('[Coogent] startMCPServer: extensionPath not set — skipping MCP deployment.');
+    }
 
     svc.mcpServer = new CoogentMCPServer(primaryRoot);
     svc.mcpBridge = new MCPClientBridge(svc.mcpServer, primaryRoot);

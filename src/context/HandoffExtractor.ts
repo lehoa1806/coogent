@@ -28,6 +28,16 @@ export interface HandoffReport {
     unresolved_issues: string[];
     next_steps_context: string;
     timestamp: number;
+    /** Structured summary of what was accomplished. */
+    summary?: string | undefined;
+    /** Rationale for decisions made during the phase. */
+    rationale?: string | undefined;
+    /** Items explicitly left for downstream phases. */
+    remaining_work?: string[] | undefined;
+    /** Constraints or invariants downstream phases must respect. */
+    constraints?: string[] | undefined;
+    /** Potential issues or risks for downstream phases. */
+    warnings?: string[] | undefined;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -141,6 +151,12 @@ export class HandoffExtractor {
      * Persist a handoff report to the MCP state store.
      *
      * Sprint 4: Removed file fallback — DB is the authoritative source.
+     *
+     * @deprecated This method is dead code in the production pipeline.
+     * The actual persistence path is `WorkerResultProcessor.processWorkerExit()`
+     * → `MCPClientBridge.submitPhaseHandoff()`. This method also uses a
+     * hardcoded phaseId format that does not match real `mcpPhaseId` values
+     * from the runbook. Retained only for backward compatibility with tests.
      */
     async saveHandoff(
         phaseId: number,
@@ -201,6 +217,11 @@ export class HandoffExtractor {
                                 unresolved_issues: dbHandoff.blockers,
                                 next_steps_context: dbHandoff.nextStepsContext ?? '',
                                 timestamp: dbHandoff.completedAt,
+                                summary: dbHandoff.summary ?? undefined,
+                                rationale: dbHandoff.rationale ?? undefined,
+                                remaining_work: dbHandoff.remainingWork ?? undefined,
+                                constraints: dbHandoff.constraints ?? undefined,
+                                warnings: dbHandoff.warnings ?? undefined,
                             };
                         }
                     } catch (err) {
@@ -217,9 +238,25 @@ export class HandoffExtractor {
             const lines: string[] = [
                 `## Phase ${depId} Handoff`,
                 '',
+            ];
+
+            // Summary — high-level overview of what was accomplished
+            if (report.summary) {
+                lines.push('### Summary', report.summary, '');
+            }
+
+            lines.push(
                 '### Decisions',
                 ...report.decisions.map(d => `- ${d}`),
                 '',
+            );
+
+            // Rationale — why decisions were made
+            if (report.rationale) {
+                lines.push('### Rationale', report.rationale, '');
+            }
+
+            lines.push(
                 '### Unresolved Issues',
                 ...(report.unresolved_issues.length > 0
                     ? report.unresolved_issues.map(i => `- ${i}`)
@@ -228,7 +265,34 @@ export class HandoffExtractor {
                 '### Next Steps Context',
                 report.next_steps_context || '_None_',
                 '',
-            ];
+            );
+
+            // Remaining work — items explicitly left for downstream phases
+            if (report.remaining_work && report.remaining_work.length > 0) {
+                lines.push(
+                    '### Remaining Work',
+                    ...report.remaining_work.map(r => `- ${r}`),
+                    '',
+                );
+            }
+
+            // Constraints — invariants downstream phases must respect
+            if (report.constraints && report.constraints.length > 0) {
+                lines.push(
+                    '### Constraints',
+                    ...report.constraints.map(c => `- ${c}`),
+                    '',
+                );
+            }
+
+            // Warnings — potential issues or risks
+            if (report.warnings && report.warnings.length > 0) {
+                lines.push(
+                    '### Warnings',
+                    ...report.warnings.map(w => `- ⚠ ${w}`),
+                    '',
+                );
+            }
 
             // CF-1 FIX: Pull Model — emit tool-call directives instead of
             // raw file bytes. Workers fetch content on demand via the MCP
