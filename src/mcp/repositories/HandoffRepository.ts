@@ -103,9 +103,9 @@ export class HandoffRepository {
                     next_steps_context, summary, rationale, remaining_work,
                     constraints_json, warnings, changed_files_json,
                     workspace_folder, symbols_touched
-             FROM handoffs WHERE master_task_id = ? AND phase_id = ?`
+             FROM handoffs WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ?`
         );
-        stmt.bind([masterTaskId, phaseId]);
+        stmt.bind([masterTaskId, phaseId, this.workspaceId]);
         if (!stmt.step()) { stmt.free(); return undefined; }
         const row = stmt.getAsObject<HandoffDbRow>();
         stmt.free();

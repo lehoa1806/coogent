@@ -16,6 +16,7 @@ import * as fs from 'node:fs';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CoogentMCPServer } from './CoogentMCPServer.js';
 import { COOGENT_DIR, getGlobalCoogentDir } from '../constants/paths.js';
+import { deriveWorkspaceId } from '../constants/WorkspaceIdentity.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CLI Argument Parsing
@@ -55,9 +56,11 @@ async function main(): Promise<void> {
     const { workspaceRoot, dataDirOverride } = parseArgs();
     const globalDir = dataDirOverride ?? getGlobalCoogentDir();
     const localDir = path.join(workspaceRoot, COOGENT_DIR);
+    const workspaceId = deriveWorkspaceId(workspaceRoot);
 
     log(`Starting CoogentMCPServer (stdio transport)`);
     log(`Workspace:  ${workspaceRoot}`);
+    log(`Workspace ID: ${workspaceId}`);
     log(`Global dir: ${globalDir}`);
     log(`Local dir:  ${localDir}`);
 
@@ -68,7 +71,7 @@ async function main(): Promise<void> {
 
     // Instantiate and initialise the MCP server (durable storage in globalDir)
     const server = new CoogentMCPServer(workspaceRoot);
-    await server.init(globalDir);
+    await server.init(globalDir, workspaceId);
     log('ArtifactDB initialised');
 
     // Connect via stdio transport

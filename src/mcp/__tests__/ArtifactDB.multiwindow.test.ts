@@ -59,17 +59,20 @@ describe('ArtifactDB — Multi-Window Safety', () => {
         dbB.close();
 
         // Reopen and verify both tasks exist
-        const dbVerify = await ArtifactDB.create(dbPath, '');
+        // Use workspace-alpha to verify task A, workspace-beta to verify task B
+        const dbVerifyA = await ArtifactDB.create(dbPath, 'workspace-alpha');
+        const dbVerifyB = await ArtifactDB.create(dbPath, 'workspace-beta');
         try {
-            const taskA = dbVerify.tasks.get(taskIdA);
-            const taskB = dbVerify.tasks.get(taskIdB);
+            const taskA = dbVerifyA.tasks.get(taskIdA);
+            const taskB = dbVerifyB.tasks.get(taskIdB);
 
             expect(taskA).toBeDefined();
             expect(taskA!.summary).toBe('Alpha task');
             expect(taskB).toBeDefined();
             expect(taskB!.summary).toBe('Beta task');
         } finally {
-            dbVerify.close();
+            dbVerifyA.close();
+            dbVerifyB.close();
         }
     });
 
@@ -121,17 +124,20 @@ describe('ArtifactDB — Multi-Window Safety', () => {
         dbB.close();
 
         // Verify both tasks exist on disk
-        const dbVerify = await ArtifactDB.create(dbPath, '');
+        // Use workspace-alpha to verify task A, workspace-beta to verify task B
+        const dbVerifyA = await ArtifactDB.create(dbPath, 'workspace-alpha');
+        const dbVerifyB = await ArtifactDB.create(dbPath, 'workspace-beta');
         try {
-            const taskA = dbVerify.tasks.get(taskIdA);
-            const taskB = dbVerify.tasks.get(taskIdB);
+            const taskA = dbVerifyA.tasks.get(taskIdA);
+            const taskB = dbVerifyB.tasks.get(taskIdB);
 
             expect(taskA).toBeDefined();
             expect(taskA!.summary).toBe('Task from A');
             expect(taskB).toBeDefined();
             expect(taskB!.summary).toBe('Task from B');
         } finally {
-            dbVerify.close();
+            dbVerifyA.close();
+            dbVerifyB.close();
         }
     });
 

@@ -45,10 +45,10 @@ export class VerdictRepository {
         retryPrompt: string | null; evaluatorType: string | null; evaluatedAt: number;
     }> {
         const sql = phaseId
-            ? 'SELECT phase_id, attempt, passed, reason, retry_prompt, evaluator_type, evaluated_at FROM evaluation_results WHERE master_task_id = ? AND phase_id = ? ORDER BY attempt'
-            : 'SELECT phase_id, attempt, passed, reason, retry_prompt, evaluator_type, evaluated_at FROM evaluation_results WHERE master_task_id = ? ORDER BY phase_id, attempt';
+            ? 'SELECT phase_id, attempt, passed, reason, retry_prompt, evaluator_type, evaluated_at FROM evaluation_results WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ? ORDER BY attempt'
+            : 'SELECT phase_id, attempt, passed, reason, retry_prompt, evaluator_type, evaluated_at FROM evaluation_results WHERE master_task_id = ? AND workspace_id = ? ORDER BY phase_id, attempt';
         const stmt = this.db.prepare(sql);
-        stmt.bind(phaseId ? [masterTaskId, phaseId] : [masterTaskId]);
+        stmt.bind(phaseId ? [masterTaskId, phaseId, this.workspaceId] : [masterTaskId, this.workspaceId]);
         const results: Array<{
             phaseId: string; attempt: number; passed: boolean; reason: string;
             retryPrompt: string | null; evaluatorType: string | null; evaluatedAt: number;
@@ -92,10 +92,10 @@ export class VerdictRepository {
         stderrTail: string | null; augmentedPrompt: string | null; createdAt: number;
     }> {
         const sql = phaseId
-            ? 'SELECT phase_id, attempt_number, exit_code, stderr_tail, augmented_prompt, created_at FROM healing_attempts WHERE master_task_id = ? AND phase_id = ? ORDER BY attempt_number'
-            : 'SELECT phase_id, attempt_number, exit_code, stderr_tail, augmented_prompt, created_at FROM healing_attempts WHERE master_task_id = ? ORDER BY phase_id, attempt_number';
+            ? 'SELECT phase_id, attempt_number, exit_code, stderr_tail, augmented_prompt, created_at FROM healing_attempts WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ? ORDER BY attempt_number'
+            : 'SELECT phase_id, attempt_number, exit_code, stderr_tail, augmented_prompt, created_at FROM healing_attempts WHERE master_task_id = ? AND workspace_id = ? ORDER BY phase_id, attempt_number';
         const stmt = this.db.prepare(sql);
-        stmt.bind(phaseId ? [masterTaskId, phaseId] : [masterTaskId]);
+        stmt.bind(phaseId ? [masterTaskId, phaseId, this.workspaceId] : [masterTaskId, this.workspaceId]);
         const results: Array<{
             phaseId: string; attemptNumber: number; exitCode: number | null;
             stderrTail: string | null; augmentedPrompt: string | null; createdAt: number;

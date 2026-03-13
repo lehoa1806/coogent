@@ -156,12 +156,10 @@ export class WorkerLauncher {
         }
 
         // Step 5.6: Resolve agent profile from AgentRegistry
-        let workerSystemContext = '';
         if (agentRegistry) {
             try {
                 const agentProfile = await agentRegistry.getBestAgent(phase.required_capabilities ?? []);
                 log.info(`[EngineWiring] Phase ${phase.id}: routed to agent '${agentProfile.id}' (${agentProfile.name})`);
-                workerSystemContext = `## Worker Role\n${agentProfile.system_prompt}\n\nExecute the assigned task precisely, follow existing project conventions, make the smallest correct change, avoid unrelated refactors, and validate your work against the stated acceptance criteria.\n\n`;
 
                 // Derive plan requirement from agent's default_output
                 const NON_PLAN_OUTPUTS = new Set(['review_report', 'research_summary', 'debug_report', 'task_graph']);
@@ -197,11 +195,12 @@ export class WorkerLauncher {
         }
 
         // Step 6: Build effective prompt
+        // NOTE: Agent profile system_prompt is NOT injected into the effective
+        // prompt. The LLM already has a system role, and the planner's task
+        // prompt provides the task-specific role — injecting system_prompt
+        // was a redundant third persona layer.
         const distillationPrompt = handoffExtractor?.generateDistillationPrompt(phase.id as number) ?? '';
         let effectivePrompt = phase.prompt;
-        if (workerSystemContext) {
-            effectivePrompt = `${workerSystemContext}${effectivePrompt}`;
-        }
         if (handoffContext) {
             effectivePrompt = `# Context from Previous Phases\n\n${handoffContext}\n---\n\n${effectivePrompt}`;
         }

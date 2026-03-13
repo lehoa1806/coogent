@@ -34,9 +34,9 @@ export class PhaseRepository {
     /** Get a phase-level execution plan. */
     getPlan(masterTaskId: string, phaseId: string): string | undefined {
         const stmt = this.db.prepare(
-            'SELECT execution_plan FROM phases WHERE master_task_id = ? AND phase_id = ?'
+            'SELECT execution_plan FROM phases WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ?'
         );
-        stmt.bind([masterTaskId, phaseId]);
+        stmt.bind([masterTaskId, phaseId, this.workspaceId]);
         if (!stmt.step()) { stmt.free(); return undefined; }
         const row = stmt.getAsObject() as { execution_plan: string | null };
         stmt.free();
@@ -62,9 +62,9 @@ export class PhaseRepository {
     /** List all phase IDs belonging to a given master task. */
     listIds(masterTaskId: string): string[] {
         const stmt = this.db.prepare(
-            'SELECT phase_id FROM phases WHERE master_task_id = ? ORDER BY phase_id'
+            'SELECT phase_id FROM phases WHERE master_task_id = ? AND workspace_id = ? ORDER BY phase_id'
         );
-        stmt.bind([masterTaskId]);
+        stmt.bind([masterTaskId, this.workspaceId]);
         const ids: string[] = [];
         while (stmt.step()) {
             const row = stmt.getAsObject() as { phase_id: string };
@@ -93,9 +93,9 @@ export class PhaseRepository {
     /** Retrieve all worker outputs for a task, keyed by phase_id. */
     getOutputs(masterTaskId: string): Record<string, string> {
         const stmt = this.db.prepare(
-            'SELECT phase_id, output FROM worker_outputs WHERE master_task_id = ?'
+            'SELECT phase_id, output FROM worker_outputs WHERE master_task_id = ? AND workspace_id = ?'
         );
-        stmt.bind([masterTaskId]);
+        stmt.bind([masterTaskId, this.workspaceId]);
         const result: Record<string, string> = {};
         while (stmt.step()) {
             const row = stmt.getAsObject() as { phase_id: string; output: string };
@@ -125,22 +125,22 @@ export class PhaseRepository {
                 [masterTaskId, phaseId, this.workspaceId]
             );
             if (fields.prompt !== undefined) {
-                this.db.run('UPDATE phase_logs SET prompt = ? WHERE master_task_id = ? AND phase_id = ?', [fields.prompt, masterTaskId, phaseId]);
+                this.db.run('UPDATE phase_logs SET prompt = ? WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ?', [fields.prompt, masterTaskId, phaseId, this.workspaceId]);
             }
             if (fields.requestContext !== undefined) {
-                this.db.run('UPDATE phase_logs SET request_context = ? WHERE master_task_id = ? AND phase_id = ?', [fields.requestContext, masterTaskId, phaseId]);
+                this.db.run('UPDATE phase_logs SET request_context = ? WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ?', [fields.requestContext, masterTaskId, phaseId, this.workspaceId]);
             }
             if (fields.response !== undefined) {
-                this.db.run('UPDATE phase_logs SET response = ? WHERE master_task_id = ? AND phase_id = ?', [fields.response, masterTaskId, phaseId]);
+                this.db.run('UPDATE phase_logs SET response = ? WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ?', [fields.response, masterTaskId, phaseId, this.workspaceId]);
             }
             if (fields.exitCode !== undefined) {
-                this.db.run('UPDATE phase_logs SET exit_code = ? WHERE master_task_id = ? AND phase_id = ?', [fields.exitCode, masterTaskId, phaseId]);
+                this.db.run('UPDATE phase_logs SET exit_code = ? WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ?', [fields.exitCode, masterTaskId, phaseId, this.workspaceId]);
             }
             if (fields.startedAt !== undefined) {
-                this.db.run('UPDATE phase_logs SET started_at = ? WHERE master_task_id = ? AND phase_id = ?', [fields.startedAt, masterTaskId, phaseId]);
+                this.db.run('UPDATE phase_logs SET started_at = ? WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ?', [fields.startedAt, masterTaskId, phaseId, this.workspaceId]);
             }
             if (fields.completedAt !== undefined) {
-                this.db.run('UPDATE phase_logs SET completed_at = ? WHERE master_task_id = ? AND phase_id = ?', [fields.completedAt, masterTaskId, phaseId]);
+                this.db.run('UPDATE phase_logs SET completed_at = ? WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ?', [fields.completedAt, masterTaskId, phaseId, this.workspaceId]);
             }
             this.db.run('COMMIT');
         } catch (e) {
@@ -160,9 +160,9 @@ export class PhaseRepository {
         completedAt: number | null;
     } | undefined {
         const stmt = this.db.prepare(
-            'SELECT prompt, request_context, response, exit_code, started_at, completed_at FROM phase_logs WHERE master_task_id = ? AND phase_id = ?'
+            'SELECT prompt, request_context, response, exit_code, started_at, completed_at FROM phase_logs WHERE master_task_id = ? AND phase_id = ? AND workspace_id = ?'
         );
-        stmt.bind([masterTaskId, phaseId]);
+        stmt.bind([masterTaskId, phaseId, this.workspaceId]);
         if (!stmt.step()) { stmt.free(); return undefined; }
         const row = stmt.getAsObject() as {
             prompt: string; request_context: string; response: string;

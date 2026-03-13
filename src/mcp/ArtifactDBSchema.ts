@@ -210,7 +210,7 @@ CREATE INDEX IF NOT EXISTS idx_ctx_manifest_workspace ON context_manifests(works
 `;
 
 /** Current schema version — bump this when adding new migrations. */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 11;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Schema Initialization
@@ -296,10 +296,23 @@ export function initializeSchema(db: Database): void {
             try { db.run(`ALTER TABLE ${table} ADD COLUMN workspace_id TEXT NOT NULL DEFAULT ''`); } catch { /* already exists */ }
         }
 
+        // v11: Rename implementation_plan → execution_plan in tasks and phases tables.
+        // SQLite does not support RENAME COLUMN in all builds, so we add the new
+        // column and copy data from the old one if it exists.
+        for (const table of ['tasks', 'phases'] as const) {
+            try {
+                db.run(`ALTER TABLE ${table} ADD COLUMN execution_plan TEXT`);
+            } catch { /* already exists (new DB) */ }
+            // Copy data from old column if it exists
+            try {
+                db.run(`UPDATE ${table} SET execution_plan = implementation_plan WHERE execution_plan IS NULL AND implementation_plan IS NOT NULL`);
+            } catch { /* old column does not exist (new DB) — safe to ignore */ }
+        }
+
         // Record the new schema version
         db.run(
             'INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)',
-            [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: workspace_id tenanting for all tenant-owned tables`]
+            [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: rename implementation_plan → execution_plan`]
         );
         log.info(`[ArtifactDB] Schema migrated to v${SCHEMA_VERSION}.`);
     }
