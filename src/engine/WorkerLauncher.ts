@@ -161,7 +161,7 @@ export class WorkerLauncher {
             try {
                 const agentProfile = await agentRegistry.getBestAgent(phase.required_capabilities ?? []);
                 log.info(`[EngineWiring] Phase ${phase.id}: routed to agent '${agentProfile.id}' (${agentProfile.name})`);
-                workerSystemContext = `## Worker Role\nYou are a senior software engineer. Execute the assigned task precisely, following existing project conventions. Make the smallest correct change, avoid unrelated refactors, and validate your work against the stated acceptance criteria.\n\n### Agent Profile: ${agentProfile.name}\n${agentProfile.system_prompt}\n\n`;
+                workerSystemContext = `## Worker Role\n${agentProfile.system_prompt}\n\nExecute the assigned task precisely, follow existing project conventions, make the smallest correct change, avoid unrelated refactors, and validate your work against the stated acceptance criteria.\n\n`;
 
                 // Derive plan requirement from agent's default_output
                 const NON_PLAN_OUTPUTS = new Set(['review_report', 'research_summary', 'debug_report', 'task_graph']);
@@ -190,7 +190,7 @@ export class WorkerLauncher {
             // Raw prompt workers (e.g. Claude Code) are expected to submit an
             // implementation plan as part of their standard output flow. Explicitly
             // set planRequired so MCPResourceHandler knows what to expect when the
-            // webview fetches the phase's implementation_plan resource.
+            // webview fetches the phase's execution_plan resource.
             if (mcpServer && phase.mcpPhaseId) {
                 mcpServer.setPhasePlanRequired(masterTaskId, phase.mcpPhaseId, true);
             }

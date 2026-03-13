@@ -40,7 +40,7 @@ export interface ADKSessionOptions {
      * instead of relying solely on file-based context injection.
      */
     mcpResourceUris?: {
-        /** URI to the master-level implementation plan. e.g. coogent://tasks/{id}/implementation_plan */
+        /** URI to the master-level execution plan. e.g. coogent://tasks/{id}/execution_plan */
         implementationPlan?: string;
         /** URIs to parent phase handoff artifacts — one per depends_on entry. e.g. coogent://tasks/{id}/phases/{parentPhaseId}/handoff */
         parentHandoffs?: string[];  // PLURAL — supports all parent dependencies in multi-phase DAGs
@@ -592,6 +592,7 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
             ``,
             `## Critical Rules`,
             `- **No piped output** — Do NOT pipe command output through another command (e.g., \`| cat\`, \`| tee\`, \`| grep\`). Run commands directly so built-in reporters and interactive features work correctly.`,
+            `- **Scope expansion** — Begin by reviewing the known modified files. If verification exposes related issues in adjacent code or tests, make only the smallest necessary additional changes to restore correctness.`,
         ];
 
         // B-1: enforce the Pull Model / Pointer Method.
@@ -604,7 +605,7 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
             sections.push(
                 ``,
                 `## Required Context Reads`,
-                `Read the following files via the MCP tool \`get_modified_file_content\` before making changes:`,
+                `Read the following files using the available repository context tools (preferring \`get_modified_file_content\` when available) before making changes:`,
                 ...fileUris
             );
         }
@@ -630,7 +631,7 @@ export class ADKController extends TypedEventEmitter<ADKControllerEvents> {
                     `You have access to a local MCP server. Use these resource URIs to read context:`,
                     ...uriLines,
                     ``,
-                    `Base your work on retrieved repository context, not assumptions.`
+                    `Read the implementation plan resource before making changes. Base your work on retrieved repository context, not assumptions.`
                 );
             }
         }

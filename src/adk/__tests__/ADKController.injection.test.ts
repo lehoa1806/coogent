@@ -72,7 +72,7 @@ describe('ADKController — Injection Prompt Construction', () => {
         });
 
         await controller.spawnWorker(basePhase, 5000, 'master-123', {
-            implementationPlan: 'coogent://tasks/master-123/implementation_plan',
+            implementationPlan: 'coogent://tasks/master-123/execution_plan',
             parentHandoffs: [
                 'coogent://tasks/master-123/phases/phase-001/handoff',
                 'coogent://tasks/master-123/phases/phase-002/handoff',
@@ -80,7 +80,7 @@ describe('ADKController — Injection Prompt Construction', () => {
         });
 
         expect(capturedPrompt).toContain('## MCP Context Resources');
-        expect(capturedPrompt).toContain('coogent://tasks/master-123/implementation_plan');
+        expect(capturedPrompt).toContain('coogent://tasks/master-123/execution_plan');
         expect(capturedPrompt).toContain('Parent Phase Handoff [1]');
         expect(capturedPrompt).toContain('Parent Phase Handoff [2]');
     });

@@ -15,35 +15,35 @@ export class PhaseRepository {
         private readonly workspaceId: string = '',
     ) { }
 
-    /** Insert or update a phase-level implementation plan. */
+    /** Insert or update a phase-level execution plan. */
     upsertPlan(masterTaskId: string, phaseId: string, plan: string): void {
         this.db.run(
             'INSERT OR IGNORE INTO tasks (master_task_id, workspace_id) VALUES (?, ?)',
             [masterTaskId, this.workspaceId]
         );
         this.db.run(
-            `INSERT INTO phases (master_task_id, phase_id, workspace_id, implementation_plan)
+            `INSERT INTO phases (master_task_id, phase_id, workspace_id, execution_plan)
              VALUES (?, ?, ?, ?)
              ON CONFLICT(master_task_id, phase_id)
-             DO UPDATE SET implementation_plan = excluded.implementation_plan`,
+             DO UPDATE SET execution_plan = excluded.execution_plan`,
             [masterTaskId, phaseId, this.workspaceId, plan]
         );
         this.scheduleFlush();
     }
 
-    /** Get a phase-level implementation plan. */
+    /** Get a phase-level execution plan. */
     getPlan(masterTaskId: string, phaseId: string): string | undefined {
         const stmt = this.db.prepare(
-            'SELECT implementation_plan FROM phases WHERE master_task_id = ? AND phase_id = ?'
+            'SELECT execution_plan FROM phases WHERE master_task_id = ? AND phase_id = ?'
         );
         stmt.bind([masterTaskId, phaseId]);
         if (!stmt.step()) { stmt.free(); return undefined; }
-        const row = stmt.getAsObject() as { implementation_plan: string | null };
+        const row = stmt.getAsObject() as { execution_plan: string | null };
         stmt.free();
-        return row.implementation_plan ?? undefined;
+        return row.execution_plan ?? undefined;
     }
 
-    /** Set whether an implementation plan is required for a phase. */
+    /** Set whether an execution plan is required for a phase. */
     upsertPlanRequired(masterTaskId: string, phaseId: string, required: boolean): void {
         this.db.run(
             'INSERT OR IGNORE INTO tasks (master_task_id, workspace_id) VALUES (?, ?)',

@@ -227,7 +227,6 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
 
             const spawnedPhase = (adk.spawnWorker as jest.Mock).mock.calls[0][0] as Phase;
             expect(spawnedPhase.prompt).toContain('## Worker Role');
-            expect(spawnedPhase.prompt).toContain('### Agent Profile: Backend Engineer');
             expect(spawnedPhase.prompt).toContain('You are a senior backend engineer focused on TypeScript.');
         });
 

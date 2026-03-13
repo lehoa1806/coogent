@@ -182,7 +182,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
         });
     });
 
-    it('reading task implementation_plan returns the plan', async () => {
+    it('reading task execution_plan returns the plan', async () => {
         await client.callTool({
             name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
             arguments: {
@@ -220,7 +220,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
 
     // ── Phase-Level Resources ────────────────────────────────────────────
 
-    it('reading phase implementation_plan returns the phase plan', async () => {
+    it('reading phase execution_plan returns the phase plan', async () => {
         await client.callTool({
             name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
             arguments: {
@@ -286,7 +286,7 @@ describe('CoogentMCPServer — Resource Handlers', () => {
 
         expect(result.contents).toHaveLength(1);
         expect((result.contents[0] as any).text).toBe(
-            'Implementation plan is not applicable for this phase type.'
+            'Execution plan is not applicable for this phase type.'
         );
     });
 
@@ -312,11 +312,11 @@ describe('CoogentMCPServer — Resource Handlers', () => {
 
         expect(result.contents).toHaveLength(1);
         expect((result.contents[0] as any).text).toBe(
-            'No implementation plan was submitted for this phase.'
+            'No execution plan was submitted for this phase.'
         );
     });
 
-    it('reading phase implementation_plan throws when phase has no handoff and no plan', async () => {
+    it('reading phase execution_plan throws when phase has no handoff and no plan', async () => {
         // Create task entry via a plan at master level (so the task exists)
         await client.callTool({
             name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
@@ -394,9 +394,9 @@ describe('CoogentMCPServer — Tool Handlers', () => {
         await fs.rm(tmpDir, { recursive: true, force: true });
     });
 
-    // ── submit_implementation_plan ───────────────────────────────────────
+    // ── submit_execution_plan ───────────────────────────────────────────
 
-    it('submit_implementation_plan at master level stores correctly', async () => {
+    it('submit_execution_plan at master level stores correctly', async () => {
         const result = await client.callTool({
             name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
             arguments: {
@@ -410,7 +410,7 @@ describe('CoogentMCPServer — Tool Handlers', () => {
         expect(task!.implementationPlan).toBe('# Master Level Plan');
     });
 
-    it('submit_implementation_plan at phase level stores correctly', async () => {
+    it('submit_execution_plan at phase level stores correctly', async () => {
         await client.callTool({
             name: MCP_TOOLS.SUBMIT_IMPLEMENTATION_PLAN,
             arguments: {
@@ -614,21 +614,21 @@ describe('CoogentMCPServer — URI Parsing (via resource reads)', () => {
 
     it('correctly extracts masterTaskId from task-level URI', async () => {
         const result = await client.readResource({
-            uri: `coogent://tasks/${VALID_MASTER_TASK_ID}/implementation_plan`,
+            uri: `coogent://tasks/${VALID_MASTER_TASK_ID}/execution_plan`,
         });
         expect((result.contents[0] as any).text).toBe('# Plan');
     });
 
     it('correctly extracts both masterTaskId and phaseId', async () => {
         const result = await client.readResource({
-            uri: `coogent://tasks/${VALID_MASTER_TASK_ID}/phases/${VALID_PHASE_ID}/implementation_plan`,
+            uri: `coogent://tasks/${VALID_MASTER_TASK_ID}/phases/${VALID_PHASE_ID}/execution_plan`,
         });
         expect((result.contents[0] as any).text).toBe('# Phase Plan');
     });
 
     it('handles trailing slashes gracefully', async () => {
         const result = await client.readResource({
-            uri: `coogent://tasks/${VALID_MASTER_TASK_ID}/implementation_plan/`,
+            uri: `coogent://tasks/${VALID_MASTER_TASK_ID}/execution_plan/`,
         });
         expect((result.contents[0] as any).text).toBe('# Plan');
     });

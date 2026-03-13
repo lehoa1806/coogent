@@ -8,10 +8,10 @@
  * Structure:
  *   masterTaskId (YYYYMMDD-HHMMSS-<uuid>)
  *     ├── runbook: Runbook
- *     ├── implementationPlan: string (Markdown)
+ *     ├── executionPlan: string (Markdown)
  *     ├── consolidationReport: string (Markdown)
  *     └── phases: Map<phaseId, PhaseArtifacts>
- *           ├── implementationPlan: string (Markdown)
+ *           ├── executionPlan: string (Markdown)
  *           └── handoff: PhaseHandoff
  */
 
@@ -57,7 +57,7 @@ export interface PhaseHandoff {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export interface PhaseArtifacts {
-    /** Phase-level Markdown implementation plan. */
+    /** Phase-level Markdown execution plan. */
     implementationPlan?: string | undefined;
     /** Handoff data produced when the phase completes. */
     handoff?: PhaseHandoff | undefined;
@@ -79,7 +79,7 @@ export interface TaskState {
     masterTaskId: string;
     /** Short human-readable summary of the task. */
     summary?: string | undefined;
-    /** Master-level Markdown implementation plan. */
+    /** Master-level Markdown execution plan. */
     implementationPlan?: string | undefined;
     /** Reducer agent's final Markdown consolidation report. */
     consolidationReport?: string | undefined;
@@ -118,15 +118,15 @@ export const PHASE_ID_PATTERN =
  *
  * Supported URI formats:
  *   coogent://tasks/{masterTaskId}/summary
- *   coogent://tasks/{masterTaskId}/implementation_plan
+ *   coogent://tasks/{masterTaskId}/execution_plan
  *   coogent://tasks/{masterTaskId}/consolidation_report
- *   coogent://tasks/{masterTaskId}/phases/{phaseId}/implementation_plan
+ *   coogent://tasks/{masterTaskId}/phases/{phaseId}/execution_plan
  *   coogent://tasks/{masterTaskId}/phases/{phaseId}/handoff
  */
 export interface ParsedResourceURI {
     masterTaskId: string;
     phaseId?: string | undefined;
-    resource: 'summary' | 'implementation_plan' | 'consolidation_report' | 'consolidation_report_json' | 'handoff';
+    resource: 'summary' | 'execution_plan' | 'consolidation_report' | 'consolidation_report_json' | 'handoff';
 }
 
 /**
@@ -150,15 +150,15 @@ export const URI_PHASE_ID_REGEX =
 export const RESOURCE_URIS = {
     /** URI for the master task's summary. */
     taskSummary: (taskId: string) => `coogent://tasks/${taskId}/summary`,
-    /** URI for the master task's implementation plan. */
-    taskPlan: (taskId: string) => `coogent://tasks/${taskId}/implementation_plan`,
+    /** URI for the master task's execution plan. */
+    taskPlan: (taskId: string) => `coogent://tasks/${taskId}/execution_plan`,
     /** URI for the master task's consolidation report. */
     taskReport: (taskId: string) => `coogent://tasks/${taskId}/consolidation_report`,
     /** URI for the master task's structured consolidation report (JSON). */
     taskReportJson: (taskId: string) => `coogent://tasks/${taskId}/consolidation_report_json`,
-    /** URI for a phase-level implementation plan. */
+    /** URI for a phase-level execution plan. */
     phasePlan: (taskId: string, phaseId: string) =>
-        `coogent://tasks/${taskId}/phases/${phaseId}/implementation_plan`,
+        `coogent://tasks/${taskId}/phases/${phaseId}/execution_plan`,
     /** URI for a phase handoff artifact. */
     phaseHandoff: (taskId: string, phaseId: string) =>
         `coogent://tasks/${taskId}/phases/${phaseId}/handoff`,
@@ -169,7 +169,7 @@ export const RESOURCE_URIS = {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 export const MCP_TOOLS = {
-    SUBMIT_IMPLEMENTATION_PLAN: 'submit_implementation_plan',
+    SUBMIT_IMPLEMENTATION_PLAN: 'submit_execution_plan',
     SUBMIT_PHASE_HANDOFF: 'submit_phase_handoff',
     SUBMIT_CONSOLIDATION_REPORT: 'submit_consolidation_report',
     GET_MODIFIED_FILE_CONTENT: 'get_modified_file_content',

@@ -537,7 +537,7 @@ You are a Planning Agent. Your job is to analyze a codebase and break down a use
 {
   "project_id": "<descriptive-slug>",
   "summary": "<1-2 sentence high-level summary of the entire task>",
-  "implementation_plan": "<detailed markdown plan describing the approach, architecture decisions, and key changes>",
+  "execution_plan": "<detailed markdown plan describing the approach, architecture decisions, and key changes>",
   "status": "idle",
   "current_phase": 1,
   "phases": [

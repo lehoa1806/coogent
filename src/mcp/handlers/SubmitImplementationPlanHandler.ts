@@ -18,8 +18,8 @@ export function handleSubmitImplementationPlan(
         ? MCPValidator.validatePhaseId(args['phaseId'])
         : undefined;
 
-    // P0.1: Validate implementation plan content before persistence
-    const planValidation = validateWorkerOutput('implementation_plan', {
+    // P0.1: Validate execution plan content before persistence
+    const planValidation = validateWorkerOutput('execution_plan', {
         markdown_content: markdownContent,
     });
     if (!planValidation.success) {
@@ -27,7 +27,7 @@ export function handleSubmitImplementationPlan(
             `[MCPToolHandler] ${planValidation.error.code}: ${planValidation.error.message}`,
         );
         deps.telemetryLogger?.logBoundaryEvent(ERR_WORKER_OUTPUT_VALIDATION_FAILED, {
-            contractType: 'implementation_plan',
+            contractType: 'execution_plan',
             validationCode: planValidation.error.code,
             message: planValidation.error.message,
         });

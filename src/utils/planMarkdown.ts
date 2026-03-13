@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// src/utils/planMarkdown.ts — Implementation Plan Markdown builder
+// src/utils/planMarkdown.ts — Execution Plan Markdown builder
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -12,7 +12,7 @@
 export function buildImplementationPlanMarkdown(draft: {
     project_id: string;
     summary?: string;
-    implementation_plan?: string;
+    execution_plan?: string;
     phases: ReadonlyArray<{
         id: number;
         prompt: string;
@@ -30,11 +30,11 @@ export function buildImplementationPlanMarkdown(draft: {
         lines.push('');
     }
 
-    // If the planner already produced a freeform implementation plan, include it
-    if (draft.implementation_plan) {
+    // If the planner already produced a freeform execution plan, include it
+    if (draft.execution_plan) {
         lines.push('## Detailed Plan');
         lines.push('');
-        lines.push(draft.implementation_plan);
+        lines.push(draft.execution_plan);
         lines.push('');
     }
 

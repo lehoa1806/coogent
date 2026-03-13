@@ -34,7 +34,7 @@ export class AuditRepository {
         versionStmt.free();
 
         this.db.run(
-            `INSERT INTO plan_revisions (master_task_id, version, workspace_id, feedback, draft_json, implementation_plan_md, status, created_at, raw_llm_output, compilation_manifest)
+            `INSERT INTO plan_revisions (master_task_id, version, workspace_id, feedback, draft_json, execution_plan_md, status, created_at, raw_llm_output, compilation_manifest)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [masterTaskId, nextVersion, this.workspaceId, fields.feedback ?? null, fields.draftJson,
                 fields.implementationPlanMd ?? null, fields.status ?? 'draft', Date.now(),
@@ -49,7 +49,7 @@ export class AuditRepository {
         implementationPlanMd: string | null; status: string; createdAt: number;
     }> {
         const stmt = this.db.prepare(
-            'SELECT version, feedback, draft_json, implementation_plan_md, status, created_at FROM plan_revisions WHERE master_task_id = ? ORDER BY version'
+            'SELECT version, feedback, draft_json, execution_plan_md, status, created_at FROM plan_revisions WHERE master_task_id = ? ORDER BY version'
         );
         stmt.bind([masterTaskId]);
         const results: Array<{
@@ -59,11 +59,11 @@ export class AuditRepository {
         while (stmt.step()) {
             const row = stmt.getAsObject() as {
                 version: number; feedback: string | null; draft_json: string;
-                implementation_plan_md: string | null; status: string; created_at: number;
+                execution_plan_md: string | null; status: string; created_at: number;
             };
             results.push({
                 version: row.version, feedback: row.feedback, draftJson: row.draft_json,
-                implementationPlanMd: row.implementation_plan_md, status: row.status, createdAt: row.created_at,
+                implementationPlanMd: row.execution_plan_md, status: row.status, createdAt: row.created_at,
             });
         }
         stmt.free();

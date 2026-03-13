@@ -46,9 +46,9 @@ export interface CoogentMCPServerEvents {
  *
  * Supported URI formats:
  *   coogent://tasks/{masterTaskId}/summary
- *   coogent://tasks/{masterTaskId}/implementation_plan
+ *   coogent://tasks/{masterTaskId}/execution_plan
  *   coogent://tasks/{masterTaskId}/consolidation_report
- *   coogent://tasks/{masterTaskId}/phases/{phaseId}/implementation_plan
+ *   coogent://tasks/{masterTaskId}/phases/{phaseId}/execution_plan
  *   coogent://tasks/{masterTaskId}/phases/{phaseId}/handoff
  *
  * @returns `null` if the URI is malformed or unrecognised.
@@ -78,16 +78,16 @@ export function parseResourceURI(uri: string): ParsedResourceURI | null {
     );
     const segments = afterMaster.split('/').filter(Boolean);
 
-    // Task-level resources: coogent://tasks/{id}/summary|implementation_plan|consolidation_report
+    // Task-level resources: coogent://tasks/{id}/summary|execution_plan|consolidation_report
     if (segments.length === 1) {
         const leaf = segments[0];
-        if (leaf === 'summary' || leaf === 'implementation_plan' || leaf === 'consolidation_report') {
+        if (leaf === 'summary' || leaf === 'execution_plan' || leaf === 'consolidation_report') {
             return { masterTaskId, resource: leaf };
         }
         return null;
     }
 
-    // Phase-level resources: coogent://tasks/{id}/phases/{phaseId}/implementation_plan|handoff
+    // Phase-level resources: coogent://tasks/{id}/phases/{phaseId}/execution_plan|handoff
     if (segments.length >= 3 && segments[0] === 'phases') {
         const phaseMatch = segments[1].match(URI_PHASE_ID_REGEX);
         if (!phaseMatch) {
@@ -95,7 +95,7 @@ export function parseResourceURI(uri: string): ParsedResourceURI | null {
         }
         const phaseId = phaseMatch[1];
         const leaf = segments[2];
-        if (leaf === 'implementation_plan' || leaf === 'handoff') {
+        if (leaf === 'execution_plan' || leaf === 'handoff') {
             return { masterTaskId, phaseId, resource: leaf };
         }
         return null;
@@ -341,7 +341,7 @@ export class CoogentMCPServer {
     }
 
     /**
-     * Mark whether an implementation plan is required for a phase.
+     * Mark whether an execution plan is required for a phase.
      * Called by EngineWiring after agent selection resolves the profile.
      */
     setPhasePlanRequired(masterTaskId: string, phaseId: string, required: boolean): void {

@@ -153,8 +153,8 @@ export interface Runbook {
     phases: Phase[];
     /** Short human-readable summary generated during the Task Planning phase. */
     summary?: string;
-    /** Detailed implementation plan markdown generated during the Task Planning phase. */
-    implementation_plan?: string;
+    /** Detailed execution plan markdown generated during the Task Planning phase. */
+    execution_plan?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

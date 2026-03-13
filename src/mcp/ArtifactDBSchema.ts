@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   master_task_id TEXT PRIMARY KEY,
   workspace_id TEXT NOT NULL DEFAULT '',
   summary TEXT,
-  implementation_plan TEXT,
+  execution_plan TEXT,
   consolidation_report TEXT,
   consolidation_report_json TEXT,
   runbook_json TEXT,
@@ -69,7 +69,7 @@ CREATE TABLE IF NOT EXISTS phases (
   phase_id TEXT NOT NULL,
   master_task_id TEXT NOT NULL,
   workspace_id TEXT NOT NULL DEFAULT '',
-  implementation_plan TEXT,
+  execution_plan TEXT,
   PRIMARY KEY (master_task_id, phase_id),
   FOREIGN KEY (master_task_id) REFERENCES tasks(master_task_id) ON DELETE CASCADE
 );
@@ -153,7 +153,7 @@ CREATE TABLE IF NOT EXISTS plan_revisions (
   workspace_id TEXT NOT NULL DEFAULT '',
   feedback TEXT,
   draft_json TEXT NOT NULL,
-  implementation_plan_md TEXT,
+  execution_plan_md TEXT,
   status TEXT NOT NULL DEFAULT 'draft',
   created_at INTEGER NOT NULL,
   PRIMARY KEY (master_task_id, version),

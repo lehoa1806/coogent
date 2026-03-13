@@ -246,7 +246,7 @@ Exposed via `coogent://` URIs — see [API Reference](API_REFERENCE.md).
 
 ### Tools (Write)
 
-`submit_phase_handoff`, `submit_implementation_plan`, `submit_consolidation_report`, `get_modified_file_content`
+`submit_phase_handoff`, `submit_execution_plan`, `submit_consolidation_report`, `get_modified_file_content`
 
 ---
 
@@ -348,7 +348,7 @@ V2 enhancement: when a token budget is provided, the selector estimates the cost
 | Contract | Schema | Purpose |
 |---|---|---|
 | `phase_handoff` | `PhaseHandoffSchema` | Validates decisions, modified files, blockers submitted via `submit_phase_handoff` |
-| `implementation_plan` | `ImplementationPlanSchema` | Validates markdown plans submitted via `submit_implementation_plan` |
+| `execution_plan` | `ImplementationPlanSchema` | Validates markdown plans submitted via `submit_execution_plan` |
 | `consolidation_report` | `ConsolidationReportSchema` | Validates final markdown reports (max 512 KB) |
 | `fit_assessment` | `FitAssessmentSchema` | Validates optional worker metadata / skill-match scores |
 

@@ -273,7 +273,7 @@ export class RunbookParser {
                 ? ((r.phases as Array<Record<string, unknown>>)[0] as Record<string, unknown>).id as number
                 : 1,
             ...(typeof r.summary === 'string' ? { summary: r.summary } : {}),
-            ...(typeof r.implementation_plan === 'string' ? { implementation_plan: r.implementation_plan } : {}),
+            ...(typeof r.execution_plan === 'string' ? { execution_plan: r.execution_plan } : {}),
             phases: (r.phases as Array<Record<string, unknown>>).map((p, i) => ({
                 id: asPhaseId(typeof p.id === 'number' ? p.id : i),
                 status: 'pending' as const,

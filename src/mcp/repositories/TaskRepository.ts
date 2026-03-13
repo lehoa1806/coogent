@@ -46,7 +46,7 @@ export class TaskRepository {
             }
             if (fields.implementationPlan !== undefined) {
                 this.db.run(
-                    'UPDATE tasks SET implementation_plan = ? WHERE master_task_id = ?',
+                    'UPDATE tasks SET execution_plan = ? WHERE master_task_id = ?',
                     [fields.implementationPlan, masterTaskId]
                 );
             }
@@ -94,7 +94,7 @@ export class TaskRepository {
      */
     get(masterTaskId: string): TaskState | undefined {
         const taskStmt = this.db.prepare(
-            'SELECT master_task_id, summary, implementation_plan, consolidation_report, consolidation_report_json, runbook_json FROM tasks WHERE master_task_id = ?'
+            'SELECT master_task_id, summary, execution_plan, consolidation_report, consolidation_report_json, runbook_json FROM tasks WHERE master_task_id = ?'
         );
         taskStmt.bind([masterTaskId]);
 
@@ -106,7 +106,7 @@ export class TaskRepository {
         const taskRow = taskStmt.getAsObject() as {
             master_task_id: string;
             summary: string | null;
-            implementation_plan: string | null;
+            execution_plan: string | null;
             consolidation_report: string | null;
             consolidation_report_json: string | null;
             runbook_json: string | null;
@@ -116,18 +116,18 @@ export class TaskRepository {
         const phases = new Map<string, PhaseArtifacts>();
 
         const phaseStmt = this.db.prepare(
-            'SELECT phase_id, implementation_plan, plan_required FROM phases WHERE master_task_id = ?'
+            'SELECT phase_id, execution_plan, plan_required FROM phases WHERE master_task_id = ?'
         );
         phaseStmt.bind([masterTaskId]);
 
         while (phaseStmt.step()) {
             const phaseRow = phaseStmt.getAsObject() as {
                 phase_id: string;
-                implementation_plan: string | null;
+                execution_plan: string | null;
                 plan_required: number | null;
             };
             phases.set(phaseRow.phase_id, {
-                implementationPlan: phaseRow.implementation_plan ?? undefined,
+                implementationPlan: phaseRow.execution_plan ?? undefined,
                 planRequired: phaseRow.plan_required === null
                     ? undefined
                     : phaseRow.plan_required === 1,
@@ -183,7 +183,7 @@ export class TaskRepository {
         return {
             masterTaskId: taskRow.master_task_id,
             summary: taskRow.summary ?? undefined,
-            implementationPlan: taskRow.implementation_plan ?? undefined,
+            implementationPlan: taskRow.execution_plan ?? undefined,
             consolidationReport: taskRow.consolidation_report ?? undefined,
             consolidationReportJson: taskRow.consolidation_report_json ?? undefined,
             runbookJson: taskRow.runbook_json ?? undefined,

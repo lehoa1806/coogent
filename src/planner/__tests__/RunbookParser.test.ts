@@ -72,7 +72,7 @@ describe('RunbookParser', () => {
         const deepRunbook = {
             project_id: 'deep-test',
             summary: 'Multi-phase review',
-            implementation_plan: '## Approach\n\nDeep phases.',
+            execution_plan: '## Approach\n\nDeep phases.',
             status: 'idle',
             current_phase: 1,
             phases: [
@@ -201,11 +201,11 @@ describe('RunbookParser', () => {
     //  Multi-phase validation
     // ═════════════════════════════════════════════════════════════════════
 
-    it('should parse multi-phase runbook with summary and implementation_plan', () => {
+    it('should parse multi-phase runbook with summary and execution_plan', () => {
         const multi = JSON.stringify({
             project_id: 'multi-test',
             summary: 'A complex project',
-            implementation_plan: '## Approach\nDo the thing.',
+            execution_plan: '## Approach\nDo the thing.',
             phases: [
                 { id: 1, prompt: 'P1', context_files: ['a.ts'], success_criteria: 'exit_code:0' },
                 { id: 2, prompt: 'P2', context_files: ['b.ts'], success_criteria: 'exit_code:0', depends_on: [1], context_summary: 'Fix B' },
@@ -214,7 +214,7 @@ describe('RunbookParser', () => {
         const result = parser.parse('```json\n' + multi + '\n```');
         expect(result).not.toBeNull();
         expect(result!.summary).toBe('A complex project');
-        expect(result!.implementation_plan).toBe('## Approach\nDo the thing.');
+        expect(result!.execution_plan).toBe('## Approach\nDo the thing.');
         expect(result!.phases).toHaveLength(2);
         expect(result!.phases[1].context_summary).toBe('Fix B');
     });

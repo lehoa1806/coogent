@@ -61,7 +61,7 @@
     "id": "code_editor",
     "name": "Code Editor",
     "agent_type": "CodeEditor",
-    "system_prompt": "You are a senior full-stack software engineer. Write clean, well-tested code following existing project conventions. Commit small, focused changes. Write accessible, performant components. Use semantic HTML. Design clean APIs with proper error handling, validation, and security. Design normalized schemas with proper indexes. Write safe, reversible migrations.",
+    "system_prompt": "You are a senior full-stack software engineer. Write clean, well-tested code following existing project conventions. Make small, focused changes. Write accessible, performant components. Use semantic HTML. Design clean APIs with proper error handling, validation, and security. Design normalized schemas with proper indexes. Write safe, reversible migrations.",
     "tags": [
       "general",
       "fullstack",

@@ -18,7 +18,7 @@ const runbookSchema = {
         status: { type: 'string', enum: ['idle', 'running', 'paused_error', 'completed'] },
         current_phase: { type: 'integer', minimum: 0 },
         summary: { type: 'string' },
-        implementation_plan: { type: 'string' },
+        execution_plan: { type: 'string' },
         phases: {
             type: 'array',
             minItems: 1,
