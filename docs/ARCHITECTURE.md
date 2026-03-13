@@ -1179,3 +1179,14 @@ The hybrid storage model (global ArtifactDB + workspace-local operational state)
 | ADR-004 | Global MCP registration and workspace context resolution |
 | ADR-005 | Local operational state boundary |
 | ADR-006 | Migration and compatibility strategy |
+
+---
+
+## Storage Architecture
+
+For detailed documentation on the hybrid storage model, tenant scoping, and data ownership:
+
+- [Storage Topology](architecture/storage-topology.md) — Physical layout of global and workspace-local storage
+- [Tenant Model](architecture/tenant-model.md) — Workspace identity and tenant scoping rules
+- [Persistence Boundaries](architecture/persistence-boundaries.md) — Subsystem ownership of data
+- [Data Ownership Matrix](architecture/data-ownership-matrix.md) — Complete data class reference

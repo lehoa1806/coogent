@@ -207,7 +207,7 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
             expect(spawnedPhase.prompt).toContain('Distill: focus on API routes');
         });
 
-        it('includes agent system prompt when agentRegistry returns a profile', async () => {
+        it('does NOT inject agent system_prompt into effective prompt (redundant persona layer)', async () => {
             const adk = createMockADK('antigravity');
             const logger = createMockLogger();
             const launcher = new WorkerLauncher(adk, logger);
@@ -226,8 +226,10 @@ describe('WorkerLauncher — Execution Mode & Prompt Assembly', () => {
             await launcher.launch(createPhase(), 60_000, 'master-task-6', svc);
 
             const spawnedPhase = (adk.spawnWorker as jest.Mock).mock.calls[0][0] as Phase;
-            expect(spawnedPhase.prompt).toContain('## Worker Role');
-            expect(spawnedPhase.prompt).toContain('You are a senior backend engineer focused on TypeScript.');
+            expect(spawnedPhase.prompt).not.toContain('## Worker Role');
+            expect(spawnedPhase.prompt).not.toContain('You are a senior backend engineer focused on TypeScript.');
+            // The original phase prompt is preserved as-is
+            expect(spawnedPhase.prompt).toContain('Implement user auth with JWT tokens');
         });
 
         it('preserves the original phase prompt in effective prompt', async () => {

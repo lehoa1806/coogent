@@ -73,9 +73,9 @@ export class ContextManifestRepository {
         const stmt = this.db.prepare(
             `SELECT manifest_id, session_id, task_id, phase_id, workspace_folder,
                     payload_json, created_at
-             FROM context_manifests WHERE manifest_id = ?`
+             FROM context_manifests WHERE manifest_id = ? AND workspace_id = ?`
         );
-        stmt.bind([manifestId]);
+        stmt.bind([manifestId, this.workspaceId]);
         if (!stmt.step()) { stmt.free(); return undefined; }
         const row = stmt.getAsObject<ContextManifestDbRow>();
         stmt.free();
@@ -96,10 +96,10 @@ export class ContextManifestRepository {
         const stmt = this.db.prepare(
             `SELECT manifest_id, session_id, task_id, phase_id, workspace_folder,
                     payload_json, created_at
-             FROM context_manifests WHERE task_id = ? AND phase_id = ?
+             FROM context_manifests WHERE task_id = ? AND phase_id = ? AND workspace_id = ?
              ORDER BY created_at ASC`
         );
-        stmt.bind([taskId, phaseId]);
+        stmt.bind([taskId, phaseId, this.workspaceId]);
 
         const results: ContextManifestRow[] = [];
         while (stmt.step()) {

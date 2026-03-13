@@ -40,44 +40,44 @@ export class TaskRepository {
 
             if (fields.summary !== undefined) {
                 this.db.run(
-                    'UPDATE tasks SET summary = ? WHERE master_task_id = ?',
-                    [fields.summary, masterTaskId]
+                    'UPDATE tasks SET summary = ? WHERE master_task_id = ? AND workspace_id = ?',
+                    [fields.summary, masterTaskId, this.workspaceId]
                 );
             }
             if (fields.implementationPlan !== undefined) {
                 this.db.run(
-                    'UPDATE tasks SET execution_plan = ? WHERE master_task_id = ?',
-                    [fields.implementationPlan, masterTaskId]
+                    'UPDATE tasks SET execution_plan = ? WHERE master_task_id = ? AND workspace_id = ?',
+                    [fields.implementationPlan, masterTaskId, this.workspaceId]
                 );
             }
             if (fields.consolidationReport !== undefined) {
                 this.db.run(
-                    'UPDATE tasks SET consolidation_report = ? WHERE master_task_id = ?',
-                    [fields.consolidationReport, masterTaskId]
+                    'UPDATE tasks SET consolidation_report = ? WHERE master_task_id = ? AND workspace_id = ?',
+                    [fields.consolidationReport, masterTaskId, this.workspaceId]
                 );
             }
             if (fields.runbookJson !== undefined) {
                 this.db.run(
-                    'UPDATE tasks SET runbook_json = ? WHERE master_task_id = ?',
-                    [fields.runbookJson, masterTaskId]
+                    'UPDATE tasks SET runbook_json = ? WHERE master_task_id = ? AND workspace_id = ?',
+                    [fields.runbookJson, masterTaskId, this.workspaceId]
                 );
             }
             if (fields.consolidationReportJson !== undefined) {
                 this.db.run(
-                    'UPDATE tasks SET consolidation_report_json = ? WHERE master_task_id = ?',
-                    [fields.consolidationReportJson, masterTaskId]
+                    'UPDATE tasks SET consolidation_report_json = ? WHERE master_task_id = ? AND workspace_id = ?',
+                    [fields.consolidationReportJson, masterTaskId, this.workspaceId]
                 );
             }
             if (fields.completedAt !== undefined) {
                 this.db.run(
-                    'UPDATE tasks SET completed_at = ? WHERE master_task_id = ?',
-                    [fields.completedAt, masterTaskId]
+                    'UPDATE tasks SET completed_at = ? WHERE master_task_id = ? AND workspace_id = ?',
+                    [fields.completedAt, masterTaskId, this.workspaceId]
                 );
             }
 
             this.db.run(
-                'UPDATE tasks SET updated_at = ? WHERE master_task_id = ?',
-                [Date.now(), masterTaskId]
+                'UPDATE tasks SET updated_at = ? WHERE master_task_id = ? AND workspace_id = ?',
+                [Date.now(), masterTaskId, this.workspaceId]
             );
 
             this.db.run('COMMIT');
@@ -94,9 +94,9 @@ export class TaskRepository {
      */
     get(masterTaskId: string): TaskState | undefined {
         const taskStmt = this.db.prepare(
-            'SELECT master_task_id, summary, execution_plan, consolidation_report, consolidation_report_json, runbook_json FROM tasks WHERE master_task_id = ?'
+            'SELECT master_task_id, summary, execution_plan, consolidation_report, consolidation_report_json, runbook_json FROM tasks WHERE master_task_id = ? AND workspace_id = ?'
         );
-        taskStmt.bind([masterTaskId]);
+        taskStmt.bind([masterTaskId, this.workspaceId]);
 
         if (!taskStmt.step()) {
             taskStmt.free();
@@ -116,9 +116,9 @@ export class TaskRepository {
         const phases = new Map<string, PhaseArtifacts>();
 
         const phaseStmt = this.db.prepare(
-            'SELECT phase_id, execution_plan, plan_required FROM phases WHERE master_task_id = ?'
+            'SELECT phase_id, execution_plan, plan_required FROM phases WHERE master_task_id = ? AND workspace_id = ?'
         );
-        phaseStmt.bind([masterTaskId]);
+        phaseStmt.bind([masterTaskId, this.workspaceId]);
 
         while (phaseStmt.step()) {
             const phaseRow = phaseStmt.getAsObject() as {
@@ -136,9 +136,9 @@ export class TaskRepository {
         phaseStmt.free();
 
         const handoffStmt = this.db.prepare(
-            'SELECT phase_id, decisions, modified_files, blockers, completed_at FROM handoffs WHERE master_task_id = ?'
+            'SELECT phase_id, decisions, modified_files, blockers, completed_at FROM handoffs WHERE master_task_id = ? AND workspace_id = ?'
         );
-        handoffStmt.bind([masterTaskId]);
+        handoffStmt.bind([masterTaskId, this.workspaceId]);
 
         while (handoffStmt.step()) {
             const row = handoffStmt.getAsObject() as {
@@ -199,15 +199,15 @@ export class TaskRepository {
     deleteChildRecords(masterTaskId: string): void {
         this.db.run('BEGIN');
         try {
-            this.db.run('DELETE FROM evaluation_results WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM healing_attempts WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM plan_revisions WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM handoffs WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM worker_outputs WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM phase_logs WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM selection_audits WHERE session_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM context_manifests WHERE task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM phases WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM evaluation_results WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM healing_attempts WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM plan_revisions WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM handoffs WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM worker_outputs WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM phase_logs WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM selection_audits WHERE session_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM context_manifests WHERE task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM phases WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
             this.db.run('COMMIT');
         } catch (e) {
             this.db.run('ROLLBACK');
@@ -223,17 +223,17 @@ export class TaskRepository {
     delete(masterTaskId: string): void {
         this.db.run('BEGIN');
         try {
-            this.db.run('DELETE FROM evaluation_results WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM healing_attempts WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM plan_revisions WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM handoffs WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM worker_outputs WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM phase_logs WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM selection_audits WHERE session_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM context_manifests WHERE task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM phases WHERE master_task_id = ?', [masterTaskId]);
-            this.db.run('DELETE FROM sessions WHERE session_dir_name = ?', [masterTaskId]);
-            this.db.run('DELETE FROM tasks WHERE master_task_id = ?', [masterTaskId]);
+            this.db.run('DELETE FROM evaluation_results WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM healing_attempts WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM plan_revisions WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM handoffs WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM worker_outputs WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM phase_logs WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM selection_audits WHERE session_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM context_manifests WHERE task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM phases WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM sessions WHERE session_dir_name = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
+            this.db.run('DELETE FROM tasks WHERE master_task_id = ? AND workspace_id = ?', [masterTaskId, this.workspaceId]);
             this.db.run('COMMIT');
         } catch (e) {
             this.db.run('ROLLBACK');

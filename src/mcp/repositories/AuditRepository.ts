@@ -49,9 +49,9 @@ export class AuditRepository {
         implementationPlanMd: string | null; status: string; createdAt: number;
     }> {
         const stmt = this.db.prepare(
-            'SELECT version, feedback, draft_json, execution_plan_md, status, created_at FROM plan_revisions WHERE master_task_id = ? ORDER BY version'
+            'SELECT version, feedback, draft_json, execution_plan_md, status, created_at FROM plan_revisions WHERE master_task_id = ? AND workspace_id = ? ORDER BY version'
         );
-        stmt.bind([masterTaskId]);
+        stmt.bind([masterTaskId, this.workspaceId]);
         const results: Array<{
             version: number; feedback: string | null; draftJson: string;
             implementationPlanMd: string | null; status: string; createdAt: number;
@@ -92,9 +92,9 @@ export class AuditRepository {
     /** Retrieve all selection audit records for a session. */
     getSelectionAudits(sessionId: string): SelectionAuditRecord[] {
         const stmt = this.db.prepare(
-            'SELECT subtask_id, subtask_spec, candidate_agents, selected_agent, selection_rationale, compiled_prompt_id, fallback_agent, worker_run_result, timestamp FROM selection_audits WHERE session_id = ? ORDER BY timestamp'
+            'SELECT subtask_id, subtask_spec, candidate_agents, selected_agent, selection_rationale, compiled_prompt_id, fallback_agent, worker_run_result, timestamp FROM selection_audits WHERE session_id = ? AND workspace_id = ? ORDER BY timestamp'
         );
-        stmt.bind([sessionId]);
+        stmt.bind([sessionId, this.workspaceId]);
         const results: SelectionAuditRecord[] = [];
         while (stmt.step()) {
             const row = stmt.getAsObject() as {

@@ -28,6 +28,7 @@ import {
     getGlobalBackupDir,
     getGlobalCoogentDir,
 } from './paths.js';
+import { deriveWorkspaceId } from './WorkspaceIdentity.js';
 
 /** Directory name for session-scoped data. */
 const SESSIONS_DIR = 'sessions';
@@ -43,11 +44,22 @@ export class StorageBase {
     /** Workspace-local storage root for operational data. */
     private readonly workspaceBase: string;
 
+    /** Stable tenant identity derived from the workspace root (ADR-002). */
+    private readonly workspaceId: string;
+
     constructor(
         _storageUri: string | undefined,
         workspaceRoot: string,
     ) {
         this.workspaceBase = path.join(workspaceRoot, COOGENT_DIR);
+        this.workspaceId = deriveWorkspaceId(workspaceRoot);
+    }
+
+    // ── Tenant Identity ─────────────────────────────────────────────────
+
+    /** Stable workspace tenant ID (16-hex-char SHA-256 prefix). */
+    getWorkspaceId(): string {
+        return this.workspaceId;
     }
 
     // ── Global (durable) paths ─────────────────────────────────────────

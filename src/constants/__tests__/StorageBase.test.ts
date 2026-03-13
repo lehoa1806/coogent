@@ -152,3 +152,25 @@ describe('createStorageBase factory', () => {
         expect(sb.getWorkspaceBase()).toBe(WORKSPACE_BASE);
     });
 });
+
+// ─── getWorkspaceId() — tenant identity (ADR-002) ───────────────────────────
+
+describe('StorageBase — getWorkspaceId()', () => {
+    it('returns a 16-hex-char string', () => {
+        const sb = new StorageBase(undefined, WORKSPACE);
+        const id = sb.getWorkspaceId();
+        expect(id).toMatch(/^[0-9a-f]{16}$/);
+    });
+
+    it('returns the same workspaceId for identical workspace roots', () => {
+        const sb1 = new StorageBase(STORAGE_URI, WORKSPACE);
+        const sb2 = new StorageBase(undefined, WORKSPACE);
+        expect(sb1.getWorkspaceId()).toBe(sb2.getWorkspaceId());
+    });
+
+    it('returns different workspaceIds for different workspace roots', () => {
+        const sb1 = new StorageBase(undefined, '/home/user/project-a');
+        const sb2 = new StorageBase(undefined, '/home/user/project-b');
+        expect(sb1.getWorkspaceId()).not.toBe(sb2.getWorkspaceId());
+    });
+});

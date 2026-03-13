@@ -53,7 +53,7 @@ export class SessionRepository {
      * `TaskRepository.delete()` for full cascade cleanup.
      */
     delete(sessionDirName: string): void {
-        this.db.run('DELETE FROM sessions WHERE session_dir_name = ?', [sessionDirName]);
+        this.db.run('DELETE FROM sessions WHERE session_dir_name = ? AND workspace_id = ?', [sessionDirName, this.workspaceId]);
         this.scheduleFlush();
     }
 
@@ -180,9 +180,9 @@ export class SessionRepository {
             `SELECT t.consolidation_report, t.consolidation_report_json
              FROM sessions s
              LEFT JOIN tasks t ON s.session_dir_name = t.master_task_id
-             WHERE s.session_dir_name = ?`
+             WHERE s.session_dir_name = ? AND s.workspace_id = ?`
         );
-        stmt.bind([sessionDirName]);
+        stmt.bind([sessionDirName, this.workspaceId]);
         if (!stmt.step()) { stmt.free(); return undefined; }
         const row = stmt.getAsObject() as {
             consolidation_report: string | null;
@@ -204,9 +204,9 @@ export class SessionRepository {
             `SELECT t.execution_plan
              FROM sessions s
              LEFT JOIN tasks t ON s.session_dir_name = t.master_task_id
-             WHERE s.session_dir_name = ?`
+             WHERE s.session_dir_name = ? AND s.workspace_id = ?`
         );
-        stmt.bind([sessionDirName]);
+        stmt.bind([sessionDirName, this.workspaceId]);
         if (!stmt.step()) { stmt.free(); return undefined; }
         const row = stmt.getAsObject() as {
             execution_plan: string | null;

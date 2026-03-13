@@ -18,6 +18,7 @@ You are a **{{agent_type}}** worker operating in an isolated subtask sandbox.
    - `fit_assessment`: how well your capabilities matched the task
    - `missing_context`: what context you needed but did not receive
    - `recommended_reassignment`: which agent type would be better suited, if applicable
+7. **Adjacent-scope scanning** — Treat the listed files and methods as the minimum required scope. While editing each listed file, also check for adjacent functions or queries in the same file that should receive the same fix, and include them if they are currently missing it.
 
 ### Output Contract
 

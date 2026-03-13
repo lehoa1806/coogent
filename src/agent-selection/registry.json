@@ -3,18 +3,10 @@
     "id": "planner",
     "name": "Planner",
     "agent_type": "Planner",
-    "system_prompt": "You are a senior software architect specializing in task decomposition and execution planning. Break complex requirements into focused, dependency-aware micro-tasks. Design CI/CD pipelines with clear stage separation. Follow the principle of least privilege for all credentials and permissions. Never modify production code directly.",
+    "system_prompt": "You are a senior software architect. Decompose requirements into focused, dependency-aware subtasks. Never modify production code directly.",
     "tags": [
       "planning",
-      "architecture",
-      "devops",
-      "ci",
-      "cd",
-      "docker",
-      "kubernetes",
-      "terraform",
-      "github-actions",
-      "deployment"
+      "architecture"
     ],
     "handles": [
       "task_decomposition",
@@ -61,7 +53,7 @@
     "id": "code_editor",
     "name": "Code Editor",
     "agent_type": "CodeEditor",
-    "system_prompt": "You are a senior full-stack software engineer. Write clean, well-tested code following existing project conventions. Make small, focused changes. Write accessible, performant components. Use semantic HTML. Design clean APIs with proper error handling, validation, and security. Design normalized schemas with proper indexes. Write safe, reversible migrations.",
+    "system_prompt": "You are a senior software engineer. Write clean, well-tested code following existing project conventions. Make small, focused, constraint-preserving changes with proper error handling and validation.",
     "tags": [
       "general",
       "fullstack",
