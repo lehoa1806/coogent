@@ -136,9 +136,18 @@ export class TaskRepository {
         phaseStmt.free();
 
         const handoffStmt = this.db.prepare(
-            'SELECT phase_id, decisions, modified_files, blockers, completed_at FROM handoffs WHERE master_task_id = ? AND workspace_id = ?'
+            `SELECT phase_id, decisions, modified_files, blockers, completed_at,
+                    next_steps_context, summary, rationale, remaining_work,
+                    constraints_json, warnings, changed_files_json,
+                    workspace_folder, symbols_touched
+             FROM handoffs WHERE master_task_id = ? AND workspace_id = ?`
         );
         handoffStmt.bind([masterTaskId, this.workspaceId]);
+
+        const parseJsonArray = (val: string | null | undefined): string[] | undefined => {
+            if (!val) { return undefined; }
+            try { return JSON.parse(val) as string[]; } catch { return undefined; }
+        };
 
         while (handoffStmt.step()) {
             const row = handoffStmt.getAsObject() as {
@@ -147,6 +156,15 @@ export class TaskRepository {
                 modified_files: string;
                 blockers: string;
                 completed_at: number;
+                next_steps_context: string | null;
+                summary: string | null;
+                rationale: string | null;
+                remaining_work: string | null;
+                constraints_json: string | null;
+                warnings: string | null;
+                changed_files_json: string | null;
+                workspace_folder: string | null;
+                symbols_touched: string | null;
             };
 
             let decisions: string[];
@@ -169,6 +187,15 @@ export class TaskRepository {
                 modifiedFiles,
                 blockers,
                 completedAt: row.completed_at,
+                nextStepsContext: row.next_steps_context ?? undefined,
+                summary: row.summary ?? undefined,
+                rationale: row.rationale ?? undefined,
+                remainingWork: parseJsonArray(row.remaining_work),
+                constraints: parseJsonArray(row.constraints_json),
+                warnings: parseJsonArray(row.warnings),
+                changedFilesJson: row.changed_files_json || undefined,
+                workspaceFolder: row.workspace_folder || undefined,
+                symbolsTouched: parseJsonArray(row.symbols_touched),
             };
 
             let phase = phases.get(row.phase_id);

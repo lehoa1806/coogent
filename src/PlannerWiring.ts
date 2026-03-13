@@ -55,7 +55,8 @@ export function wirePlanner(
                     if (db) {
                         svc.stateManager?.setArtifactDB(db, sessionDirName);
                         svc.sessionManager?.setArtifactDB(db);
-                        log.info('[PlannerWiring] StateManager + SessionManager wired to ArtifactDB.');
+                        svc.handoffExtractor?.setArtifactDB(db, sessionDirName);
+                        log.info('[PlannerWiring] StateManager + SessionManager + HandoffExtractor wired to ArtifactDB.');
                     }
                 }
 
@@ -162,6 +163,17 @@ export function wirePlanner(
     // ── PlannerAgent → Engine ──────────────────────────────────────────
     plannerAgent.on('plan:generated', (draft, fileTree) => {
         engine.planGenerated(draft, fileTree);
+
+        // Wire HandoffExtractor phase lookup map so buildNextContext() can
+        // resolve numeric depIds → mcpPhaseId strings for ArtifactDB queries.
+        if (svc.handoffExtractor) {
+            svc.handoffExtractor.setPhaseIdMap(
+                draft.phases.map((p: { id: number; mcpPhaseId?: string }) => ({
+                    id: p.id,
+                    ...(p.mcpPhaseId !== undefined ? { mcpPhaseId: p.mcpPhaseId } : {}),
+                })),
+            );
+        }
 
         // Log compilation manifest for observability (prompt compiler pipeline)
         const manifest = plannerAgent.getLastManifest();

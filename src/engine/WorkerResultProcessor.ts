@@ -14,6 +14,18 @@ import log from '../logger/log.js';
 //  Types
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/** Canonical error codes for sentinel handoff reasons. */
+export type SentinelErrorCode =
+    | 'WORKER_TIMEOUT'
+    | 'WORKER_CRASH'
+    | 'HANDOFF_EXTRACTION_FAILED';
+
+/** Format a sentinel unresolved_issues entry with a canonical code. */
+function formatSentinelIssue(code: SentinelErrorCode, phaseId: number, detail?: string): string {
+    const suffix = detail ? ` — ${detail}` : '';
+    return `${code}: Phase ${phaseId}${suffix}`;
+}
+
 /** Minimal interface for the handoff extractor dependency. */
 export interface ResultProcessorHandoffExtractor {
     extractHandoff(phaseId: number, output: string): Promise<{
@@ -21,12 +33,26 @@ export interface ResultProcessorHandoffExtractor {
         modified_files?: string[];
         unresolved_issues?: string[];
         next_steps_context?: string;
-    } | null>;
+        summary?: string;
+        rationale?: string;
+        remaining_work?: string[];
+        constraints?: string[];
+        warnings?: string[];
+    }>;
     extractImplementationPlan(
         output: string,
         sessionId: string,
         phaseId: string,
     ): string | null;
+}
+
+/** Optional enrichment fields for phase handoff submission. */
+export interface PhaseHandoffEnrichment {
+    summary?: string | undefined;
+    rationale?: string | undefined;
+    remainingWork?: string[] | undefined;
+    constraints?: string[] | undefined;
+    warnings?: string[] | undefined;
 }
 
 /** Minimal interface for the MCP bridge dependency. */
@@ -38,6 +64,7 @@ export interface ResultProcessorMCPBridge {
         modifiedFiles: string[],
         unresolvedIssues: string[],
         nextStepsContext?: string,
+        enrichment?: PhaseHandoffEnrichment,
     ): Promise<void>;
     submitImplementationPlan(
         sessionId: string,
@@ -92,15 +119,17 @@ export class WorkerResultProcessor {
     ): Promise<void> {
         const sessionDirName = this.getSessionDirName();
 
+        const runbook = this.engine.getRunbook();
+        const phaseObj = runbook?.phases.find(p => p.id === phaseId);
+        const phaseIdStr = phaseObj?.mcpPhaseId;
+
         // RACE-FIX: Await handoff extraction + MCP submission BEFORE triggering
         // the engine FSM transition.
         const handoffPromise: Promise<void> = (async () => {
             if (exitCode === 0 && this.handoffExtractor && currentSessionDir) {
+
                 // Persist worker output + stderr to ArtifactDB so it survives session reloads
                 if (this.mcpServer && (accumulatedOutput || accumulatedStderr)) {
-                    const runbook = this.engine.getRunbook();
-                    const phaseObj = runbook?.phases.find(p => p.id === phaseId);
-                    const phaseIdStr = phaseObj?.mcpPhaseId;
                     if (phaseIdStr) {
                         this.mcpServer.upsertWorkerOutput(sessionDirName, phaseIdStr, accumulatedOutput, accumulatedStderr);
                     }
@@ -109,9 +138,6 @@ export class WorkerResultProcessor {
                 try {
                     const report = await this.handoffExtractor.extractHandoff(phaseId, accumulatedOutput);
                     if (this.mcpBridge && report) {
-                        const runbook = this.engine.getRunbook();
-                        const phaseObj = runbook?.phases.find(p => p.id === phaseId);
-                        const phaseIdStr = phaseObj?.mcpPhaseId;
                         if (!phaseIdStr) {
                             log.warn(`[Coogent] mcpPhaseId missing for phase ${phaseId} — skipping handoff submission.`);
                         } else {
@@ -122,7 +148,19 @@ export class WorkerResultProcessor {
                                 report.modified_files ?? [],
                                 report.unresolved_issues ?? [],
                                 report.next_steps_context ?? undefined,
+                                {
+                                    summary: report.summary ?? undefined,
+                                    rationale: report.rationale ?? undefined,
+                                    remainingWork: report.remaining_work ?? undefined,
+                                    constraints: report.constraints ?? undefined,
+                                    warnings: report.warnings ?? undefined,
+                                },
                             );
+
+                            // Handoff persisted via MCP tool handler which
+                            // validates + persists transactionally. If the
+                            // submitPhaseHandoff call above didn't throw,
+                            // the write succeeded.
 
                             // IPC-FIX: Extract and persist implementation plan from worker output.
                             try {
@@ -161,6 +199,24 @@ export class WorkerResultProcessor {
                     }
                 } catch (err) {
                     log.error('[Coogent] Handoff extraction/submission error:', err);
+                    // Persist sentinel handoff so downstream phases
+                    // know their parent context is degraded rather than completely missing.
+                    if (this.mcpBridge && phaseIdStr) {
+                        try {
+                            await this.mcpBridge.submitPhaseHandoff(
+                                sessionDirName,
+                                phaseIdStr,
+                                [],
+                                [],
+                                [formatSentinelIssue('HANDOFF_EXTRACTION_FAILED', phaseId, err instanceof Error ? err.message : String(err))],
+                                undefined,
+                                undefined,
+                            );
+                            log.info(`[WorkerResultProcessor] Sentinel handoff persisted for phase ${phaseId}.`);
+                        } catch (sentinelErr) {
+                            log.warn(`[WorkerResultProcessor] Sentinel handoff also failed:`, sentinelErr);
+                        }
+                    }
                     // LF-6 FIX: Surface handoff failure to the webview
                     MissionControlPanel.broadcast({
                         type: 'LOG_ENTRY',
@@ -180,29 +236,21 @@ export class WorkerResultProcessor {
         await handoffPromise
             .then(() => {
                 // Persist phase completion to phase_logs
-                if (this.mcpServer) {
-                    const rb = this.engine.getRunbook();
-                    const pObj = rb?.phases.find(p => p.id === phaseId);
-                    if (pObj?.mcpPhaseId) {
-                        this.mcpServer.upsertPhaseLog(sessionDirName, pObj.mcpPhaseId, {
-                            exitCode: exitCode,
-                            completedAt: Date.now(),
-                        });
-                    }
+                if (this.mcpServer && phaseIdStr) {
+                    this.mcpServer.upsertPhaseLog(sessionDirName, phaseIdStr, {
+                        exitCode: exitCode,
+                        completedAt: Date.now(),
+                    });
                 }
 
                 // ── Runtime persistence: worker response.md (FR2) ────────
                 // Persist worker accumulated output to the phase's IPC directory.
-                if (accumulatedOutput && currentSessionDir) {
-                    const runbook = this.engine.getRunbook();
-                    const phaseObj = runbook?.phases.find(p => p.id === phaseId);
-                    if (phaseObj?.mcpPhaseId) {
-                        const phaseDir = path.join(currentSessionDir, phaseObj.mcpPhaseId);
-                        fs.mkdir(phaseDir, { recursive: true })
-                            .then(() => fs.writeFile(path.join(phaseDir, IPC_RESPONSE_FILE), accumulatedOutput, 'utf-8'))
-                            .then(() => log.info(`[WorkerResultProcessor] Worker response.md persisted for phase ${phaseId}.`))
-                            .catch(err => log.warn(`[WorkerResultProcessor] Failed to persist worker response.md for phase ${phaseId} (non-fatal):`, err));
-                    }
+                if (accumulatedOutput && currentSessionDir && phaseIdStr) {
+                    const phaseDir = path.join(currentSessionDir, phaseIdStr);
+                    fs.mkdir(phaseDir, { recursive: true })
+                        .then(() => fs.writeFile(path.join(phaseDir, IPC_RESPONSE_FILE), accumulatedOutput, 'utf-8'))
+                        .then(() => log.info(`[WorkerResultProcessor] Worker response.md persisted for phase ${phaseId}.`))
+                        .catch(err => log.warn(`[WorkerResultProcessor] Failed to persist worker response.md for phase ${phaseId} (non-fatal):`, err));
                 }
 
                 return this.engine.onWorkerExited(phaseId, exitCode);
@@ -218,26 +266,72 @@ export class WorkerResultProcessor {
         reason: 'timeout' | 'crash',
         accumulatedOutput: string,
         accumulatedStderr: string,
+        currentSessionDir?: string,
     ): Promise<void> {
+        const sessionDirName = this.getSessionDirName();
+        const rb = this.engine.getRunbook();
+        const phaseObj = rb?.phases.find(p => p.id === phaseId);
+        const phaseIdStr = phaseObj?.mcpPhaseId;
+
         // M3 audit fix: Flush accumulated stdout/stderr to DB before marking failure
         if (this.mcpServer && (accumulatedOutput || accumulatedStderr)) {
-            const rb = this.engine.getRunbook();
-            const pObj = rb?.phases.find(p => p.id === phaseId);
-            if (pObj?.mcpPhaseId) {
+            if (phaseIdStr) {
                 this.mcpServer.upsertWorkerOutput(
-                    this.getSessionDirName(),
-                    pObj.mcpPhaseId,
+                    sessionDirName,
+                    phaseIdStr,
                     accumulatedOutput,
                     accumulatedStderr,
                 );
             }
         }
 
-        this.engine.onWorkerFailed(phaseId, reason).catch(log.onError);
+        // Persist a sentinel handoff so downstream phases
+        // know their parent timed out or crashed rather than seeing
+        // "_No handoff report found._" with zero context.
+        if (this.mcpBridge && phaseIdStr) {
+            // Best-effort partial modified_files extraction
+            // from accumulated output so downstream phases know which files were
+            // partially touched before the worker failed.
+            let partialFiles: string[] = [];
+            if (this.handoffExtractor && accumulatedOutput) {
+                try {
+                    const partial = await this.handoffExtractor.extractHandoff(phaseId, accumulatedOutput);
+                    partialFiles = partial.modified_files ?? [];
+                } catch { /* extraction failed — proceed with empty list */ }
+            }
 
-        // ── FR6: Failure traceability — persist raw output on failure ─
-        // Best-effort write: currentSessionDir is not available directly in
-        // processWorkerFailure, but the MCP server has already been flushed
-        // above. Runtime persistence for failures relies on the MCP DB path.
+            const sentinelCode: SentinelErrorCode = reason === 'timeout' ? 'WORKER_TIMEOUT' : 'WORKER_CRASH';
+            try {
+                await this.mcpBridge.submitPhaseHandoff(
+                    sessionDirName,
+                    phaseIdStr,
+                    [],
+                    partialFiles,
+                    [formatSentinelIssue(sentinelCode, phaseId, `${reason === 'timeout' ? 'timed out' : 'crashed'} before producing a handoff report`)],
+                    undefined,
+                    undefined,
+                );
+                log.info(`[WorkerResultProcessor] Sentinel handoff persisted for ${reason} phase ${phaseId} (${partialFiles.length} partial files).`);
+            } catch (sentinelErr) {
+                log.warn(`[WorkerResultProcessor] Sentinel handoff for ${reason} phase ${phaseId} failed:`, sentinelErr);
+            }
+        }
+
+        // Persist truncated response.md with error marker
+        // for crash forensics, matching processWorkerExit file persistence.
+        if (accumulatedOutput && currentSessionDir && phaseIdStr) {
+            const phaseDir = path.join(currentSessionDir, phaseIdStr);
+            const errorHeader = `<!-- WORKER_${reason.toUpperCase()} — phase ${phaseId} -->\n\n`;
+            fs.mkdir(phaseDir, { recursive: true })
+                .then(() => fs.writeFile(
+                    path.join(phaseDir, IPC_RESPONSE_FILE),
+                    errorHeader + accumulatedOutput,
+                    'utf-8',
+                ))
+                .then(() => log.info(`[WorkerResultProcessor] Worker response.md (${reason}) persisted for phase ${phaseId}.`))
+                .catch(err => log.warn(`[WorkerResultProcessor] Failed to persist ${reason} response.md for phase ${phaseId}:`, err));
+        }
+
+        this.engine.onWorkerFailed(phaseId, reason).catch(log.onError);
     }
 }

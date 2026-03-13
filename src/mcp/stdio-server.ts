@@ -79,10 +79,17 @@ async function main(): Promise<void> {
     await server.getServer().connect(transport);
     log('Connected via stdio — ready for MCP requests');
 
-    // Graceful shutdown handlers
+    // Graceful shutdown handlers — only registered after successful init
+    let disposed = false;
     const shutdown = (): void => {
+        if (disposed) { return; }
+        disposed = true;
         log('Shutting down...');
-        server.dispose();
+        try {
+            server.dispose();
+        } catch (err) {
+            process.stderr.write(`[coogent-stdio] Dispose error: ${(err as Error).message}\n`);
+        }
         process.exit(0);
     };
 

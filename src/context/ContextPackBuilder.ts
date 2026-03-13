@@ -71,18 +71,50 @@ export class ContextPackBuilder {
      * @returns The assembled context pack and its audit manifest.
      */
     async build(input: BuildContextPackInput): Promise<BuildContextPackResult> {
+        // Fail-fast input validation per ETSL protocol §3.A.
+        // If Phase A's output does not satisfy Phase B's input schema, throw
+        // a validation error before Phase B begins.
+        if (!input.taskId || !input.phaseId || !input.sessionId) {
+            const missing = [
+                !input.taskId && 'taskId',
+                !input.phaseId && 'phaseId',
+                !input.sessionId && 'sessionId',
+            ].filter(Boolean).join(', ');
+            throw new Error(`[ContextPackBuilder] Missing required field(s): ${missing}`);
+        }
+        if (input.maxTokens <= 0) {
+            throw new Error(`[ContextPackBuilder] Invalid maxTokens: ${input.maxTokens} (must be > 0)`);
+        }
+
         const { sessionId, taskId, phaseId, workspaceFolder, prompt, contextFiles, upstreamPhaseIds, maxTokens } = input;
 
         log.info(`[ContextPackBuilder] Building context pack for phase ${phaseId} (budget: ${maxTokens} tokens)`);
 
         // ── Step 1: Collect upstream handoffs ────────────────────────────────
         const handoffs: HandoffPacket[] = [];
+        const missingUpstreamPhaseIds: string[] = [];
         let handoffTokens = 0;
 
         for (const upPhaseId of upstreamPhaseIds) {
             const raw = this.artifactDb.handoffs.get(taskId, upPhaseId);
             if (!raw) {
                 log.warn(`[ContextPackBuilder] No handoff found for upstream phase ${upPhaseId}`);
+                missingUpstreamPhaseIds.push(upPhaseId);
+                // Inject a synthetic warning packet so the worker knows
+                // upstream context is missing/degraded rather than silently receiving nothing.
+                handoffs.push({
+                    handoffId: `${taskId}::${upPhaseId}::MISSING`,
+                    sessionId,
+                    taskId,
+                    fromPhaseId: upPhaseId,
+                    summary: `⚠ UPSTREAM HANDOFF MISSING: Phase ${upPhaseId} did not produce a handoff report. ` +
+                        `This may indicate the parent phase crashed or its output could not be parsed. ` +
+                        `Proceed with caution — validate any assumptions about this phase's output.`,
+                    changedFiles: [],
+                    decisions: [],
+                    openQuestions: [`No handoff data available from phase ${upPhaseId}`],
+                    producedAt: new Date().toISOString(),
+                });
                 continue;
             }
 
@@ -293,6 +325,7 @@ export class ContextPackBuilder {
             ...wsFolder(workspaceFolder),
             upstreamPhaseIds,
             includedHandoffIds: handoffs.map(h => h.handoffId),
+            ...(missingUpstreamPhaseIds.length > 0 ? { missingUpstreamPhaseIds } : {}),
             fileDecisions,
             dependencyDecisions,
             totals: {
@@ -377,6 +410,8 @@ export class ContextPackBuilder {
             ...(raw.warnings !== undefined ? { warnings: raw.warnings } : {}),
             changedFiles,
             decisions: raw.decisions,
+            ...(raw.nextStepsContext ? { nextStepsContext: raw.nextStepsContext } : {}),
+            ...(raw.blockers.length > 0 ? { openQuestions: raw.blockers } : {}),
             producedAt: new Date(raw.completedAt).toISOString(),
         };
     }

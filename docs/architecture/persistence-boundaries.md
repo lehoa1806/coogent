@@ -12,7 +12,7 @@ Coogent's persistence is divided across four subsystems, each with a clear owner
 
 ## StateManager — Runbook & Session Durability
 
-**Source**: [`src/state/StateManager.ts`](../src/state/StateManager.ts)
+**Source**: [`src/state/StateManager.ts`](../../src/state/StateManager.ts)
 
 **Owns**: Runbook persistence, session state, crash recovery.
 
@@ -58,7 +58,7 @@ When an `ArtifactDB` instance is attached via `setArtifactDB()`:
 
 ## ArtifactDB — Artifact Persistence
 
-**Source**: [`src/mcp/ArtifactDB.ts`](../src/mcp/ArtifactDB.ts)
+**Source**: [`src/mcp/ArtifactDB.ts`](../../src/mcp/ArtifactDB.ts)
 
 **Owns**: All artifact persistence (tasks, phases, handoffs, evaluations, healing attempts, plan revisions, selection audits, worker outputs, phase logs, context manifests, sessions).
 
@@ -111,7 +111,7 @@ The MCP server provides **read and write access** to artifacts via `coogent://` 
 
 ## IPC — Transient File Exchange
 
-**Source**: Path builders in [`src/constants/paths.ts`](../src/constants/paths.ts)
+**Source**: Path builders in [`src/constants/paths.ts`](../../src/constants/paths.ts)
 
 IPC files are **transient** — they exist only for the duration of a master↔worker communication cycle.
 

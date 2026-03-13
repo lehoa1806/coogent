@@ -20,6 +20,10 @@ export async function handleGetFileSlice(
         throw new Error('Invalid line range: startLine and endLine must be positive integers with startLine <= endLine.');
     }
 
+    const MAX_LINE_RANGE = 2000;
+    const requestedRange = endLine - startLine + 1;
+    const cappedEndLine = requestedRange > MAX_LINE_RANGE ? startLine + MAX_LINE_RANGE - 1 : endLine;
+
     if (filePath.length > 260 || !/^[\w\-./]+$/.test(filePath)) {
         throw new Error('Invalid path: contains disallowed characters or exceeds maximum length.');
     }
@@ -43,12 +47,17 @@ export async function handleGetFileSlice(
     try {
         const rawContent = await fs.readFile(resolved, 'utf-8');
         const lines = rawContent.split('\n');
-        const sliced = lines.slice(startLine - 1, endLine);
+        const sliced = lines.slice(startLine - 1, cappedEndLine);
+        const wasTruncated = cappedEndLine < endLine;
         log.info(
-            `[MCPToolHandler] File slice read: ${filePath} L${startLine}-${endLine}`
+            `[MCPToolHandler] File slice read: ${filePath} L${startLine}-${cappedEndLine}${wasTruncated ? ` (capped from ${endLine})` : ''}`
         );
+        let text = sliced.join('\n');
+        if (wasTruncated) {
+            text += `\n\n[TRUNCATED: Requested L${startLine}-${endLine} (${requestedRange} lines) exceeds max range of ${MAX_LINE_RANGE}. Showing L${startLine}-${cappedEndLine}.]`;
+        }
         return {
-            content: [{ type: 'text', text: sliced.join('\n') }],
+            content: [{ type: 'text', text }],
         };
     } catch (err: unknown) {
         const code = (err as NodeJS.ErrnoException).code;

@@ -6,7 +6,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { HandoffExtractor, type HandoffReport } from '../HandoffExtractor.js';
+import { HandoffExtractor } from '../HandoffExtractor.js';
 import { asPhaseId, type Phase } from '../../types/index.js';
 
 describe('HandoffExtractor', () => {
@@ -95,6 +95,53 @@ describe('HandoffExtractor', () => {
             expect(report.next_steps_context).toBe('final');
         });
 
+        it('should extract enriched fields (summary, rationale, remaining_work, constraints, warnings)', async () => {
+            const workerOutput = [
+                '```json',
+                JSON.stringify({
+                    decisions: ['Refactored auth module'],
+                    modified_files: ['src/auth.ts'],
+                    unresolved_issues: [],
+                    next_steps_context: 'Ready for integration tests',
+                    summary: 'Completed auth module refactoring with JWT support',
+                    rationale: 'JWT chosen for stateless authentication',
+                    remaining_work: ['Add refresh token rotation', 'Update API docs'],
+                    constraints: ['Must preserve existing session cookies'],
+                    warnings: ['Rate limiting not yet implemented'],
+                }),
+                '```',
+            ].join('\n');
+
+            const report = await extractor.extractHandoff(1, workerOutput);
+
+            expect(report.summary).toBe('Completed auth module refactoring with JWT support');
+            expect(report.rationale).toBe('JWT chosen for stateless authentication');
+            expect(report.remaining_work).toEqual(['Add refresh token rotation', 'Update API docs']);
+            expect(report.constraints).toEqual(['Must preserve existing session cookies']);
+            expect(report.warnings).toEqual(['Rate limiting not yet implemented']);
+        });
+
+        it('should leave enriched fields undefined when absent in worker output', async () => {
+            const workerOutput = [
+                '```json',
+                JSON.stringify({
+                    decisions: ['Done'],
+                    modified_files: [],
+                    unresolved_issues: [],
+                    next_steps_context: '',
+                }),
+                '```',
+            ].join('\n');
+
+            const report = await extractor.extractHandoff(1, workerOutput);
+
+            expect(report.summary).toBeUndefined();
+            expect(report.rationale).toBeUndefined();
+            expect(report.remaining_work).toBeUndefined();
+            expect(report.constraints).toBeUndefined();
+            expect(report.warnings).toBeUndefined();
+        });
+
         it('should redact secrets in decisions, unresolved_issues, and next_steps_context', async () => {
             // Construct synthetic keys from parts to avoid GitHub Push Protection (GH013)
             const stripeKey = ['sk', 'live', '4eC39HqLyjWDarjtT1zdp7dc'].join('_');
@@ -172,46 +219,6 @@ describe('HandoffExtractor', () => {
     });
 
     // ═════════════════════════════════════════════════════════════════════════
-    //  saveHandoff (MCP-only — Sprint 4: file fallback removed)
-    // ═════════════════════════════════════════════════════════════════════════
-
-    describe('saveHandoff (MCP-only)', () => {
-        const sampleReport: HandoffReport = {
-            phaseId: 1,
-            decisions: ['Decision A'],
-            modified_files: ['src/a.ts'],
-            unresolved_issues: [],
-            next_steps_context: 'Context for next phase',
-            timestamp: 1700000000000,
-        };
-
-        it('should submit handoff via MCP bridge when available', async () => {
-            const mockBridge = {
-                submitPhaseHandoff: jest.fn().mockResolvedValue(undefined),
-            };
-            await extractor.saveHandoff(
-                1,
-                sampleReport,
-                mockBridge as any,
-                'task-001',
-            );
-            expect(mockBridge.submitPhaseHandoff).toHaveBeenCalledWith(
-                'task-001',
-                expect.stringContaining('phase-001'),
-                sampleReport.decisions,
-                sampleReport.modified_files,
-                sampleReport.unresolved_issues,
-            );
-        });
-
-        it('should not crash when no MCP bridge is provided', async () => {
-            // Should log a warning but not throw
-            await expect(
-                extractor.saveHandoff(1, sampleReport),
-            ).resolves.toBeUndefined();
-        });
-    });
-
     // ═════════════════════════════════════════════════════════════════════════
     //  buildNextContext
     // ═════════════════════════════════════════════════════════════════════════
@@ -399,8 +406,10 @@ describe('HandoffExtractor', () => {
             expect(ctx).toContain('### Unresolved Issues');
             expect(ctx).toContain('### Next Steps Context');
 
-            // Enriched sections absent
-            expect(ctx).not.toContain('### Summary');
+            // Summary section now appears using nextStepsContext as fallback
+            expect(ctx).toContain('### Summary');
+
+            // Other enriched sections absent
             expect(ctx).not.toContain('### Rationale');
             expect(ctx).not.toContain('### Remaining Work');
             expect(ctx).not.toContain('### Constraints');

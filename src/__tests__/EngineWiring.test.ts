@@ -331,7 +331,7 @@ describe('wireEngine', () => {
         adk.emit('worker:exited', 1, 0);
         await new Promise(r => setTimeout(r, 50));
 
-        // next_steps_context should be passed as the 6th argument
+        // next_steps_context should be passed as the 6th argument, enrichment as 7th
         expect(mockMcpBridge.submitPhaseHandoff).toHaveBeenCalledWith(
             'session-001',
             'phase-001-abc',
@@ -339,6 +339,76 @@ describe('wireEngine', () => {
             ['f.ts'],
             [],
             'Phase 3 should run the migration and verify schema.',
+            {
+                summary: undefined,
+                rationale: undefined,
+                remainingWork: undefined,
+                constraints: undefined,
+                warnings: undefined,
+            },
+        );
+    });
+
+    // ── Enriched fields round trip: extract → submit ─────────────────
+    it('worker:exited(0) passes enriched fields through to submitPhaseHandoff', async () => {
+        const mockReport = {
+            decisions: ['d1'],
+            modified_files: ['f.ts'],
+            unresolved_issues: [],
+            next_steps_context: 'Next steps here',
+            summary: 'Completed auth refactoring',
+            rationale: 'JWT chosen for stateless auth',
+            remaining_work: ['Add refresh tokens'],
+            constraints: ['Keep existing sessions'],
+            warnings: ['Rate limiting pending'],
+        };
+        const mockHandoffExtractor = {
+            extractHandoff: jest.fn().mockResolvedValue(mockReport),
+            extractImplementationPlan: jest.fn().mockReturnValue(null),
+            generateDistillationPrompt: jest.fn().mockReturnValue(''),
+            buildNextContext: jest.fn().mockResolvedValue(''),
+        };
+        const mockMcpBridge = {
+            submitPhaseHandoff: jest.fn().mockResolvedValue(undefined),
+            submitImplementationPlan: jest.fn().mockResolvedValue(undefined),
+        };
+
+        svc.handoffExtractor = createMockHandoffExtractor({
+            extractHandoff: mockHandoffExtractor.extractHandoff,
+            extractImplementationPlan: mockHandoffExtractor.extractImplementationPlan,
+            generateDistillationPrompt: mockHandoffExtractor.generateDistillationPrompt,
+            buildNextContext: mockHandoffExtractor.buildNextContext,
+        });
+        svc.mcpBridge = createMockMcpBridge({
+            submitPhaseHandoff: mockMcpBridge.submitPhaseHandoff,
+        });
+        svc.currentSessionDir = '/workspace/.coogent/ipc/session-001';
+
+        engine.getRunbook.mockReturnValue({
+            phases: [{ id: 1, mcpPhaseId: 'phase-001-abc' }],
+        });
+
+        wireEngine(svc, '/workspace', 60000);
+        svc.workerOutputAccumulator.set(1, 'output');
+
+        adk.emit('worker:exited', 1, 0);
+        await new Promise(r => setTimeout(r, 50));
+
+        // Enriched fields should be passed as the 7th argument (enrichment bag)
+        expect(mockMcpBridge.submitPhaseHandoff).toHaveBeenCalledWith(
+            'session-001',
+            'phase-001-abc',
+            ['d1'],
+            ['f.ts'],
+            [],
+            'Next steps here',
+            {
+                summary: 'Completed auth refactoring',
+                rationale: 'JWT chosen for stateless auth',
+                remainingWork: ['Add refresh tokens'],
+                constraints: ['Keep existing sessions'],
+                warnings: ['Rate limiting pending'],
+            },
         );
     });
 

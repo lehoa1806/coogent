@@ -130,30 +130,30 @@ describe('MCPToolHandler — get_file_slice workspaceFolder validation', () => {
         expect(mockLogWarn).not.toHaveBeenCalled();
     });
 
-    it('throws Access denied when workspaceFolder is /etc', async () => {
+    it('returns isError when workspaceFolder is /etc', async () => {
         const { callTool } = createHandler();
 
-        await expect(
-            callTool('get_file_slice', {
-                path: 'passwd',
-                startLine: 1,
-                endLine: 1,
-                workspaceFolder: '/etc',
-            }),
-        ).rejects.toThrow('Access denied: workspaceFolder is not within the allowed workspace roots.');
+        const result = await callTool('get_file_slice', {
+            path: 'passwd',
+            startLine: 1,
+            endLine: 1,
+            workspaceFolder: '/etc',
+        });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toBe('Access denied: workspaceFolder is not within the allowed workspace roots.');
     });
 
-    it('throws Access denied when workspaceFolder is ../../', async () => {
+    it('returns isError when workspaceFolder is ../../', async () => {
         const { callTool } = createHandler();
 
-        await expect(
-            callTool('get_file_slice', {
-                path: 'secrets.txt',
-                startLine: 1,
-                endLine: 1,
-                workspaceFolder: '../../',
-            }),
-        ).rejects.toThrow('Access denied: workspaceFolder is not within the allowed workspace roots.');
+        const result = await callTool('get_file_slice', {
+            path: 'secrets.txt',
+            startLine: 1,
+            endLine: 1,
+            workspaceFolder: '../../',
+        });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toBe('Access denied: workspaceFolder is not within the allowed workspace roots.');
     });
 
     it('uses default workspaceRoot when workspaceFolder is omitted', async () => {
@@ -196,16 +196,16 @@ describe('MCPToolHandler — get_symbol_context workspaceFolder validation', () 
         setupFsMocks();
     });
 
-    it('throws Access denied when workspaceFolder is external', async () => {
+    it('returns isError when workspaceFolder is external', async () => {
         const { callTool } = createHandler();
 
-        await expect(
-            callTool('get_symbol_context', {
-                path: 'src/index.ts',
-                symbol: 'foo',
-                workspaceFolder: '/tmp/evil',
-            }),
-        ).rejects.toThrow('Access denied: workspaceFolder is not within the allowed workspace roots.');
+        const result = await callTool('get_symbol_context', {
+            path: 'src/index.ts',
+            symbol: 'foo',
+            workspaceFolder: '/tmp/evil',
+        });
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toBe('Access denied: workspaceFolder is not within the allowed workspace roots.');
     });
 
     it('succeeds with a subdirectory of the allowed root', async () => {
@@ -274,14 +274,14 @@ describe('MCPToolHandler — multiple allowedWorkspaceRoots', () => {
         expect(resultB.content[0].text).toBe('line1');
 
         // Root C (not allowed) should fail
-        await expect(
-            callTool('get_file_slice', {
-                path: 'src/c.ts',
-                startLine: 1,
-                endLine: 1,
-                workspaceFolder: '/home/user/malicious-project',
-            }),
-        ).rejects.toThrow('Access denied: workspaceFolder is not within the allowed workspace roots.');
+        const resultC = await callTool('get_file_slice', {
+            path: 'src/c.ts',
+            startLine: 1,
+            endLine: 1,
+            workspaceFolder: '/home/user/malicious-project',
+        });
+        expect(resultC.isError).toBe(true);
+        expect(resultC.content[0].text).toBe('Access denied: workspaceFolder is not within the allowed workspace roots.');
 
         // Verify log.warn was NOT called for the two successful requests
         // (it may have been called for the failed one, but not for the successes)
@@ -304,12 +304,12 @@ describe('MCPToolHandler — multiple allowedWorkspaceRoots', () => {
         expect(result.content[0].text).toContain('function foo() {}');
 
         // Disallowed root should fail
-        await expect(
-            callTool('get_symbol_context', {
-                path: 'lib/utils.ts',
-                symbol: 'foo',
-                workspaceFolder: '/var/log',
-            }),
-        ).rejects.toThrow('Access denied: workspaceFolder is not within the allowed workspace roots.');
+        const resultFail = await callTool('get_symbol_context', {
+            path: 'lib/utils.ts',
+            symbol: 'foo',
+            workspaceFolder: '/var/log',
+        });
+        expect(resultFail.isError).toBe(true);
+        expect(resultFail.content[0].text).toBe('Access denied: workspaceFolder is not within the allowed workspace roots.');
     });
 });

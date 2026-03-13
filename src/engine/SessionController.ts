@@ -4,6 +4,7 @@
 // Sprint 1 Extract: Session cluster from Engine.ts.
 // Handles loadRunbook, reset, switchSession.
 
+import { randomUUID } from 'node:crypto';
 import {
     EngineState,
     EngineEvent,
@@ -81,6 +82,15 @@ export class SessionController {
             }
 
             this.engine.setRunbook(runbook);
+
+            // Assign mcpPhaseId eagerly to ALL phases at load time
+            // so that handoff submission never silently discards due to missing IDs.
+            for (const phase of runbook.phases) {
+                if (!phase.mcpPhaseId) {
+                    phase.mcpPhaseId = `phase-${String(phase.id).padStart(3, '0')}-${randomUUID()}`;
+                }
+            }
+
             this.engine.transition(EngineEvent.PARSE_SUCCESS);
 
             const sessionId = this.engine.getSessionDirName();

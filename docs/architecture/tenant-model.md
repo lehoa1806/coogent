@@ -20,7 +20,7 @@ A `workspace_id` is a **16-hex-character prefix** of the SHA-256 hash of the can
 
 ### Derivation Algorithm
 
-The derivation is implemented in [`src/constants/WorkspaceIdentity.ts`](../src/constants/WorkspaceIdentity.ts):
+The derivation is implemented in [`src/constants/WorkspaceIdentity.ts`](../../src/constants/WorkspaceIdentity.ts):
 
 ```typescript
 function canonicalize(workspaceRoot: string): string {
@@ -65,7 +65,7 @@ Create a full identity descriptor via `createWorkspaceIdentity(workspaceRoot)`.
 
 ### `StorageBase.getWorkspaceId()`
 
-[`StorageBase`](../src/constants/StorageBase.ts) is the **canonical access point** for the workspace ID at runtime. It derives the ID in its constructor and exposes it via `getWorkspaceId()`.
+[`StorageBase`](../../src/constants/StorageBase.ts) is the **canonical access point** for the workspace ID at runtime. It derives the ID in its constructor and exposes it via `getWorkspaceId()`.
 
 ```typescript
 const storage = createStorageBase(storageUri, workspaceRoot);

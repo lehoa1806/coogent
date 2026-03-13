@@ -182,31 +182,37 @@ describe('MCPClientBridge — buildWarmStartPrompt', () => {
         expect(prompt).toContain(`master task ${VALID_MASTER_TASK_ID}`);
     });
 
-    it('uses phaseId for handoff URI when no parentPhaseIds given (fallback)', () => {
+    it('omits handoff URI for root phase with no parentPhaseIds (V16 Finding 7)', () => {
         const prompt = bridge.buildWarmStartPrompt(
             VALID_MASTER_TASK_ID,
             VALID_PHASE_ID
         );
 
-        const expectedHandoffUri = RESOURCE_URIS.phaseHandoff(
+        // Root phases should NOT point to their own (nonexistent) handoff
+        const selfHandoffUri = RESOURCE_URIS.phaseHandoff(
             VALID_MASTER_TASK_ID,
             VALID_PHASE_ID
         );
-        expect(prompt).toContain(expectedHandoffUri);
+        expect(prompt).not.toContain(selfHandoffUri);
+        // But should still include the global plan URI
+        expect(prompt).toContain(RESOURCE_URIS.taskPlan(VALID_MASTER_TASK_ID));
     });
 
-    it('uses parentPhaseIds array for handoff URIs when empty array passed (fallback to self)', () => {
+    it('omits handoff URI for root phase with empty parentPhaseIds array (V16 Finding 7)', () => {
         const prompt = bridge.buildWarmStartPrompt(
             VALID_MASTER_TASK_ID,
             VALID_PHASE_ID,
             []
         );
 
-        const expectedHandoffUri = RESOURCE_URIS.phaseHandoff(
+        // Root phases should NOT point to their own (nonexistent) handoff
+        const selfHandoffUri = RESOURCE_URIS.phaseHandoff(
             VALID_MASTER_TASK_ID,
             VALID_PHASE_ID
         );
-        expect(prompt).toContain(expectedHandoffUri);
+        expect(prompt).not.toContain(selfHandoffUri);
+        // But should still include the global plan URI
+        expect(prompt).toContain(RESOURCE_URIS.taskPlan(VALID_MASTER_TASK_ID));
     });
 
     it('uses single parentPhaseId array for handoff URI when one parent provided', () => {

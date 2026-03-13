@@ -88,7 +88,7 @@ export function parseResourceURI(uri: string): ParsedResourceURI | null {
     }
 
     // Phase-level resources: coogent://tasks/{id}/phases/{phaseId}/execution_plan|handoff
-    if (segments.length >= 3 && segments[0] === 'phases') {
+    if (segments.length === 3 && segments[0] === 'phases') {
         const phaseMatch = segments[1].match(URI_PHASE_ID_REGEX);
         if (!phaseMatch) {
             return null;
@@ -241,12 +241,20 @@ export class CoogentMCPServer {
      */
     dispose(): void {
         // Deactivate plugins first (Sprint 5)
-        this.pluginLoader?.disposeAll().catch((err) => {
-            log.warn('[CoogentMCPServer] Plugin dispose error:', (err as Error).message);
-        });
+        // Note: disposeAll() is async but VS Code's deactivate() may not await.
+        // We kick it off and catch errors, but proceed to close the DB regardless.
+        // Plugins must not depend on the DB during deactivation.
+        if (this.pluginLoader) {
+            this.pluginLoader.disposeAll().catch((err) => {
+                log.warn('[CoogentMCPServer] Plugin dispose error:', (err as Error).message);
+            });
+            this.pluginLoader = null;
+        }
 
-        this.db.close();
-        log.info('[CoogentMCPServer] ArtifactDB disposed.');
+        if (this.db) {
+            this.db.close();
+            log.info('[CoogentMCPServer] ArtifactDB disposed.');
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════════════

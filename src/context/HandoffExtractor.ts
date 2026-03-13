@@ -3,7 +3,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { Phase, PhaseId } from '../types/index.js';
-import type { MCPClientBridge } from '../mcp/MCPClientBridge.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 import { z } from 'zod';
 import { SecretsGuard } from './SecretsGuard.js';
@@ -15,6 +14,12 @@ const HandoffJsonSchema = z.object({
     modified_files: z.array(z.string()).default([]),
     unresolved_issues: z.array(z.string()).default([]),
     next_steps_context: z.string().default(''),
+    // Enriched fields — optional, populated by workers that produce richer context
+    summary: z.string().optional(),
+    rationale: z.string().optional(),
+    remaining_work: z.array(z.string()).optional(),
+    constraints: z.array(z.string()).optional(),
+    warnings: z.array(z.string()).optional(),
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -137,50 +142,35 @@ export class HandoffExtractor {
             ? SecretsGuard.redact(parsed.next_steps_context)
             : '';
 
+        // Enriched fields — redact strings, pass arrays through
+        const summary = typeof parsed.summary === 'string'
+            ? SecretsGuard.redact(parsed.summary) : undefined;
+        const rationale = typeof parsed.rationale === 'string'
+            ? SecretsGuard.redact(parsed.rationale) : undefined;
+        const remaining_work = Array.isArray(parsed.remaining_work)
+            ? parsed.remaining_work.map((r: string) => SecretsGuard.redact(String(r)))
+            : undefined;
+        const constraints = Array.isArray(parsed.constraints)
+            ? parsed.constraints.map((c: string) => SecretsGuard.redact(String(c)))
+            : undefined;
+        const warnings = Array.isArray(parsed.warnings)
+            ? parsed.warnings.map((w: string) => SecretsGuard.redact(String(w)))
+            : undefined;
+
         return {
             phaseId,
             decisions,
-            modified_files: Array.isArray(parsed.modified_files) ? parsed.modified_files : [],
+            modified_files: (Array.isArray(parsed.modified_files) ? parsed.modified_files : [])
+                .map((f: string) => SecretsGuard.redact(String(f))),
             unresolved_issues: unresolvedIssues,
             next_steps_context: nextSteps,
             timestamp: Date.now(),
+            summary,
+            rationale,
+            remaining_work,
+            constraints,
+            warnings,
         };
-    }
-
-    /**
-     * Persist a handoff report to the MCP state store.
-     *
-     * Sprint 4: Removed file fallback — DB is the authoritative source.
-     *
-     * @deprecated This method is dead code in the production pipeline.
-     * The actual persistence path is `WorkerResultProcessor.processWorkerExit()`
-     * → `MCPClientBridge.submitPhaseHandoff()`. This method also uses a
-     * hardcoded phaseId format that does not match real `mcpPhaseId` values
-     * from the runbook. Retained only for backward compatibility with tests.
-     */
-    async saveHandoff(
-        phaseId: number,
-        report: HandoffReport,
-        mcpBridge?: MCPClientBridge,
-        masterTaskId?: string,
-    ): Promise<void> {
-        if (mcpBridge && masterTaskId) {
-            try {
-                const phaseIdStr = `phase-${String(phaseId).padStart(3, '0')}-00000000-0000-0000-0000-000000000000`;
-                await mcpBridge.submitPhaseHandoff(
-                    masterTaskId,
-                    phaseIdStr,
-                    report.decisions ?? [],
-                    report.modified_files ?? [],
-                    report.unresolved_issues ?? [],
-                );
-                log.info(`[HandoffExtractor] Phase ${phaseId} handoff submitted to MCP state.`);
-            } catch (err) {
-                log.warn(`[HandoffExtractor] Failed to submit phase ${phaseId} handoff to MCP:`, err);
-            }
-        } else {
-            log.warn(`[HandoffExtractor] No MCP bridge — phase ${phaseId} handoff NOT persisted.`);
-        }
     }
 
     /**
@@ -231,18 +221,36 @@ export class HandoffExtractor {
             }
 
             if (!report) {
-                sections.push(`## Phase ${depId} Handoff\n_No handoff report found._\n`);
+                // Provide actionable guidance when parent handoff is missing.
+                sections.push(
+                    `## Phase ${depId} Handoff\n` +
+                    `_No handoff report found._ This may indicate the parent phase crashed ` +
+                    `or its handoff extraction failed. Proceed with caution — validate any ` +
+                    `assumptions about parent phase output before building on them.\n`
+                );
                 continue;
+            }
+
+            // Integrity assertion: warn when a persisted handoff is effectively empty.
+            if (report.decisions.length === 0 && report.modified_files.length === 0 &&
+                report.unresolved_issues.length === 0 && !report.next_steps_context) {
+                log.warn(
+                    `[HandoffExtractor] Phase ${depId}: handoff report appears empty — ` +
+                    `possible data loss in the persistence pipeline.`,
+                );
             }
 
             const lines: string[] = [
                 `## Phase ${depId} Handoff`,
+                `_Completed: ${new Date(report.timestamp).toISOString()}_`,
                 '',
             ];
 
-            // Summary — high-level overview of what was accomplished
-            if (report.summary) {
-                lines.push('### Summary', report.summary, '');
+            // Align with ContextPackBuilder.phaseHandoffToPacket() — use
+            // nextStepsContext as fallback summary when summary is absent.
+            const effectiveSummary = report.summary || report.next_steps_context || undefined;
+            if (effectiveSummary) {
+                lines.push('### Summary', effectiveSummary, '');
             }
 
             lines.push(

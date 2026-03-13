@@ -92,9 +92,9 @@ getTelemetryLogDir(workspaceRoot)    // → <workspaceRoot>/.coogent/logs/
 
 ## Path Authority
 
-[`src/constants/paths.ts`](../src/constants/paths.ts) is the **single source of truth** for all filesystem paths, directory names, and file names used by Coogent.
+[`src/constants/paths.ts`](../../src/constants/paths.ts) is the **single source of truth** for all filesystem paths, directory names, and file names used by Coogent.
 
-[`src/constants/StorageBase.ts`](../src/constants/StorageBase.ts) provides the **unified storage-base abstraction** that routes durable paths to the global directory and operational paths to the workspace-local directory.
+[`src/constants/StorageBase.ts`](../../src/constants/StorageBase.ts) provides the **unified storage-base abstraction** that routes durable paths to the global directory and operational paths to the workspace-local directory.
 
 ### Routing Logic (`StorageBase`)
 

@@ -34,6 +34,7 @@
 | **[developer-guide.md](developer-guide.md)** | Local development, full project structure, debugging, 113-file test suite reference, CI/CD pipeline, build commands, code conventions, and contribution guidelines |
 | **[api-reference.md](api-reference.md)** | MCP URIs, MCP tools, IPC message contracts, data model schemas, and branded types |
 | **[operations.md](operations.md)** | Packaging, deployment, CI/CD pipeline, migration runbook, troubleshooting guide, backup/recovery, and log locations |
+| **[context-management.md](context-management.md)** | Context management workflow: ETSL pattern, handoff extraction, state schemas, storage mechanism, and error recovery |
 
 ---
 
@@ -59,7 +60,7 @@
 
 ## ADRs & PRDs (Hybrid Storage Design)
 
-Design documents in [`coogent_ hybrid_storage/`](../../coogent_%20hybrid_storage/README.md) covering the hybrid global storage architecture:
+Design documents in `coogent_ hybrid_storage/` covering the hybrid global storage architecture:
 
 | Document | Description |
 |---|---|

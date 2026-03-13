@@ -1152,7 +1152,7 @@ All tables listed in `TENANT_TABLES` are merged during reload-before-write, plus
 
 ## Workspace Identity & Tenanting
 
-`WorkspaceIdentity` (`src/constants/WorkspaceIdentity.ts`) implements a deterministic workspace identity scheme per [ADR-002](../../coogent_%20hybrid_storage/ADR-002-workspace-tenant-identity.md).
+`WorkspaceIdentity` (`src/constants/WorkspaceIdentity.ts`) implements a deterministic workspace identity scheme per ADR-002.
 
 ### Identity Derivation
 
@@ -1170,7 +1170,7 @@ All 11 tenant-owned tables include a `workspace_id` column with indexes for effi
 
 ### Design Decision History
 
-The hybrid storage model (global ArtifactDB + workspace-local operational state) is documented in a suite of ADRs and PRDs in [`coogent_ hybrid_storage/`](../../coogent_%20hybrid_storage/README.md):
+The hybrid storage model (global ArtifactDB + workspace-local operational state) is documented in a suite of ADRs and PRDs in `coogent_ hybrid_storage/`:
 
 | Document | Topic |
 |---|---|

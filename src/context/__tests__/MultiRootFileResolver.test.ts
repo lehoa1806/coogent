@@ -9,6 +9,7 @@ import { asPhaseId } from '../../types/index.js';
 jest.mock('node:fs/promises', () => ({
     access: jest.fn(),
     readFile: jest.fn(),
+    stat: jest.fn().mockResolvedValue({ isFile: () => true }),
 }));
 
 jest.mock('node:fs', () => ({

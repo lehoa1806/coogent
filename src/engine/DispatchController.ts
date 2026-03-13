@@ -23,8 +23,8 @@ export interface DispatchControllerOptions {
     readonly artifactDb?: ArtifactDB | (() => ArtifactDB | undefined);
     /** TelemetryLogger instance for telemetry events. */
     readonly logger?: TelemetryLogger;
-    /** Session directory name for audit record persistence. */
-    readonly sessionDirName?: string;
+    /** Session directory name (or getter) for audit record persistence. */
+    readonly sessionDirName?: string | (() => string);
     /**
      * ContextPackBuilder for assembling context packs before worker spawn.
      * Accepts a getter function to support deferred initialization
@@ -56,8 +56,8 @@ export class DispatchController {
     private readonly artifactDb: ArtifactDB | (() => ArtifactDB | undefined) | undefined;
     /** TelemetryLogger for structured event logging. */
     private readonly telemetryLogger: TelemetryLogger | undefined;
-    /** Session directory name used as session_id in audit records. */
-    private readonly sessionDirName: string;
+    /** V2 audit fix: Session dir name getter — resolved at call time to avoid stale capture. */
+    private readonly getSessionDirName: () => string;
     /** S3-4: Shadow mode — run pipeline for observability without affecting dispatch. */
     private readonly enableShadowMode: boolean;
     /** ContextPackBuilder getter — resolved lazily at dispatch time. */
@@ -75,7 +75,8 @@ export class DispatchController {
         this.enableShadowMode = options?.enableShadowMode ?? false;
         this.artifactDb = options?.artifactDb;
         this.telemetryLogger = options?.logger;
-        this.sessionDirName = options?.sessionDirName ?? '';
+        const sdn = options?.sessionDirName;
+        this.getSessionDirName = typeof sdn === 'function' ? sdn : () => sdn ?? '';
         this.contextPackBuilderOrGetter = options?.contextPackBuilder;
         this.mcpReady = options?.mcpReady;
         this.contextBudgetTokens = options?.contextBudgetTokens ?? 100_000;
@@ -122,6 +123,18 @@ export class DispatchController {
             this.telemetryLogger?.logBoundaryEvent(ERR_DISPATCH_ASYNC_FAILURE, {
                 operation: 'dispatchReadyPhases.persist',
                 message: err instanceof Error ? err.message : String(err),
+            });
+            // Surface persist failure to the webview UI so operators
+            // are aware that in-memory state may diverge from disk on crash.
+            this.engine.emitUIMessage({
+                type: 'LOG_ENTRY',
+                payload: {
+                    timestamp: asTimestamp(),
+                    level: 'warn',
+                    message: `⚠ Phase state persist failed after dispatch — ` +
+                        `in-memory state may diverge from disk on crash. ` +
+                        `(${err instanceof Error ? err.message : String(err)})`,
+                },
             });
         }
 
@@ -311,7 +324,9 @@ export class DispatchController {
 
         await this.engine.persist();
         this.startStallWatchdog();
-        this.dispatchReadyPhases();
+        // Await dispatch to prevent stall watchdog from
+        // firing before phases are actually dispatched.
+        await this.dispatchReadyPhases();
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -392,7 +407,7 @@ export class DispatchController {
             }
 
             const packResult = await resolvedBuilder.build({
-                sessionId: this.sessionDirName,
+                sessionId: this.getSessionDirName(),
                 taskId: runbook.project_id,
                 phaseId: String(phase.id),
                 prompt: phase.prompt,
@@ -412,6 +427,24 @@ export class DispatchController {
         // eslint-disable-next-line consistent-return
         return doBuild().catch(err => {
             log.warn(`[DispatchController] Context pack build failed for phase ${phase.id}:`, err);
+
+            this.telemetryLogger?.logBoundaryEvent(ERR_DISPATCH_ASYNC_FAILURE, {
+                operation: 'buildContextPack',
+                phaseId: phase.id,
+                message: err instanceof Error ? err.message : String(err),
+            });
+            // Surface context pack build failure to webview UI so
+            // operators know the worker may start without full upstream context.
+            this.engine.emitUIMessage({
+                type: 'LOG_ENTRY',
+                payload: {
+                    timestamp: asTimestamp(),
+                    level: 'error',
+                    message: `🚨 Phase ${phase.id}: context pack build FAILED — ` +
+                        `worker will start WITHOUT upstream context. ` +
+                        `(${err instanceof Error ? err.message : String(err)})`,
+                },
+            });
         });
     }
 
@@ -481,7 +514,7 @@ export class DispatchController {
             if (resolvedDb) {
                 const auditWithSession = {
                     ...result.audit,
-                    session_id: this.sessionDirName,
+                    session_id: this.getSessionDirName(),
                 };
                 resolvedDb.audits.insertSelectionAudit(auditWithSession);
             }
