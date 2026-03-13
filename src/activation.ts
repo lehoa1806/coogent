@@ -30,6 +30,7 @@ import { ConsolidationAgent } from './consolidation/ConsolidationAgent.js';
 import { CoogentMCPServer } from './mcp/CoogentMCPServer.js';
 import { MCPClientBridge } from './mcp/MCPClientBridge.js';
 import { deployMCPServer } from './mcp/MCPServerDeployer.js';
+import { deployMCPConfig } from './mcp/MCPConfigDeployer.js';
 import { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
 import { AgentRegistry } from './agent-selection/AgentRegistry.js';
@@ -204,6 +205,13 @@ export function startMCPServer(svc: ServiceContainer, primaryRoot: string): void
         deployMCPServer(svc.extensionPath);
     } else {
         log.warn('[Coogent] startMCPServer: extensionPath not set — skipping MCP deployment.');
+    }
+
+    // Deploy MCP config for external AI tools (Antigravity IDE, Cursor, etc.)
+    try {
+        deployMCPConfig(primaryRoot);
+    } catch (err) {
+        log.warn('[Coogent] startMCPServer: MCP config deployment failed (non-fatal):', err);
     }
 
     svc.mcpServer = new CoogentMCPServer(primaryRoot);
