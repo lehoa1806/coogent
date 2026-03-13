@@ -62,7 +62,7 @@ export function wireEngine(
         const dispatchOpts: import('./engine/DispatchController.js').DispatchControllerOptions = {
             useAgentSelection: false,
             artifactDb: () => svc.mcpServer!.getArtifactDB(),
-            sessionDirName: getSessionDirName(),
+            sessionDirName: getSessionDirName,
             ...(logger ? { logger } : {}),
             // V2-A 1.1: Pass getter so builder is resolved at dispatch time (after MCP init)
             contextPackBuilder: () => svc.contextPackBuilder,
@@ -104,16 +104,31 @@ export function wireEngine(
     /**
      * Append a chunk to an accumulator map with a hard size cap.
      * Shared by the stdout and stderr branches of `worker:output`.
+     *
+     * Uses tail-preserving truncation. HandoffExtractor scans for
+     * the *last* JSON block in output, so we must preserve the tail where
+     * the handoff JSON lives. When the cap is exceeded, the middle is
+     * replaced with a truncation marker, keeping head + tail.
      */
+    const TAIL_RESERVE = 32_768; // Reserve 32KB for terminal handoff JSON
     function appendToAccumulator(
         map: Map<number, string>, phaseId: number, chunk: string, maxSize: number,
     ): void {
         const existing = map.get(phaseId) ?? '';
-        if (existing.length + chunk.length <= maxSize) {
-            map.set(phaseId, existing + chunk);
-        } else if (existing.length < maxSize) {
-            const remaining = maxSize - existing.length;
-            map.set(phaseId, existing + chunk.slice(0, remaining));
+        const combined = existing + chunk;
+        if (combined.length <= maxSize) {
+            map.set(phaseId, combined);
+        } else {
+            // Tail-preserve: keep front + reserve tail slot for handoff JSON
+            const headBudget = maxSize - TAIL_RESERVE;
+            if (headBudget > 0) {
+                const head = combined.slice(0, headBudget);
+                const tail = combined.slice(-TAIL_RESERVE);
+                map.set(phaseId, head + '\n<!-- TRUNCATED -->\n' + tail);
+            } else {
+                // Budget is smaller than reserve — keep only the tail
+                map.set(phaseId, combined.slice(-maxSize));
+            }
         }
     }
 
@@ -198,6 +213,12 @@ export function wireEngine(
             phase.mcpPhaseId = `phase-${String(phase.id).padStart(3, '0')}-${randomUUID()}`;
         }
 
+        // Refresh phaseIdMap after mcpPhaseId assignment so
+        // HandoffExtractor.buildNextContext() can resolve depId → mcpPhaseId.
+        if (svc.handoffExtractor) {
+            svc.handoffExtractor.setPhaseIdMap(engine.getRunbook()?.phases ?? []);
+        }
+
         // Persist phase log entry at start
         if (mcpServer && phase.mcpPhaseId) {
             mcpServer.upsertPhaseLog(getSessionDirName(), phase.mcpPhaseId, {
@@ -269,13 +290,13 @@ export function wireEngine(
 
     adkController.on('worker:timeout', (phaseId) => {
         const { stdout, stderr } = drainWorkerAccumulators(phaseId);
-        resultProcessor.processWorkerFailure(phaseId, 'timeout', stdout, stderr)
+        resultProcessor.processWorkerFailure(phaseId, 'timeout', stdout, stderr, svc.currentSessionDir)
             .catch(log.onError);
     });
 
     adkController.on('worker:crash', (phaseId) => {
         const { stdout, stderr } = drainWorkerAccumulators(phaseId);
-        resultProcessor.processWorkerFailure(phaseId, 'crash', stdout, stderr)
+        resultProcessor.processWorkerFailure(phaseId, 'crash', stdout, stderr, svc.currentSessionDir)
             .catch(log.onError);
     });
 

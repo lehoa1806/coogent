@@ -115,23 +115,34 @@ export class MCPToolHandler {
             const args = (request.params.arguments ?? {}) as Record<string, unknown>;
             const deps = this.getDeps();
 
-            switch (name) {
-                case MCP_TOOLS.SUBMIT_EXECUTION_PLAN:
-                    return handleSubmitImplementationPlan(deps, args);
-                case MCP_TOOLS.SUBMIT_PHASE_HANDOFF:
-                    return handleSubmitPhaseHandoff(deps, args);
-                case MCP_TOOLS.SUBMIT_CONSOLIDATION_REPORT:
-                    return handleSubmitConsolidationReport(deps, args);
-                case MCP_TOOLS.GET_MODIFIED_FILE_CONTENT:
-                    return handleGetModifiedFileContent(deps, args);
-                case MCP_TOOLS.GET_FILE_SLICE:
-                    return handleGetFileSlice(deps, args);
-                case MCP_TOOLS.GET_PHASE_HANDOFF:
-                    return handleGetPhaseHandoff(deps, args);
-                case MCP_TOOLS.GET_SYMBOL_CONTEXT:
-                    return handleGetSymbolContext(deps, args);
-                default:
-                    throw new Error(`Unknown tool: ${name}`);
+            try {
+                switch (name) {
+                    case MCP_TOOLS.SUBMIT_EXECUTION_PLAN:
+                        return await handleSubmitImplementationPlan(deps, args);
+                    case MCP_TOOLS.SUBMIT_PHASE_HANDOFF:
+                        return await handleSubmitPhaseHandoff(deps, args);
+                    case MCP_TOOLS.SUBMIT_CONSOLIDATION_REPORT:
+                        return await handleSubmitConsolidationReport(deps, args);
+                    case MCP_TOOLS.GET_MODIFIED_FILE_CONTENT:
+                        return await handleGetModifiedFileContent(deps, args);
+                    case MCP_TOOLS.GET_FILE_SLICE:
+                        return await handleGetFileSlice(deps, args);
+                    case MCP_TOOLS.GET_PHASE_HANDOFF:
+                        return await handleGetPhaseHandoff(deps, args);
+                    case MCP_TOOLS.GET_SYMBOL_CONTEXT:
+                        return await handleGetSymbolContext(deps, args);
+                    default:
+                        return {
+                            content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }],
+                            isError: true,
+                        };
+                }
+            } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                return {
+                    content: [{ type: 'text' as const, text: message }],
+                    isError: true,
+                };
             }
         });
     }

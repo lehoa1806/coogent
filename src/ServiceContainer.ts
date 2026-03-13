@@ -145,6 +145,12 @@ export class ServiceContainer {
         if (db && this.sessionManager) {
             this.sessionManager.setArtifactDB(db);
         }
+
+        // Refresh HandoffExtractor's DB reference and masterTaskId
+        // so buildNextContext() reads handoffs from the correct session after a switch.
+        if (db && this.handoffExtractor) {
+            this.handoffExtractor.setArtifactDB(db, opts.sessionDirName);
+        }
     }
 
     /**

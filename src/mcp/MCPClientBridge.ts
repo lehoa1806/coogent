@@ -80,10 +80,15 @@ export class MCPClientBridge {
             log.warn('[MCPClientBridge] Error closing client:', err);
         }
 
-        try {
-            await this.mcpServer.getServer().close();
-        } catch (err) {
-            log.warn('[MCPClientBridge] Error closing server:', err);
+        // Close the server-side transport half to prevent dangling listeners.
+        // This only closes the transport, NOT the MCP Server itself — the
+        // server lifecycle is still managed by CoogentMCPServer.dispose().
+        if (this.transportPair) {
+            try {
+                await this.transportPair[1].close();
+            } catch (err) {
+                log.warn('[MCPClientBridge] Error closing server transport:', err);
+            }
         }
 
         this.connected = false;
@@ -166,10 +171,9 @@ export class MCPClientBridge {
             for (const parentId of parentPhaseIds) {
                 lines.push(`- ${RESOURCE_URIS.phaseHandoff(masterTaskId, parentId)}`);
             }
-        } else {
-            // No declared upstream dependencies — point to own phase handoff as fallback
-            lines.push(`- ${RESOURCE_URIS.phaseHandoff(masterTaskId, phaseId)}`);
         }
+        // Root phases have no upstream handoffs to read.
+        // Previously pointed to the phase's own (nonexistent) handoff URI.
 
         lines.push(`You can also read ${planUri} for global context.`);
 
@@ -220,6 +224,13 @@ export class MCPClientBridge {
         modifiedFiles: string[],
         blockers: string[],
         nextStepsContext?: string,
+        enrichment?: {
+            summary?: string | undefined;
+            rationale?: string | undefined;
+            remainingWork?: string[] | undefined;
+            constraints?: string[] | undefined;
+            warnings?: string[] | undefined;
+        },
     ): Promise<void> {
         const args: Record<string, unknown> = {
             masterTaskId,
@@ -231,6 +242,12 @@ export class MCPClientBridge {
         if (nextStepsContext !== undefined) {
             args['next_steps_context'] = nextStepsContext;
         }
+        // Forward enriched fields when present
+        if (enrichment?.summary !== undefined) { args['summary'] = enrichment.summary; }
+        if (enrichment?.rationale !== undefined) { args['rationale'] = enrichment.rationale; }
+        if (enrichment?.remainingWork !== undefined) { args['remainingWork'] = enrichment.remainingWork; }
+        if (enrichment?.constraints !== undefined) { args['constraints'] = enrichment.constraints; }
+        if (enrichment?.warnings !== undefined) { args['warnings'] = enrichment.warnings; }
         await this.callTool(MCP_TOOLS.SUBMIT_PHASE_HANDOFF, args);
     }
 
@@ -266,6 +283,11 @@ export class MCPClientBridge {
         const db = this.mcpServer.getArtifactDB?.();
         if (db) {
             db.tasks.upsert(masterTaskId, { consolidationReportJson: json });
+        } else {
+            log.warn(
+                `[MCPClientBridge] submitConsolidationReportJson: ArtifactDB unavailable — ` +
+                `JSON report for ${masterTaskId} was NOT persisted.`
+            );
         }
     }
 

@@ -81,6 +81,8 @@ export interface HandoffPacket {
     decisions?: string[];
     /** Unresolved questions for downstream phases or the user. */
     openQuestions?: string[];
+    /** Free-text guidance for downstream phases. */
+    nextStepsContext?: string;
     /** ISO-8601 timestamp when this handoff was produced. */
     producedAt: string;
 }
@@ -161,6 +163,8 @@ export interface ContextManifest {
     upstreamPhaseIds: string[];
     /** Handoff IDs that were actually included. */
     includedHandoffIds: string[];
+    /** V16 fix (Finding 5): Upstream phase IDs that were requested but had no handoff in DB. */
+    missingUpstreamPhaseIds?: string[];
     /** Per-file inclusion decisions with mode selection rationale and token costs. */
     fileDecisions: Array<{
         workspaceFolder?: string;

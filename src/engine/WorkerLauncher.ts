@@ -151,8 +151,47 @@ export class WorkerLauncher {
                     message: `⚠ Phase ${phase.id}: handoff context truncated (~${handoffTokenEstimate} tokens > ${HANDOFF_TOKEN_CAP} cap).`,
                 },
             });
-            // Truncate to cap — use character count to stay within budget
-            handoffContext = handoffContext.slice(0, HANDOFF_TOKEN_CAP * CHARS_PER_TOKEN);
+            // Section-aware truncation — drop entire upstream
+            // sections from the end to avoid corrupting markdown structure or
+            // Pull Model file-fetch directives. Each upstream phase handoff is
+            // separated by '\n---\n\n'.
+            const sections = handoffContext.split('\n---\n\n');
+            let truncated = '';
+            for (const section of sections) {
+                const candidate = truncated ? truncated + '\n---\n\n' + section : section;
+                if (Math.ceil(candidate.length / CHARS_PER_TOKEN) > HANDOFF_TOKEN_CAP) break;
+                truncated = candidate;
+            }
+            // Fallback to character-level slice if even a single section exceeds the cap
+            // Truncate at \n boundary to avoid corrupting markdown mid-line.
+            if (!truncated) {
+                const cutoff = HANDOFF_TOKEN_CAP * CHARS_PER_TOKEN;
+                const lastNewline = handoffContext.lastIndexOf('\n', cutoff);
+                handoffContext =
+                    handoffContext.slice(0, lastNewline > 0 ? lastNewline : cutoff) +
+                    '\n\n> ⚠ Context truncated at token cap. Some upstream data may be incomplete.\n';
+            } else {
+                handoffContext = truncated;
+            }
+        }
+
+        // Flag missing parent handoffs for cascading failure analysis.
+        // Detect the "_No handoff report found._" marker left by buildNextContext()
+        // when a dependency's handoff is absent in the ArtifactDB.
+        if (handoffContext && phase.depends_on && phase.depends_on.length > 0) {
+            const missingParents = handoffContext.match(/_No handoff report found\._/g);
+            if (missingParents && mcpServer && phase.mcpPhaseId) {
+                log.warn(
+                    `[WorkerLauncher] Phase ${phase.id}: ${missingParents.length} parent ` +
+                    `handoff(s) missing — flagging in phase_logs for post-mortem analysis.`,
+                );
+                mcpServer.upsertPhaseLog(masterTaskId, phase.mcpPhaseId, {
+                    requestContext: JSON.stringify({
+                        parentHandoffMissing: true,
+                        missingParentCount: missingParents.length,
+                    }),
+                });
+            }
         }
 
         // Step 5.6: Resolve agent profile from AgentRegistry

@@ -58,13 +58,13 @@ All rows in these tables are scoped by `workspace_id` and persisted in the globa
 
 | File | Role |
 |---|---|
-| [`src/constants/paths.ts`](../src/constants/paths.ts) | Single source of truth for all filesystem paths |
-| [`src/constants/StorageBase.ts`](../src/constants/StorageBase.ts) | Hybrid routing abstraction (global vs. local) |
-| [`src/constants/WorkspaceIdentity.ts`](../src/constants/WorkspaceIdentity.ts) | `workspace_id` derivation |
-| [`src/mcp/ArtifactDB.ts`](../src/mcp/ArtifactDB.ts) | SQLite data-access layer |
-| [`src/mcp/ArtifactDBBackup.ts`](../src/mcp/ArtifactDBBackup.ts) | Backup snapshot/restore system |
-| [`src/mcp/ArtifactDBSchema.ts`](../src/mcp/ArtifactDBSchema.ts) | DDL, migrations, table definitions |
-| [`src/state/StateManager.ts`](../src/state/StateManager.ts) | WAL-backed runbook persistence |
+| [`src/constants/paths.ts`](../../src/constants/paths.ts) | Single source of truth for all filesystem paths |
+| [`src/constants/StorageBase.ts`](../../src/constants/StorageBase.ts) | Hybrid routing abstraction (global vs. local) |
+| [`src/constants/WorkspaceIdentity.ts`](../../src/constants/WorkspaceIdentity.ts) | `workspace_id` derivation |
+| [`src/mcp/ArtifactDB.ts`](../../src/mcp/ArtifactDB.ts) | SQLite data-access layer |
+| [`src/mcp/ArtifactDBBackup.ts`](../../src/mcp/ArtifactDBBackup.ts) | Backup snapshot/restore system |
+| [`src/mcp/ArtifactDBSchema.ts`](../../src/mcp/ArtifactDBSchema.ts) | DDL, migrations, table definitions |
+| [`src/state/StateManager.ts`](../../src/state/StateManager.ts) | WAL-backed runbook persistence |
 
 ---
 

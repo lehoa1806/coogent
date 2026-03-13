@@ -502,17 +502,17 @@ describe('CoogentMCPServer — Tool Handlers', () => {
         expect(content[0].text).toBe('Hello from test');
     });
 
-    it('get_modified_file_content throws Unauthorized for fabricated masterTaskId', async () => {
-        await expect(
-            client.callTool({
-                name: MCP_TOOLS.GET_MODIFIED_FILE_CONTENT,
-                arguments: {
-                    masterTaskId: VALID_MASTER_TASK_ID,
-                    phaseId: VALID_PHASE_ID,
-                    file_path: 'does-not-exist.txt',
-                },
-            })
-        ).rejects.toThrow(/Unauthorized/);
+    it('get_modified_file_content returns isError for fabricated masterTaskId', async () => {
+        const result = await client.callTool({
+            name: MCP_TOOLS.GET_MODIFIED_FILE_CONTENT,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                phaseId: VALID_PHASE_ID,
+                file_path: 'does-not-exist.txt',
+            },
+        }) as any;
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/Unauthorized/);
     });
 
     it('get_modified_file_content throws for non-existent file when task is registered', async () => {
@@ -525,54 +525,54 @@ describe('CoogentMCPServer — Tool Handlers', () => {
             },
         });
 
-        await expect(
-            client.callTool({
-                name: MCP_TOOLS.GET_MODIFIED_FILE_CONTENT,
-                arguments: {
-                    masterTaskId: VALID_MASTER_TASK_ID,
-                    phaseId: VALID_PHASE_ID,
-                    file_path: 'does-not-exist.txt',
-                },
-            })
-        ).rejects.toThrow(/File not found/);
+        const result = await client.callTool({
+            name: MCP_TOOLS.GET_MODIFIED_FILE_CONTENT,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                phaseId: VALID_PHASE_ID,
+                file_path: 'does-not-exist.txt',
+            },
+        }) as any;
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/File not found/);
     });
 
     // ── Validation Errors ────────────────────────────────────────────────
 
     it('tools reject invalid masterTaskId format', async () => {
-        await expect(
-            client.callTool({
-                name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
-                arguments: {
-                    masterTaskId: 'not-a-valid-id',
-                    markdown_content: '# Plan',
-                },
-            })
-        ).rejects.toThrow(/Invalid masterTaskId/);
+        const result = await client.callTool({
+            name: MCP_TOOLS.SUBMIT_EXECUTION_PLAN,
+            arguments: {
+                masterTaskId: 'not-a-valid-id',
+                markdown_content: '# Plan',
+            },
+        }) as any;
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/Invalid masterTaskId/);
     });
 
     it('tools reject invalid phaseId format', async () => {
-        await expect(
-            client.callTool({
-                name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
-                arguments: {
-                    masterTaskId: VALID_MASTER_TASK_ID,
-                    phaseId: 'bad-phase-id',
-                    decisions: [],
-                    modified_files: [],
-                    blockers: [],
-                },
-            })
-        ).rejects.toThrow(/Invalid phaseId/);
+        const result = await client.callTool({
+            name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                phaseId: 'bad-phase-id',
+                decisions: [],
+                modified_files: [],
+                blockers: [],
+            },
+        }) as any;
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/Invalid phaseId/);
     });
 
     it('tools reject unknown tool name', async () => {
-        await expect(
-            client.callTool({
-                name: 'nonexistent_tool',
-                arguments: {},
-            })
-        ).rejects.toThrow();
+        const result = await client.callTool({
+            name: 'nonexistent_tool',
+            arguments: {},
+        }) as any;
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/Unknown tool/);
     });
 });
 
@@ -633,10 +633,10 @@ describe('CoogentMCPServer — URI Parsing (via resource reads)', () => {
         expect((result.contents[0] as any).text).toBe('# Plan');
     });
 
-    it('extra segments after a valid leaf are tolerated by the parser', async () => {
-        // The URI parser accepts trailing segments after the resource type
-        // (e.g., /handoff/extra) — the extra parts are silently ignored.
-        // Seed the phase handoff first so read doesn't throw "Phase not found"
+    it('rejects extra segments after a valid resource leaf', async () => {
+        // The URI parser now strictly rejects trailing segments after the resource type
+        // (e.g., /handoff/extra) to prevent masking client bugs.
+        // Seed the phase handoff first
         await client.callTool({
             name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
             arguments: {
@@ -648,11 +648,11 @@ describe('CoogentMCPServer — URI Parsing (via resource reads)', () => {
             },
         });
 
-        const result = await client.readResource({
-            uri: `coogent://tasks/${VALID_MASTER_TASK_ID}/phases/${VALID_PHASE_ID}/handoff/extra`,
-        });
-        // Returns the handoff resource content (extra segment ignored)
-        expect(result.contents).toHaveLength(1);
+        await expect(
+            client.readResource({
+                uri: `coogent://tasks/${VALID_MASTER_TASK_ID}/phases/${VALID_PHASE_ID}/handoff/extra`,
+            })
+        ).rejects.toThrow();
     });
 
     it('rejects non-coogent scheme URIs', async () => {
@@ -835,50 +835,50 @@ describe('CoogentMCPServer — D-3: validateStringArray enforcement', () => {
 
     it('rejects a decisions item that exceeds 500 chars (D-1/D-3)', async () => {
         const longDecision = 'x'.repeat(501);
-        await expect(
-            client.callTool({
-                name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
-                arguments: {
-                    masterTaskId: VALID_MASTER_TASK_ID,
-                    phaseId: VALID_PHASE_ID,
-                    decisions: [longDecision],
-                    modified_files: [],
-                    blockers: [],
-                },
-            })
-        ).rejects.toThrow(/exceeds maxLength/);
+        const result = await client.callTool({
+            name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                phaseId: VALID_PHASE_ID,
+                decisions: [longDecision],
+                modified_files: [],
+                blockers: [],
+            },
+        }) as any;
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/exceeds maxLength/);
     });
 
     it('rejects blockers array with more than 20 items (D-1/D-3)', async () => {
         const tooManyBlockers = Array.from({ length: 21 }, (_, i) => `Blocker ${i + 1}`);
-        await expect(
-            client.callTool({
-                name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
-                arguments: {
-                    masterTaskId: VALID_MASTER_TASK_ID,
-                    phaseId: VALID_PHASE_ID,
-                    decisions: [],
-                    modified_files: [],
-                    blockers: tooManyBlockers,
-                },
-            })
-        ).rejects.toThrow(/exceeds maxItems/);
+        const result = await client.callTool({
+            name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                phaseId: VALID_PHASE_ID,
+                decisions: [],
+                modified_files: [],
+                blockers: tooManyBlockers,
+            },
+        }) as any;
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/exceeds maxItems/);
     });
 
     it('rejects modified_files with a non-path-like string (D-2/D-3)', async () => {
-        await expect(
-            client.callTool({
-                name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
-                arguments: {
-                    masterTaskId: VALID_MASTER_TASK_ID,
-                    phaseId: VALID_PHASE_ID,
-                    decisions: [],
-                    // Code dump — not a relative path
-                    modified_files: ["import foo from 'bar';\nconst x = 1;"],
-                    blockers: [],
-                },
-            })
-        ).rejects.toThrow(/not a valid relative path/);
+        const result = await client.callTool({
+            name: MCP_TOOLS.SUBMIT_PHASE_HANDOFF,
+            arguments: {
+                masterTaskId: VALID_MASTER_TASK_ID,
+                phaseId: VALID_PHASE_ID,
+                decisions: [],
+                // Code dump — not a relative path
+                modified_files: ["import foo from 'bar';\nconst x = 1;"],
+                blockers: [],
+            },
+        }) as any;
+        expect(result.isError).toBe(true);
+        expect(result.content[0].text).toMatch(/not a valid relative path/);
     });
 
     it('accepts valid inputs within all limits (D-1/D-2/D-3)', async () => {

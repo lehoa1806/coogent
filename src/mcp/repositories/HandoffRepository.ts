@@ -4,6 +4,7 @@
 
 import type { Database } from './db-types.js';
 import type { PhaseHandoff } from '../types.js';
+import log from '../../logger/log.js';
 
 /**
  * Raw SQL row as returned by `getAsObject()` — column names match the
@@ -110,6 +111,35 @@ export class HandoffRepository {
         const row = stmt.getAsObject<HandoffDbRow>();
         stmt.free();
 
+        return this.deserializeRow(masterTaskId, row);
+    }
+
+    /** Retrieve all handoffs for a master task, ordered by completion time. */
+    getAll(masterTaskId: string): PhaseHandoff[] {
+        const stmt = this.db.prepare(
+            `SELECT phase_id, decisions, modified_files, blockers, completed_at,
+                    next_steps_context, summary, rationale, remaining_work,
+                    constraints_json, warnings, changed_files_json,
+                    workspace_folder, symbols_touched
+             FROM handoffs WHERE master_task_id = ? AND workspace_id = ?
+             ORDER BY completed_at ASC`
+        );
+        stmt.bind([masterTaskId, this.workspaceId]);
+        const results: PhaseHandoff[] = [];
+        while (stmt.step()) {
+            const row = stmt.getAsObject<HandoffDbRow>();
+            results.push(this.deserializeRow(masterTaskId, row));
+        }
+        stmt.free();
+        return results;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    //  Private helpers
+    // ─────────────────────────────────────────────────────────────────────
+
+    /** Deserialize a raw DB row into a typed PhaseHandoff. */
+    private deserializeRow(masterTaskId: string, row: HandoffDbRow): PhaseHandoff {
         const parseJsonArray = (val: string | null): string[] | undefined => {
             if (!val) { return undefined; }
             try { return JSON.parse(val) as string[]; } catch { return undefined; }
@@ -121,7 +151,18 @@ export class HandoffRepository {
             modifiedFiles = JSON.parse(row.modified_files) as string[];
             blockers = JSON.parse(row.blockers) as string[];
         } catch {
-            decisions = []; modifiedFiles = []; blockers = [];
+            // Log corruption and inject sentinel blocker so downstream
+            // phases know their parent context is degraded.
+            decisions = []; modifiedFiles = [];
+            blockers = [
+                'HANDOFF_DESERIALIZATION_FAILED: Core handoff JSON columns could not be parsed — ' +
+                'context from this phase may be incomplete.',
+            ];
+            log.warn(
+                `[HandoffRepository] JSON parse failed for core handoff columns ` +
+                `(masterTaskId=${masterTaskId}, phaseId=${row.phase_id}). ` +
+                `Returning degraded handoff with sentinel blocker.`,
+            );
         }
 
         return {
@@ -131,14 +172,16 @@ export class HandoffRepository {
             modifiedFiles,
             blockers,
             completedAt: row.completed_at,
+            // Use || to coerce empty strings to undefined, preserving
+            // the semantic distinction between "no guidance" and "empty string".
             nextStepsContext: row.next_steps_context || undefined,
-            summary: row.summary || undefined,
-            rationale: row.rationale || undefined,
+            summary: row.summary ?? undefined,
+            rationale: row.rationale ?? undefined,
             remainingWork: parseJsonArray(row.remaining_work),
             constraints: parseJsonArray(row.constraints_json),
             warnings: parseJsonArray(row.warnings),
-            changedFilesJson: row.changed_files_json || undefined,
-            workspaceFolder: row.workspace_folder || undefined,
+            changedFilesJson: row.changed_files_json ?? undefined,
+            workspaceFolder: row.workspace_folder ?? undefined,
             symbolsTouched: parseJsonArray(row.symbols_touched),
         };
     }
