@@ -71,7 +71,7 @@ export interface Runbook {
     current_phase: number;
     readonly phases: readonly Phase[];
     summary?: string;
-    implementation_plan?: string;
+    execution_plan?: string;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

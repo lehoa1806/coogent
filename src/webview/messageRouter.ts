@@ -546,7 +546,7 @@ function handleRequestPlan(deps: MessageRouterDeps): void {
         deps,
         () =>
             deps.mcpServer?.getTaskState(masterTaskId)?.implementationPlan
-            ?? deps.engine.getRunbook()?.implementation_plan
+            ?? deps.engine.getRunbook()?.execution_plan
     ).then(plan => {
         if (plan) {
             log.info(`[MissionControl] handleRequestPlan: plan loaded (${plan.length} chars)`);

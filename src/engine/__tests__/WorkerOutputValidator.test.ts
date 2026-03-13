@@ -106,16 +106,16 @@ describe('WorkerOutputValidator', () => {
     //  ImplementationPlanContract
     // ═══════════════════════════════════════════════════════════════════════
 
-    describe('implementation_plan', () => {
+    describe('execution_plan', () => {
         it('should pass validation for valid markdown content', () => {
-            const result = validateWorkerOutput('implementation_plan', {
+            const result = validateWorkerOutput('execution_plan', {
                 markdown_content: '# Plan\n\n## Step 1\n\nDo the thing.',
             });
             expect(result.success).toBe(true);
         });
 
         it('should fail when markdown_content is empty', () => {
-            const result = validateWorkerOutput('implementation_plan', {
+            const result = validateWorkerOutput('execution_plan', {
                 markdown_content: '',
             });
             expect(result.success).toBe(false);
@@ -127,7 +127,7 @@ describe('WorkerOutputValidator', () => {
         });
 
         it('should fail when markdown_content exceeds max length (512 KB)', () => {
-            const result = validateWorkerOutput('implementation_plan', {
+            const result = validateWorkerOutput('execution_plan', {
                 markdown_content: 'x'.repeat(524_289),
             });
             expect(result.success).toBe(false);
@@ -139,7 +139,7 @@ describe('WorkerOutputValidator', () => {
         });
 
         it('should fail when markdown_content is missing', () => {
-            const result = validateWorkerOutput('implementation_plan', {});
+            const result = validateWorkerOutput('execution_plan', {});
             expect(result.success).toBe(false);
             if (!result.success) {
                 expect(result.error.code).toBe(
@@ -225,7 +225,7 @@ describe('WorkerOutputValidator', () => {
         });
 
         it('should fail closed on undefined input', () => {
-            const result = validateWorkerOutput('implementation_plan', undefined);
+            const result = validateWorkerOutput('execution_plan', undefined);
             expect(result.success).toBe(false);
             if (!result.success) {
                 expect(result.error.code).toBe(
@@ -246,7 +246,7 @@ describe('WorkerOutputValidator', () => {
         });
 
         it('should fail on number input for plan', () => {
-            const result = validateWorkerOutput('implementation_plan', 42);
+            const result = validateWorkerOutput('execution_plan', 42);
             expect(result.success).toBe(false);
         });
 

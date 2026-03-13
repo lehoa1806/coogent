@@ -5,7 +5,7 @@
 // to the Extension Host and resolve responses via requestId-based correlation.
 //
 // Usage:
-//   const plan = createMCPResource<string>('coogent://tasks/.../implementation_plan');
+//   const plan = createMCPResource<string>('coogent://tasks/.../execution_plan');
 //   plan.state.loading  → true while fetching
 //   plan.state.data     → the resolved string/object content
 //   plan.state.error    → error message on failure
@@ -63,14 +63,14 @@ function generateRequestId(): string {
  * the correlated response. Call `destroy()` for early cleanup if the
  * component unmounts before a response arrives.
  *
- * @param uri - The `coogent://` URI to fetch (e.g., `coogent://tasks/{id}/implementation_plan`).
+ * @param uri - The `coogent://` URI to fetch (e.g., `coogent://tasks/{id}/execution_plan`).
  * @returns A handle with `{ state, refresh, destroy }`.
  *
  * @example
  * ```svelte
  * <script>
  *   import { createMCPResource } from '../stores/mcpStore.svelte.js';
- *   const plan = createMCPResource<string>('coogent://tasks/abc/implementation_plan');
+ *   const plan = createMCPResource<string>('coogent://tasks/abc/execution_plan');
  * </script>
  *
  * {#if plan.state.loading}

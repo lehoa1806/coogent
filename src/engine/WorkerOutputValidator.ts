@@ -13,7 +13,7 @@ import { z } from 'zod';
 
 export type ContractType =
     | 'phase_handoff'
-    | 'implementation_plan'
+    | 'execution_plan'
     | 'consolidation_report'
     | 'fit_assessment';
 
@@ -126,14 +126,14 @@ export type ValidatedOutput =
 
 const ERROR_CODE_MAP: Record<ContractType, ValidationErrorCode> = {
     phase_handoff: VALIDATION_ERROR_CODES.WORKER_OUTPUT_INVALID_HANDOFF,
-    implementation_plan: VALIDATION_ERROR_CODES.WORKER_OUTPUT_INVALID_PLAN,
+    execution_plan: VALIDATION_ERROR_CODES.WORKER_OUTPUT_INVALID_PLAN,
     consolidation_report: VALIDATION_ERROR_CODES.WORKER_OUTPUT_INVALID_REPORT,
     fit_assessment: VALIDATION_ERROR_CODES.WORKER_OUTPUT_INVALID_FIT,
 };
 
 const SCHEMA_MAP: Record<ContractType, z.ZodType> = {
     phase_handoff: PhaseHandoffSchema,
-    implementation_plan: ImplementationPlanSchema,
+    execution_plan: ImplementationPlanSchema,
     consolidation_report: ConsolidationReportSchema,
     fit_assessment: FitAssessmentSchema,
 };

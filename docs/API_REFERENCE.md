@@ -22,14 +22,14 @@ All runtime artifacts are addressed via a RESTful `coogent://` URI schema. The E
 | URI | Returns | Content Type |
 |---|---|---|
 | `coogent://tasks/{taskId}/summary` | Task overview | Markdown |
-| `coogent://tasks/{taskId}/implementation_plan` | Implementation plan | Markdown |
+| `coogent://tasks/{taskId}/execution_plan` | Execution plan | Markdown |
 | `coogent://tasks/{taskId}/consolidation_report` | Final report | Markdown |
 
 ### Phase-Level Resources
 
 | URI | Returns | Content Type |
 |---|---|---|
-| `coogent://tasks/{taskId}/phases/{phaseId}/implementation_plan` | Phase plan | Markdown |
+| `coogent://tasks/{taskId}/phases/{phaseId}/execution_plan` | Phase plan | Markdown |
 | `coogent://tasks/{taskId}/phases/{phaseId}/handoff` | Phase handoff | JSON |
 
 ### ID Formats
@@ -45,9 +45,9 @@ All runtime artifacts are addressed via a RESTful `coogent://` URI schema. The E
 import { RESOURCE_URIS } from './mcp/types';
 
 RESOURCE_URIS.taskSummary(taskId)                   // → coogent://tasks/{taskId}/summary
-RESOURCE_URIS.taskPlan(taskId)                       // → coogent://tasks/{taskId}/implementation_plan
+RESOURCE_URIS.taskPlan(taskId)                       // → coogent://tasks/{taskId}/execution_plan
 RESOURCE_URIS.taskReport(taskId)                     // → coogent://tasks/{taskId}/consolidation_report
-RESOURCE_URIS.phasePlan(taskId, phaseId)             // → coogent://tasks/{taskId}/phases/{phaseId}/implementation_plan
+RESOURCE_URIS.phasePlan(taskId, phaseId)             // → coogent://tasks/{taskId}/phases/{phaseId}/execution_plan
 RESOURCE_URIS.phaseHandoff(taskId, phaseId)          // → coogent://tasks/{taskId}/phases/{phaseId}/handoff
 ```
 
@@ -57,7 +57,7 @@ RESOURCE_URIS.phaseHandoff(taskId, phaseId)          // → coogent://tasks/{tas
 
 | Tool | Direction | Description |
 |---|---|---|
-| `submit_implementation_plan` | Agent → Server | Submit a generated implementation plan for a task |
+| `submit_execution_plan` | Agent → Server | Submit a generated execution plan for a task |
 | `submit_phase_handoff` | Agent → Server | Submit phase completion artifacts |
 | `submit_consolidation_report` | Agent → Server | Submit the final aggregated report |
 | `get_modified_file_content` | Agent ← Server | Retrieve file content from the Git sandbox (read-only, truncated) |
@@ -158,7 +158,7 @@ The persistent state file for the execution engine. Validated by AJV on every lo
     "status": "idle | running | paused_error | completed",
     "current_phase": 0,                        // Index of current/next phase
     "summary": "string",                       // High-level task summary (optional)
-    "implementation_plan": "string",           // Detailed markdown plan (optional)
+    "execution_plan": "string",           // Detailed markdown plan (optional)
     "phases": [
         {
             "id": 0,                           // Sequential integer ID

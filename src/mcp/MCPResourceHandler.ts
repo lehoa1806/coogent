@@ -18,10 +18,10 @@ import type { ArtifactDB } from './ArtifactDB.js';
  *
  * Resources exposed:
  *   - coogent://tasks/{masterTaskId}/summary
- *   - coogent://tasks/{masterTaskId}/implementation_plan
+ *   - coogent://tasks/{masterTaskId}/execution_plan
  *   - coogent://tasks/{masterTaskId}/consolidation_report
  *   - coogent://tasks/{masterTaskId}/consolidation_report_json
- *   - coogent://tasks/{masterTaskId}/phases/{phaseId}/implementation_plan
+ *   - coogent://tasks/{masterTaskId}/phases/{phaseId}/execution_plan
  *   - coogent://tasks/{masterTaskId}/phases/{phaseId}/handoff
  */
 export class MCPResourceHandler {
@@ -59,7 +59,7 @@ export class MCPResourceHandler {
                 });
                 resources.push({
                     uri: RESOURCE_URIS.taskPlan(taskId),
-                    name: `Task ${taskId} — Implementation Plan`,
+                    name: `Task ${taskId} — Execution Plan`,
                     mimeType: 'text/markdown',
                 });
                 resources.push({
@@ -78,7 +78,7 @@ export class MCPResourceHandler {
                 for (const phaseId of phaseIds) {
                     resources.push({
                         uri: RESOURCE_URIS.phasePlan(taskId, phaseId),
-                        name: `Phase ${phaseId} — Implementation Plan`,
+                        name: `Phase ${phaseId} — Execution Plan`,
                         mimeType: 'text/markdown',
                     });
                     resources.push({
@@ -121,20 +121,20 @@ export class MCPResourceHandler {
                 }
 
                 switch (parsed.resource) {
-                    case 'implementation_plan':
+                    case 'execution_plan':
                         if (phase.planRequired === false) {
-                            // Agent type doesn't produce implementation plans
-                            content = 'Implementation plan is not applicable for this phase type.';
+                            // Agent type doesn't produce execution plans
+                            content = 'Execution plan is not applicable for this phase type.';
                         } else if (!phase.implementationPlan) {
                             if (phase.handoff) {
                                 // Phase completed without submitting a plan — return informational
                                 // message instead of throwing, since many workers legitimately
                                 // skip plan submission (e.g. CLI-based agents).
-                                content = 'No implementation plan was submitted for this phase.';
+                                content = 'No execution plan was submitted for this phase.';
                             } else {
                                 // Phase still in progress
                                 throw new Error(
-                                    `Resource not yet available: implementation plan has not been submitted for phase ${parsed.phaseId} of task ${parsed.masterTaskId}.`
+                                    `Resource not yet available: execution plan has not been submitted for phase ${parsed.phaseId} of task ${parsed.masterTaskId}.`
                                 );
                             }
                         } else {
@@ -163,10 +163,10 @@ export class MCPResourceHandler {
                         }
                         content = task.summary;
                         break;
-                    case 'implementation_plan':
+                    case 'execution_plan':
                         if (!task.implementationPlan) {
                             throw new Error(
-                                `Resource not yet available: implementation plan has not been submitted for task ${parsed.masterTaskId}.`
+                                `Resource not yet available: execution plan has not been submitted for task ${parsed.masterTaskId}.`
                             );
                         }
                         content = task.implementationPlan;

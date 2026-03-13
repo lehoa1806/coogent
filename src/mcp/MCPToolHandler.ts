@@ -32,7 +32,7 @@ import { handleGetSymbolContext } from './handlers/GetSymbolContextHandler.js';
  * Registers MCP Tool handlers (mutating) on a given MCP Server instance.
  *
  * Tools:
- *   - submit_implementation_plan
+ *   - submit_execution_plan
  *   - submit_phase_handoff
  *   - submit_consolidation_report
  *   - get_modified_file_content

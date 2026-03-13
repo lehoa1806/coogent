@@ -156,7 +156,7 @@ export interface PlanSummaryMessage {
     };
 }
 
-/** Implementation plan message — markdown content of implementation_plan.md. */
+/** Execution plan message — markdown content of execution_plan.md. */
 export interface ImplementationPlanMessage {
     readonly type: 'IMPLEMENTATION_PLAN';
     readonly payload: {

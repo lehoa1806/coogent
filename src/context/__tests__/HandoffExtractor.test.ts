@@ -306,7 +306,7 @@ describe('HandoffExtractor', () => {
     // ═════════════════════════════════════════════════════════════════════════
 
     describe('extractImplementationPlan', () => {
-        it('should extract plan from fenced implementation_plan block', () => {
+        it('should extract plan from fenced execution_plan block', () => {
             const planContent = [
                 '## Proposed Changes',
                 '',
@@ -322,7 +322,7 @@ describe('HandoffExtractor', () => {
             const workerOutput = [
                 'Working on the task...',
                 '',
-                '```implementation_plan',
+                '```execution_plan',
                 planContent,
                 '```',
                 '',
@@ -445,7 +445,7 @@ describe('HandoffExtractor', () => {
             extractor.setArtifactDB(mockDB as any, 'task-001');
 
             const workerOutput = [
-                '```implementation_plan',
+                '```execution_plan',
                 '## Proposed Changes\n\n### A\nLine '.repeat(20), // > 100 chars
                 '```',
             ].join('\n');

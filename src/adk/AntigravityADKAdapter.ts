@@ -592,6 +592,8 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
             '- Ensure the parent directory exists before writing the artifact.',
             '- Treat successful creation of this file as mandatory task completion behavior.',
             '',
+            'The artifact body (before the final JSON block) should include: changes reviewed or made, results of each verification step, any failures encountered and how they were resolved, and any remaining concerns.',
+            '',
             'After writing the final artifact, reply briefly confirming completion and listing the written file path.',
             'Do not repeat the full artifact content in chat unless explicitly requested.',
             '',

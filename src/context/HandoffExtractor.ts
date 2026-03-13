@@ -256,11 +256,11 @@ export class HandoffExtractor {
      * Extract an implementation plan from the worker's accumulated output.
      *
      * When the worker runs via file-based IPC (no vscode.lm), it cannot call
-     * `submit_implementation_plan` via the in-process MCP server. This method
+     * `submit_execution_plan` via the in-process MCP server. This method
      * post-processes the worker output to extract the plan for persistence.
      *
      * Extraction heuristics (in priority order):
-     *   1. Fenced block: ` ```implementation_plan ... ``` `
+     *   1. Fenced block: ` ```execution_plan ... ``` `
      *   2. Heading-based: Content under `## Proposed Changes` or
      *      `## Implementation Plan` headings, up to the handoff JSON block.
      *
@@ -292,8 +292,8 @@ export class HandoffExtractor {
             }
         }
 
-        // Heuristic 1: Fenced ` ```implementation_plan ``` ` block
-        const fencedPlanRegex = /```implementation_plan\s*\n([\s\S]*?)```/g;
+        // Heuristic 1: Fenced ` ```execution_plan ``` ` block
+        const fencedPlanRegex = /```execution_plan\s*\n([\s\S]*?)```/g;
         let lastFencedPlan: string | null = null;
         let fencedMatch: RegExpExecArray | null;
         while ((fencedMatch = fencedPlanRegex.exec(workerOutput)) !== null) {
