@@ -27,11 +27,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **ARCHITECTURE.md** — Added sections for Multi-Window ArtifactDB Concurrency, Workspace Identity & Tenanting, Context Pack Assembly, Worker Output Validation, MCP Prompts, MCP Sampling, Storage & Path Management, and ArtifactDB Backup & Recovery. Updated table count (11→12), component list (8→16), backup section, and tech stack.
-- **DEVELOPER_GUIDE.md** — Added CI/CD pipeline section, updated project structure with `activation.ts`, `ArtifactDBSchema.ts`, `WorkspaceIdentity.ts`, corrected test suite counts (88 host + 8 webview).
-- **USER_GUIDE.md** — Fixed `workerProfiles` → `customWorkers` setting name, `defaults.json` → `registry.json` filename.
-- **OPERATIONS.md** — Added CI/CD pipeline section, updated test count references.
-- **SITE_MAP.md** — Added CI/CD and ADR/PRD sections with cross-references to hybrid storage design documents.
+- **architecture.md** — Added sections for Multi-Window ArtifactDB Concurrency, Workspace Identity & Tenanting, Context Pack Assembly, Worker Output Validation, MCP Prompts, MCP Sampling, Storage & Path Management, and ArtifactDB Backup & Recovery. Updated table count (11→12), component list (8→16), backup section, and tech stack.
+- **developer-guide.md** — Added CI/CD pipeline section, updated project structure with `activation.ts`, `ArtifactDBSchema.ts`, `WorkspaceIdentity.ts`, corrected test suite counts (88 host + 8 webview).
+- **user-guide.md** — Fixed `workerProfiles` → `customWorkers` setting name, `defaults.json` → `registry.json` filename.
+- **operations.md** — Added CI/CD pipeline section, updated test count references.
+- **site-map.md** — Added CI/CD and ADR/PRD sections with cross-references to hybrid storage design documents.
 - **README.md** — Added Multi-Window Safety and Workspace Tenanting features.
 - **Test suite** expanded from ~57 suites / ~692 tests to 88 host + 8 webview test files
 

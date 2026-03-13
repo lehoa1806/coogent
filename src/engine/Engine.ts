@@ -90,7 +90,7 @@ export type EngineEvents = {
  * - SessionController: Runbook loading, session reset, and session switching.
  * - DispatchController: DAG-aware dispatch, stall watchdog, and pipeline recovery.
  *
- * See ARCHITECTURE.md § State Machine for the transition diagram.
+ * See architecture.md § State Machine for the transition diagram.
  */
 export class Engine extends TypedEventEmitter<EngineEvents> implements EngineInternals {
     private state: EngineState = EngineState.IDLE;

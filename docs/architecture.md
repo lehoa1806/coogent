@@ -82,7 +82,7 @@
 
 ### Component Wiring (Decomposed Architecture)
 
-`extension.ts` (~116 lines) is a thin orchestrator that delegates to six extracted modules:
+`extension.ts` (~119 lines) is a thin orchestrator that delegates to six extracted modules:
 
 - **`activation.ts`** (~349 lines) — Composable initialization functions: `initializeLogging()`, `createServices()`, `startMCPServer()`, `registerSidebar()`, `wireEventSystems()`, `registerReactiveConfig()`, `registerRunbookWatcher()`, `cleanupOrphanWorkers()`
 - **`ServiceContainer`** — Typed registry holding all service instances (replaces 18 module-level `let` variables)
@@ -122,7 +122,7 @@ The `Engine` class implements a strict 9-state FSM governing the entire task lif
 | `ERROR_PAUSED` | Phase failed or worker crashed; halted for user decision. |
 | `COMPLETED` | All phases passed. Terminal state. |
 
-### Transition Events (18 `EngineEvent` values)
+### Transition Events (19 `EngineEvent` values)
 
 | Event | Trigger |
 |---|---|
@@ -144,6 +144,7 @@ The `Engine` class implements a strict 9-state FSM governing the entire task lif
 | `RETRY` | User or self-healer triggers retry |
 | `SKIP_PHASE` | User skips a phase |
 | `ABORT` | User aborts the entire run |
+| `PAUSE` | Cooperative pause during execution |
 | `RESET` | Reset engine to IDLE |
 
 ### State Transition Diagram
@@ -207,7 +208,7 @@ The `CoogentMCPServer` is the single source of truth for all runtime artifacts.
 Artifacts are persisted in a **SQLite database** (via `sql.js` WASM) managed by `ArtifactDB`:
 
 - **Durability**: Database file (`artifacts.db`) stored under extension-managed storage for cross-session access
-- **Schema**: 12 tenant-owned tables + 1 system table, with monotonic `schema_version` tracking (current: v10)
+- **Schema**: 11 tenant-owned tables + 1 system table, with monotonic `schema_version` tracking (current: v11)
 - **In-Memory Cache**: Reads are served from an in-memory `sql.js` instance; writes schedule a debounced flush to disk
 - **Multi-Window Safety**: Uses a reload-before-write merge strategy — see [Multi-Window ArtifactDB Concurrency](#multi-window-artifactdb-concurrency)
 - **Workspace Tenanting**: All tenant-owned tables include a `workspace_id` column — see [Workspace Identity & Tenanting](#workspace-identity--tenanting)
@@ -216,7 +217,7 @@ Artifacts are persisted in a **SQLite database** (via `sql.js` WASM) managed by 
 
 | Table | Purpose |
 |---|---|
-| `tasks` | Master task state (summary, implementation plan, consolidation report, status, timestamps) |
+| `tasks` | Master task state (summary, execution plan, consolidation report, status, timestamps) |
 | `phases` | Per-phase metadata and context |
 | `handoffs` | Phase completion artifacts (decisions, modified files, blockers, downstream context) |
 | `worker_outputs` | Raw worker stdout/stderr capture |
@@ -242,7 +243,7 @@ db.close();                                     // Final synchronous flush + fre
 
 ### Resources (Read)
 
-Exposed via `coogent://` URIs — see [API Reference](API_REFERENCE.md).
+Exposed via `coogent://` URIs — see [API Reference](api-reference.md).
 
 ### Tools (Write)
 
@@ -596,25 +597,27 @@ Each prompt includes a `_version` metadata field (currently `1.0.0`) for contrac
 
 ## Storage & Path Management
 
-`StorageBase` (~87 lines, `src/constants/StorageBase.ts`) is the **unified storage-path abstraction** that all path derivations should delegate to.
+`StorageBase` (~117 lines, `src/constants/StorageBase.ts`) is the **unified hybrid storage-path abstraction** that routes durable artifacts to the global Antigravity directory and operational state to the workspace-local `.coogent/` directory.
 
-### Path Resolution Strategy
+### Path Resolution Strategy (Hybrid Model)
 
-| Scenario | Base Path |
+| Data Category | Base Path |
 |---|---|
-| `storageUri` provided (VS Code extension-managed) | Uses `storageUri` directly |
-| No `storageUri` (fallback) | `<workspaceRoot>/.coogent` |
+| Durable (DB, backups) | `~/Library/Application Support/Antigravity/coogent/` (global) |
+| Operational (IPC, logs, sessions) | `<workspaceRoot>/.coogent/` (workspace-local) |
 
 ### Derived Paths
 
-| Method | Path |
-|---|---|
-| `getBase()` | Root storage directory |
-| `getDBPath()` | SQLite database file (`artifacts.db`) |
-| `getLogsDir()` | JSONL log directory |
-| `getSessionDir(id)` | Per-session data directory |
-| `getBackupDir()` | Backup snapshots directory |
-| `getIPCDir()` | IPC root directory |
+| Method | Path | Category |
+|---|---|---|
+| `getDurableBase()` | Global durable storage root | Global |
+| `getDBPath()` | SQLite database file (`artifacts.db`) | Global |
+| `getBackupDir()` | Backup snapshots directory | Global |
+| `getWorkspaceBase()` | Workspace-local operational storage root | Local |
+| `getLogsDir()` | JSONL log directory | Local |
+| `getSessionDir(id)` | Per-session data directory | Local |
+| `getIPCDir()` | Workspace IPC root directory | Local |
+| `getWorkspaceId()` | Tenant identity (SHA-256 prefix) | Identity |
 
 All methods are **deterministic and stateless** — pure path computation with no filesystem side-effects. Use the `createStorageBase()` factory for dependency injection.
 
@@ -651,7 +654,7 @@ After every successful flush, `ArtifactDB` checks whether enough time has elapse
 - **Best-effort rotation**: Delete failures are silently caught to avoid blocking on stale files
 - **Post-restore restart**: After restore, the in-memory `sql.js` instance must be reloaded (logged as a warning)
 
-For the backup/recovery runbook, see [Operations — Backup & Recovery](OPERATIONS.md#backup--recovery-runbook).
+For the backup/recovery runbook, see [Operations — Backup & Recovery](operations.md#backup--recovery-runbook).
 
 ---
 
@@ -814,7 +817,7 @@ The `src/mcp/repositories/` directory provides a **typed repository layer** over
 
 | Repository | Purpose |
 |---|---|
-| `TaskRepository` | Master task CRUD: summary, implementation plan, consolidation report |
+| `TaskRepository` | Master task CRUD: summary, execution plan, consolidation report |
 | `PhaseRepository` | Phase metadata, status transitions, context |
 | `HandoffRepository` | Phase completion artifacts (decisions, modified files, blockers) |
 | `SessionRepository` | Session history, metadata, and lifecycle |
@@ -1088,15 +1091,15 @@ The `.vscodeignore` file excludes `src/`, `node_modules/`, `webview-ui/src/`, an
 | Runtime | Node.js 18+ (VS Code Extension Host) |
 | IDE | Antigravity IDE / VS Code ≥ 1.85 |
 | MCP | `@modelcontextprotocol/sdk` ^1.27 |
-| Persistence | `sql.js` (SQLite WASM) via `ArtifactDB` (12 tenant-owned tables + schema_version) |
+| Persistence | `sql.js` (SQLite WASM) via `ArtifactDB` (11 tenant-owned tables + schema_version) |
 | Tokenizer | `js-tiktoken` (`cl100k_base`) with `CharRatioEncoder` fallback |
 | Schema Validation | AJV ^8.18 (inlined), Zod ^4.3 (handoff validation) |
 | Markdown | `marked` ^17.0 |
 | Diagrams | `mermaid` ^11.12 |
 | UI | Svelte 5 + Vite (16 components) |
 | Bundler (Host) | esbuild ^0.20 |
-| Testing (Host) | Jest ^29.7 + ts-jest (88 test files) |
-| Testing (Webview) | Vitest (8 test files) |
+| Testing (Host) | Jest ^29.7 + ts-jest (89 test files) |
+| Testing (Webview) | Vitest (24 test files) |
 | Linting | ESLint ^8.57 + `@typescript-eslint` ^8.0 |
 | Pre-commit | Husky ^9.1 + lint-staged ^16.3 |
 | CI/CD | GitHub Actions (Node 18/20 matrix, ubuntu-latest) |
@@ -1163,7 +1166,7 @@ The resulting `workspace_id` is passed to `ArtifactDB.create()` and used as the 
 
 ### Tenant-Scoped Queries
 
-All 12 tenant-owned tables include a `workspace_id` column with indexes for efficient filtering. Repository classes receive the `workspace_id` at construction and scope all queries accordingly.
+All 11 tenant-owned tables include a `workspace_id` column with indexes for efficient filtering. Repository classes receive the `workspace_id` at construction and scope all queries accordingly.
 
 ### Design Decision History
 
@@ -1190,3 +1193,5 @@ For detailed documentation on the hybrid storage model, tenant scoping, and data
 - [Tenant Model](architecture/tenant-model.md) — Workspace identity and tenant scoping rules
 - [Persistence Boundaries](architecture/persistence-boundaries.md) — Subsystem ownership of data
 - [Data Ownership Matrix](architecture/data-ownership-matrix.md) — Complete data class reference
+- [MCP Integration](architecture/mcp-integration.md) — MCP server architecture, transports, resources, tools, and plugin system
+

@@ -29,11 +29,23 @@
 
 | Document | Description |
 |---|---|
-| **[ARCHITECTURE.md](ARCHITECTURE.md)** | System architecture: FSM, DAG scheduling, MCP server, context pipeline, evaluators, persistence, multi-window concurrency, workspace identity & tenanting, decomposition patterns, plugin system, error codes, and tech stack |
-| **[USER_GUIDE.md](USER_GUIDE.md)** | Installation, all 18 configuration settings, usage workflows, multi-root workspace support |
-| **[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md)** | Local development, full project structure, debugging, 96-file test suite reference, CI/CD pipeline, build commands, code conventions, and contribution guidelines |
-| **[API_REFERENCE.md](API_REFERENCE.md)** | MCP URIs, MCP tools, IPC message contracts, data model schemas, and branded types |
-| **[OPERATIONS.md](OPERATIONS.md)** | Packaging, deployment, CI/CD pipeline, migration runbook, troubleshooting guide, backup/recovery, and log locations |
+| **[architecture.md](architecture.md)** | System architecture: FSM, DAG scheduling, MCP server, context pipeline, evaluators, persistence, multi-window concurrency, workspace identity & tenanting, decomposition patterns, plugin system, error codes, and tech stack |
+| **[user-guide.md](user-guide.md)** | Installation, all 18 configuration settings, usage workflows, multi-root workspace support |
+| **[developer-guide.md](developer-guide.md)** | Local development, full project structure, debugging, 113-file test suite reference, CI/CD pipeline, build commands, code conventions, and contribution guidelines |
+| **[api-reference.md](api-reference.md)** | MCP URIs, MCP tools, IPC message contracts, data model schemas, and branded types |
+| **[operations.md](operations.md)** | Packaging, deployment, CI/CD pipeline, migration runbook, troubleshooting guide, backup/recovery, and log locations |
+
+---
+
+## docs/architecture/
+
+| Document | Description |
+|---|---|
+| [storage-topology.md](architecture/storage-topology.md) | Physical layout of global and workspace-local storage |
+| [tenant-model.md](architecture/tenant-model.md) | Workspace identity and tenant scoping rules |
+| [persistence-boundaries.md](architecture/persistence-boundaries.md) | Subsystem ownership of data |
+| [data-ownership-matrix.md](architecture/data-ownership-matrix.md) | Complete data class reference |
+| [mcp-integration.md](architecture/mcp-integration.md) | MCP server architecture, transports, resources, tools, and plugin system |
 
 ---
 
@@ -73,11 +85,11 @@ Design documents in [`coogent_ hybrid_storage/`](../../coogent_%20hybrid_storage
 
 ## Reading Order
 
-For **new users**: README → [USER_GUIDE.md](USER_GUIDE.md)
+For **new users**: README → [user-guide.md](user-guide.md)
 
-For **contributors**: README → [DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md) → [ARCHITECTURE.md](ARCHITECTURE.md)
+For **contributors**: README → [developer-guide.md](developer-guide.md) → [architecture.md](architecture.md)
 
-For **integrators**: [API_REFERENCE.md](API_REFERENCE.md) → [ARCHITECTURE.md](ARCHITECTURE.md)
+For **integrators**: [api-reference.md](api-reference.md) → [architecture.md](architecture.md)
 
-For **operators**: [USER_GUIDE.md](USER_GUIDE.md) → [OPERATIONS.md](OPERATIONS.md)
+For **operators**: [user-guide.md](user-guide.md) → [operations.md](operations.md)
 
