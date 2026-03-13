@@ -360,9 +360,7 @@ export class AntigravityADKAdapter implements AgentBackendProvider {
         if (isPlanner) {
             artifactContract = [
                 '',
-                '## Orchestration Persistence Contract (Runtime Metadata — Non-Output)',
-                'This section is runtime metadata for the orchestration system. Do not include it in the runbook.',
-                'The orchestration runtime must persist artifacts in this order:',
+                '## OUTPUT',
                 '1. Parse and validate the planner output as runbook JSON',
                 `2. Store the validated runbook at: ${runbookFile}`,
                 `3. Store the planner\\'s raw output at: ${responseFile}`,

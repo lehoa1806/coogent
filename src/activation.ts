@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import * as fsSync from 'node:fs';
 
 import { asPhaseId } from './types/index.js';
-import { RUNBOOK_FILE, getCoogentDir } from './constants/paths.js';
+import { RUNBOOK_FILE, getCoogentDir, getGlobalCoogentDir } from './constants/paths.js';
 import { deriveWorkspaceId } from './constants/WorkspaceIdentity.js';
 import { StateManager } from './state/StateManager.js';
 import { Engine } from './engine/Engine.js';
@@ -193,14 +193,20 @@ export function createServices(
  */
 export function startMCPServer(svc: ServiceContainer, primaryRoot: string): void {
     const coogentDir = svc.coogentDir!;
+    const globalDir = getGlobalCoogentDir();
+
+    // Ensure global durable storage directory exists
+    fsSync.mkdirSync(globalDir, { recursive: true });
 
     svc.mcpServer = new CoogentMCPServer(primaryRoot);
     svc.mcpBridge = new MCPClientBridge(svc.mcpServer, primaryRoot);
     const workspaceId = deriveWorkspaceId(primaryRoot);
     log.info('[Coogent] startMCPServer: beginning init sequence...');
-    svc.mcpReady = svc.mcpServer.init(coogentDir, workspaceId)
+    log.info('[Coogent] startMCPServer: globalDir (durable):', globalDir);
+    log.info('[Coogent] startMCPServer: localDir (operational):', coogentDir);
+    svc.mcpReady = svc.mcpServer.init(globalDir, workspaceId)
         .then(async () => {
-            log.info('[Coogent] ArtifactDB initialised.');
+            log.info('[Coogent] ArtifactDB initialised (global dir).');
 
             // Initialize ContextPackBuilder now that ArtifactDB is available
             if (svc.contextScoper) {

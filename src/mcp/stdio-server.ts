@@ -15,24 +15,28 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CoogentMCPServer } from './CoogentMCPServer.js';
-import { COOGENT_DIR } from '../constants/paths.js';
+import { COOGENT_DIR, getGlobalCoogentDir } from '../constants/paths.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  CLI Argument Parsing
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function parseArgs(): { workspaceRoot: string } {
+function parseArgs(): { workspaceRoot: string; dataDirOverride: string | undefined } {
     const args = process.argv.slice(2);
     let workspaceRoot = process.cwd();
+    let dataDirOverride: string | undefined;
 
     for (let i = 0; i < args.length; i++) {
         if (args[i] === '--workspace' && args[i + 1]) {
             workspaceRoot = path.resolve(args[i + 1]);
             i++; // skip the value
+        } else if (args[i] === '--data-dir' && args[i + 1]) {
+            dataDirOverride = path.resolve(args[i + 1]);
+            i++; // skip the value
         }
     }
 
-    return { workspaceRoot };
+    return { workspaceRoot, dataDirOverride };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -48,22 +52,23 @@ function log(message: string): void {
 // ═══════════════════════════════════════════════════════════════════════════════
 
 async function main(): Promise<void> {
-    const { workspaceRoot } = parseArgs();
-    const coogentDir = path.join(workspaceRoot, COOGENT_DIR);
+    const { workspaceRoot, dataDirOverride } = parseArgs();
+    const globalDir = dataDirOverride ?? getGlobalCoogentDir();
+    const localDir = path.join(workspaceRoot, COOGENT_DIR);
 
     log(`Starting CoogentMCPServer (stdio transport)`);
-    log(`Workspace: ${workspaceRoot}`);
-    log(`Data dir:  ${coogentDir}`);
+    log(`Workspace:  ${workspaceRoot}`);
+    log(`Global dir: ${globalDir}`);
+    log(`Local dir:  ${localDir}`);
 
-    // Ensure .coogent directory exists
-    if (!fs.existsSync(coogentDir)) {
-        fs.mkdirSync(coogentDir, { recursive: true });
-        log(`Created ${coogentDir}`);
-    }
+    // Ensure both directories exist
+    fs.mkdirSync(globalDir, { recursive: true });
+    fs.mkdirSync(localDir, { recursive: true });
+    log(`Ensured directories exist`);
 
-    // Instantiate and initialise the MCP server
+    // Instantiate and initialise the MCP server (durable storage in globalDir)
     const server = new CoogentMCPServer(workspaceRoot);
-    await server.init(coogentDir);
+    await server.init(globalDir);
     log('ArtifactDB initialised');
 
     // Connect via stdio transport
