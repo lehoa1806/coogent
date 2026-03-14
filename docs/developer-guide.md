@@ -129,7 +129,7 @@ coogent/
 │   ├── agent-selection/          ← AgentRegistry, AgentSelector, SelectionPipeline, templates
 │   ├── prompt-compiler/          ← PlannerPromptCompiler, PolicyEngine, TaskClassifier,
 │   │                               RepoFingerprinter, RequirementNormalizer, TemplateLoader
-│   ├── consolidation/            ← ConsolidationAgent (phase aggregation → report)
+│   ├── consolidation/            ← ConsolidationAgent (in-process fallback) + consolidation-prompt.ts (ADK worker prompt)
 │   ├── session/                  ← SessionManager, SessionHistoryService, SessionRestoreService,
 │   │                               SessionDeleteService, SessionHealthValidator
 │   ├── planner/                  ← PlannerAgent, WorkspaceScanner, RunbookParser, PlannerRetryManager
@@ -358,6 +358,7 @@ npx jest --listTests               # List all test files
 | `src/webview/__tests__/MissionControlPanel.test.ts` | IPC validation |
 | `src/evaluators/__tests__/EvaluatorV2.test.ts` | Evaluator registry |
 | `src/consolidation/__tests__/ConsolidationAgent.test.ts` | Report aggregation |
+| `src/consolidation/__tests__/consolidation-prompt.test.ts` | Consolidation prompt builder |
 | `src/constants/__tests__/StorageBase.test.ts` | Storage path resolution |
 | `src/planner/__tests__/` | PlannerAgent + 3 collaborators |
 | `src/__tests__/integration.test.ts` | End-to-end multi-phase flow |

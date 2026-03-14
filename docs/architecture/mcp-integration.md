@@ -229,24 +229,40 @@ Worker agent starts phase
 
 ### Workflow 3: Consolidation
 
-**Actors**: Reducer Agent → MCPClientBridge → CoogentMCPServer
+**Actors**: EngineWiring → ADKController → Consolidation Worker → CoogentMCPServer (fallback: ConsolidationAgent)
 
 ```
-All phases complete → Reducer runs
+All phases complete → Engine emits run:consolidate
     │
-    ├─ 1. Reducer reads all handoffs:
-    │      └── get_phase_handoff tool or ReadResource for each phase
+    ├─ 1. EngineWiring builds consolidation prompt:
+    │      └── buildConsolidationPrompt({ masterTaskId, projectId, phases, workspaceRoot })
+    │      └── Prompt instructs the worker to read handoffs, compile report, and update docs
     │
-    ├─ 2. Reducer produces final report:
-    │      ├── bridge.submitConsolidationReport(masterTaskId, markdown)
-    │      │   └── Validates + persists Markdown report
+    ├─ 2. ADK spawns dedicated consolidation worker:
+    │      └── ADKController.spawnWorker(phaseId=9999, isolated conversation mode)
+    │      └── Conversation settings temporarily overridden to 'isolated'
+    │
+    ├─ 3. Consolidation worker executes:
+    │      ├── Reads each phase handoff via mcp_coogent_get_phase_handoff
+    │      ├── Compiles a structured Markdown report (summary table, phase results, decisions, files)
+    │      ├── Submits report via mcp_coogent_submit_consolidation_report
+    │      └── Updates repository documentation (CHANGELOG, architecture docs, etc.)
+    │
+    ├─ 4. Worker exits → EngineWiring handles result:
+    │      ├── worker:exited(9999) → reads report from MCP via RESOURCE_URIS.taskReport()
+    │      ├── Broadcasts CONSOLIDATION_REPORT to webview
+    │      └── Skips normal FSM processing (consolidation phase is not part of the runbook)
+    │
+    ├─ 5. Fallback (if ADK spawn fails):
+    │      └── In-process ConsolidationAgent.generateReport() → saveReport()
+    │      └── bridge.submitConsolidationReport(masterTaskId, markdown)
     │      └── bridge.submitConsolidationReportJson(masterTaskId, json)
-    │          └── Direct DB write for structured JSON
+    │      └── Broadcasts CONSOLIDATION_REPORT with "(in-process fallback)" label
     │
-    ├─ 3. Engine marks task complete:
+    ├─ 6. Engine marks task complete:
     │      └── mcpServer.setTaskCompleted(masterTaskId)
     │
-    └─ 4. Final resources become readable:
+    └─ 7. Final resources become readable:
            coogent://tasks/{id}/consolidation_report       → text/markdown
            coogent://tasks/{id}/consolidation_report_json   → application/json
 ```
