@@ -261,7 +261,7 @@ Each phase follows a 5-step pipeline:
 | 2. Execution | `ADKController` | Spawns ephemeral workers with curated file context |
 | 3. Checkpointing | `GitManager` | Creates Git snapshot commits after successful exits |
 | 4. Distillation | `HandoffExtractor` / MCP | Extracts decisions, modified files, and blockers |
-| 5. Consolidation | `ConsolidationAgent` | Aggregates all phase handoffs into a final report |
+| 5. Consolidation | `EngineWiring` → ADK Worker (fallback: `ConsolidationAgent`) | Spawns a dedicated ADK worker in isolated conversation to read phase handoffs, compile a Markdown report, submit it via MCP, and update repository docs. Falls back to in-process `ConsolidationAgent` if spawn fails. |
 
 ### Context Scoping
 
@@ -937,6 +937,7 @@ sequenceDiagram
     participant W as Worker (AI Agent)
     participant MCP as CoogentMCPServer
     participant DB as ArtifactDB (SQLite)
+    participant CW as Consolidation Worker
     participant CA as ConsolidationAgent
 
     U->>MC: Enter objective
@@ -978,10 +979,24 @@ sequenceDiagram
     end
 
     E->>E: ALL_PHASES_PASS → COMPLETED
-    E->>CA: consolidate(allHandoffs)
-    CA-->>MCP: submit_consolidation_report
-    MCP->>DB: upsertTask(report)
-    E->>MC: CONSOLIDATION_REPORT
+    E->>E: emit run:consolidate
+
+    alt ADK worker spawn succeeds
+        E->>ADK: buildConsolidationPrompt() → spawnWorker(phaseId=9999, isolated)
+        ADK->>CW: Dedicated consolidation conversation
+        CW->>MCP: get_phase_handoff (for each phase)
+        CW->>MCP: submit_consolidation_report(markdown)
+        MCP->>DB: upsertTask(report)
+        CW-->>ADK: exit
+        ADK-->>E: worker:exited(9999)
+        E->>MCP: readResource(consolidation_report)
+        E->>MC: CONSOLIDATION_REPORT
+    else ADK spawn fails (fallback)
+        E->>CA: generateReport() + saveReport()
+        CA-->>MCP: submit_consolidation_report
+        MCP->>DB: upsertTask(report)
+        E->>MC: CONSOLIDATION_REPORT (in-process fallback)
+    end
 ```
 
 ### Key Flow Properties

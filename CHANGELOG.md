@@ -5,6 +5,46 @@ All notable changes to Coogent are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-03-14
+
+### Added
+
+- **MCP Auto-Config Deployment** (`src/mcp/MCPServerDeployer.ts`) — Copies stdio server bundle to global Antigravity directory for external MCP client access; `mcp-config.json` auto-generated at well-known path
+- **Hybrid Storage Topology** — Global storage for ArtifactDB, backups, and MCP runtime identity (`~/Library/Application Support/Antigravity/coogent/`); workspace-local `.coogent/` retained for IPC sessions and operational state
+- **Workspace Tenanting** — `workspace_id` filtering added to all 7 repository read/delete methods (Task, Handoff, Verdict, Phase, Audit, ContextManifest, Session) for cross-workspace data isolation; DB migration renames `implementation_plan` → `execution_plan`
+- **Capability Inference** — Planner now infers `required_capabilities` per-phase from task context instead of selecting from a fixed skill registry; `available_worker_skills` removed from INPUT DATA contract
+- **MCP Integration Architecture Doc** (`docs/architecture/mcp-integration.md`) — Comprehensive documentation covering server architecture, transport modes, 7 supported workflows, resources, tools, prompts, sampling, validation, plugin system, and repository layer
+- **Architecture Sub-Docs** — Added `storage-topology.md`, `tenant-model.md`, `persistence-boundaries.md`, and `data-ownership-matrix.md` under `docs/architecture/`
+
+### Changed
+
+- **Direct prompt injection** — Default input path for planner and worker agents switched from `request.md` file-based IPC to direct prompt injection; `request.md` retained as fallback execution mode
+- **Planner output contract** — Simplified to raw JSON output; `RunbookParser` reordered to try raw JSON first, fenced fallback second; IPC contract instructions removed from `WorkerPromptCompiler`
+- **Planner prompt hardening** — Raw user prompt moved from inline markdown into fenced `## INPUT DATA` JSON block to prevent instruction bleed; `WorkspaceScanner` output renamed to "Top-Level Structure"
+- **CommandRegistry decomposition** — Split 457-line monolith into 5 focused domain modules: `sessionCommands`, `executionCommands`, `gitCommands`, `diagnosticCommands`, and `helpers`
+- **Security defaults** — `blockOnSecretsDetection`, `blockOnPromptInjection`, and `enableEncryption` defaults flipped to `true`
+- **ArtifactDB backup consolidation** — `ArtifactDB.backupIfDue()` delegates to injected `ArtifactDBBackup` instance, removing ~25 lines of duplicated snapshot + rotation logic
+- **Multi-window ArtifactDB** — Reload-before-write merge strategy for concurrent Antigravity windows sharing a global SQLite database
+- **Documentation** — All top-level docs renamed from UPPER_SNAKE_CASE to kebab-case; cross-references updated across README, CONTRIBUTING, CHANGELOG, and 3 TypeScript source files
+
+### Fixed
+
+- **MCP data persistence** — Ensure MCP data persistence across processes via durable global storage routing
+- **Session cascade delete** — Reorder `SessionDeleteService` cascade so `purgeTask()` (which cascade-deletes all child tables) runs before `deleteSession()` removes the IPC directory; adds `context_manifests` cleanup to `TaskRepository.deleteChildRecords`
+- **Sidebar refresh** — Refresh sidebar after session creation and run completion so status updates are visible in history
+- **Consolidation report button** — Prevent button from disappearing after modal close by decoupling modal visibility from data presence (`reportModalOpen` flag)
+- **MCP resource URIs** — Fix stale URIs in `ReportModal` and `PhaseDetails`; add missing `consolidation_report_json` case in `parseResourceURI`
+- **Planner output contract simplification** — Add planner `response.md` persistence on `plan:generated` and `plan:error`; add early `.task-runbook.json` write on `plan:generated` (before approval)
+
+### Security
+
+- **SecretsGuard** — `scan()` now reports all pattern occurrences (not just first)
+- **RegexEvaluator** — Rejects ReDoS-vulnerable patterns via shared `isRegexSafe()` utility
+- **HandoffExtractor** — JSON fallback uses brace-counting + discriminator keys instead of naive parsing
+- **AgentBackendProvider** — Type-safe `getExecutionMode()` added to interface; eliminates `any` cast in `ADKController`
+
+---
+
 ## [0.2.0] — 2026-03-09
 
 ### Added
