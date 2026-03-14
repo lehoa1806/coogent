@@ -216,6 +216,7 @@ export type HostToWebviewMessage =
     | { type: 'MCP_RESOURCE_DATA'; payload: { requestId: string; data: string | object; error?: string } }
     | { type: 'SUGGESTION_DATA'; payload: { mentions: { label: string; description: string; insert: string }[]; workflows: { label: string; description: string; insert: string }[] } }
     | { type: 'ATTACHMENT_SELECTED'; payload: { paths: string[] } }
+    | { type: 'RESTORE_PROMPT'; payload: { prompt: string } }
     | { type: 'SESSION_LIST'; payload: { sessions: SessionSummary[] } }
     | { type: 'SESSION_SEARCH_RESULTS'; payload: { query: string; sessions: SessionSummary[] } }
     | { type: 'workers:loaded'; workers: WorkerProfile[] };

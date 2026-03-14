@@ -34,6 +34,7 @@ const HOST_TO_WEBVIEW_TYPES: HostToWebviewMessageType[] = [
     'MCP_RESOURCE_DATA',
     'SUGGESTION_DATA',
     'ATTACHMENT_SELECTED',
+    'RESTORE_PROMPT',
     'workers:loaded',
 ];
 
@@ -98,6 +99,7 @@ function validateHostMessage(msg: HostToWebviewMessage): string {
         case 'MCP_RESOURCE_DATA': return msg.payload.requestId;
         case 'SUGGESTION_DATA': return String(msg.payload.mentions.length);
         case 'ATTACHMENT_SELECTED': return String(msg.payload.paths.length);
+        case 'RESTORE_PROMPT': return msg.payload.prompt;
         case 'workers:loaded': return String(msg.workers.length);
         default: {
             // Compile-time exhaustiveness check
@@ -184,6 +186,10 @@ describe('IPC Message Contract Tests', () => {
             expect(HOST_TO_WEBVIEW_TYPES).toContain('PLAN_SUMMARY');
             expect(HOST_TO_WEBVIEW_TYPES).toContain('EXECUTION_PLAN');
         });
+
+        it('should include RESTORE_PROMPT type', () => {
+            expect(HOST_TO_WEBVIEW_TYPES).toContain('RESTORE_PROMPT');
+        });
     });
 
     describe('Webview → Host message types', () => {
@@ -258,6 +264,14 @@ describe('IPC Message Contract Tests', () => {
                 payload: { prompt: 'Build a backend' },
             };
             expect(validateWebviewMessage(msg)).toBe('Build a backend');
+        });
+
+        it('validateHostMessage handles RESTORE_PROMPT correctly', () => {
+            const msg: HostToWebviewMessage = {
+                type: 'RESTORE_PROMPT',
+                payload: { prompt: 'build auth module' },
+            };
+            expect(validateHostMessage(msg)).toBe('build auth module');
         });
     });
 });

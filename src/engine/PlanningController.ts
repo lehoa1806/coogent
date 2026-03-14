@@ -51,11 +51,13 @@ export class PlanningController {
             type: 'PLAN_STATUS',
             payload: { status: 'generating', message: 'Planning started...' },
         });
+        const _masterTaskId = this.engine.getSessionDirName();
         this.engine.emitUIMessage({
             type: 'STATE_SNAPSHOT',
             payload: {
                 runbook: this.engine.getRunbook() ?? { project_id: '', status: 'idle', current_phase: 0, phases: [] },
                 engineState: this.engine.getState(),
+                ...(_masterTaskId ? { masterTaskId: _masterTaskId } : {}),
             },
         });
 
@@ -76,11 +78,13 @@ export class PlanningController {
             type: 'PLAN_DRAFT',
             payload: { draft, fileTree },
         });
+        const _masterTaskId = this.engine.getSessionDirName();
         this.engine.emitUIMessage({
             type: 'STATE_SNAPSHOT',
             payload: {
                 runbook: draft,
                 engineState: this.engine.getState(),
+                ...(_masterTaskId ? { masterTaskId: _masterTaskId } : {}),
             },
         });
     }
@@ -116,9 +120,10 @@ export class PlanningController {
             this.engine.setRunbook(runbook);
             this.engine.transition(EngineEvent.PARSE_SUCCESS);
 
+            const _masterTaskId = this.engine.getSessionDirName();
             this.engine.emitUIMessage({
                 type: 'STATE_SNAPSHOT',
-                payload: { runbook, engineState: this.engine.getState() },
+                payload: { runbook, engineState: this.engine.getState(), ...(_masterTaskId ? { masterTaskId: _masterTaskId } : {}) },
             });
         } catch (err) {
             this.engine.transition(EngineEvent.PARSE_FAILURE);
