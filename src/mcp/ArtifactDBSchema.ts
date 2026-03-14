@@ -44,6 +44,7 @@ export interface Statement {
 export const TENANT_TABLES = [
     'tasks', 'phases', 'handoffs', 'worker_outputs', 'sessions', 'phase_logs',
     'evaluation_results', 'healing_attempts', 'plan_revisions', 'selection_audits', 'context_manifests',
+    'failure_console_records',
 ] as const;
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -207,10 +208,34 @@ CREATE INDEX IF NOT EXISTS idx_plan_revisions_workspace ON plan_revisions(worksp
 CREATE INDEX IF NOT EXISTS idx_selection_audits_workspace ON selection_audits(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_ctx_manifest_workspace ON context_manifests(workspace_id);
 
+CREATE TABLE IF NOT EXISTS failure_console_records (
+  id TEXT PRIMARY KEY,
+  master_task_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL DEFAULT '',
+  phase_id TEXT,
+  worker_id TEXT,
+  severity TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  category TEXT NOT NULL,
+  root_event_id TEXT,
+  contributing_event_ids TEXT NOT NULL DEFAULT '[]',
+  message TEXT NOT NULL,
+  evidence_json TEXT NOT NULL DEFAULT '{}',
+  suggested_actions_json TEXT NOT NULL DEFAULT '[]',
+  chosen_action_json TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY (master_task_id) REFERENCES tasks(master_task_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_failure_console_task ON failure_console_records(master_task_id);
+CREATE INDEX IF NOT EXISTS idx_failure_console_session ON failure_console_records(session_id);
+CREATE INDEX IF NOT EXISTS idx_failure_console_workspace ON failure_console_records(workspace_id);
+
 `;
 
 /** Current schema version — bump this when adding new migrations. */
-export const SCHEMA_VERSION = 11;
+export const SCHEMA_VERSION = 12;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  Schema Initialization
@@ -312,7 +337,7 @@ export function initializeSchema(db: Database): void {
         // Record the new schema version
         db.run(
             'INSERT OR REPLACE INTO schema_version (version, applied_at, description) VALUES (?, ?, ?)',
-            [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: rename implementation_plan → execution_plan`]
+            [SCHEMA_VERSION, Date.now(), `Schema v${SCHEMA_VERSION}: add failure_console_records table`]
         );
         log.info(`[ArtifactDB] Schema migrated to v${SCHEMA_VERSION}.`);
     }

@@ -40,13 +40,13 @@ code --install-extension coogent-<version>.vsix
 
 ### From Source
 
-Always build from the `master` branch to ensure a stable, release-ready build:
+Always build from the `production` branch to ensure a stable, release-ready build:
 
 ```bash
 git clone https://github.com/lehoa1806/coogent.git
 cd coogent
-git checkout master
-git pull origin master
+git checkout production
+git pull origin production
 npm install
 npm run build
 ```

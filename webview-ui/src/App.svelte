@@ -20,6 +20,8 @@
   import MarkdownRenderer from "./components/MarkdownRenderer.svelte";
 
   import ReportModal from "./components/ReportModal.svelte";
+  import FailureConsole from "./components/FailureConsole.svelte";
+  import { latestFailure, clearFailureRecords } from "./stores/failureConsole.svelte.js";
 
   let showTerminal = $state(false);
   /** Controls the View-All plan modal triggered from ExecutionControls */
@@ -189,6 +191,12 @@
     {/if}
   </div>
 
+  {#if latestFailure}
+    <div class="failure-console-wrapper">
+      <FailureConsole record={latestFailure} ondismiss={clearFailureRecords} />
+    </div>
+  {/if}
+
   <ChatInput />
 
   <WorkerTerminal visible={showTerminal} onClose={handleCloseTerminal} />
@@ -332,6 +340,13 @@
     white-space: pre-wrap;
     word-wrap: break-word;
     margin: 0;
+  }
+
+  /* ── Failure Console Wrapper ────────────────────────────────────────── */
+  .failure-console-wrapper {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    overflow: hidden;
   }
 
   @keyframes pulse {

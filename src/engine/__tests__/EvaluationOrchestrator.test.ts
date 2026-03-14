@@ -194,3 +194,143 @@ describe('EvaluationOrchestrator — handleWorkerFailed retry logic', () => {
         expect(engine.dispatchReadyPhases).toHaveBeenCalled();
     });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  Failure console emission integration tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe('EvaluationOrchestrator — failure console record emission', () => {
+    let engine: ReturnType<typeof makeMockEngine>;
+    let healer: SelfHealingController;
+    let orchestrator: EvaluationOrchestrator;
+    let mockDB: ReturnType<typeof makeMockDB>;
+
+    const mockAssembler = {
+        assemble: jest.fn().mockReturnValue({
+            id: 'fc-test-001',
+            runId: 'test-run',
+            sessionId: '',
+            severity: 'recoverable',
+            scope: 'phase',
+            category: 'worker_execution_error',
+            contributingEventIds: [],
+            message: 'test failure',
+            evidence: {},
+            suggestedActions: [],
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        }),
+    };
+
+    beforeEach(() => {
+        engine = makeMockEngine();
+        healer = new SelfHealingController({ maxRetries: 0, baseDelayMs: 100 });
+        orchestrator = new EvaluationOrchestrator(engine, healer, null);
+        mockDB = makeMockDB();
+        orchestrator.setArtifactDB(mockDB, 'task-001');
+        mockAssembler.assemble.mockClear();
+    });
+
+    it('handleFailure emits FAILURE_CONSOLE_RECORD when FailureAssembler is set', async () => {
+        orchestrator.setFailureAssembler(mockAssembler as any);
+
+        const phase = makePhase({ max_retries: 0 });
+        const runbook = { phases: [phase], status: 'running', project_id: 'test-project' };
+        engine.getRunbook.mockReturnValue(runbook);
+
+        // Trigger failure path via handleWorkerExited with failing exit code
+        await orchestrator.handleWorkerExited(phase.id as number, 1, '', 'error text', true);
+
+        // The assembler should have been called
+        expect(mockAssembler.assemble).toHaveBeenCalledTimes(1);
+        // A FAILURE_CONSOLE_RECORD message should have been emitted
+        expect(engine.emitUIMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'FAILURE_CONSOLE_RECORD',
+                payload: expect.objectContaining({
+                    record: expect.objectContaining({
+                        id: 'fc-test-001',
+                    }),
+                }),
+            })
+        );
+    });
+
+    it('handleWorkerFailed emits FAILURE_CONSOLE_RECORD when FailureAssembler is set', async () => {
+        orchestrator.setFailureAssembler(mockAssembler as any);
+
+        const phase = makePhase({ max_retries: 0 });
+        const runbook = { phases: [phase], status: 'running', project_id: 'test-project' };
+        engine.getRunbook.mockReturnValue(runbook);
+
+        await orchestrator.handleWorkerFailed(phase, true, 'timeout');
+
+        expect(mockAssembler.assemble).toHaveBeenCalledTimes(1);
+        // Verify the error code matches the reason
+        expect(mockAssembler.assemble).toHaveBeenCalledWith(
+            expect.objectContaining({
+                runId: 'test-project',
+            }),
+            'WORKER_TIMEOUT'
+        );
+        expect(engine.emitUIMessage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                type: 'FAILURE_CONSOLE_RECORD',
+            })
+        );
+    });
+
+    it('handleWorkerFailed with crash reason uses WORKER_CRASH error code', async () => {
+        orchestrator.setFailureAssembler(mockAssembler as any);
+
+        const phase = makePhase({ max_retries: 0 });
+        const runbook = { phases: [phase], status: 'running', project_id: 'proj-1' };
+        engine.getRunbook.mockReturnValue(runbook);
+
+        await orchestrator.handleWorkerFailed(phase, true, 'crash');
+
+        expect(mockAssembler.assemble).toHaveBeenCalledWith(
+            expect.anything(),
+            'WORKER_CRASH'
+        );
+    });
+
+    it('does not emit FAILURE_CONSOLE_RECORD when no FailureAssembler is set', async () => {
+        // Do NOT call setFailureAssembler
+        const phase = makePhase({ max_retries: 0 });
+        const runbook = { phases: [phase], status: 'running', project_id: 'test-project' };
+        engine.getRunbook.mockReturnValue(runbook);
+
+        await orchestrator.handleWorkerExited(phase.id as number, 1, '', 'error', true);
+
+        // Should not call assembler at all
+        expect(mockAssembler.assemble).not.toHaveBeenCalled();
+        // No FAILURE_CONSOLE_RECORD should be emitted
+        const fcMessages = engine.emitUIMessage.mock.calls.filter(
+            (call: any[]) => call[0]?.type === 'FAILURE_CONSOLE_RECORD'
+        );
+        expect(fcMessages).toHaveLength(0);
+    });
+
+    it('does not break existing behavior when assembler throws', async () => {
+        const throwingAssembler = {
+            assemble: jest.fn().mockImplementation(() => {
+                throw new Error('Assembler exploded');
+            }),
+        };
+        orchestrator.setFailureAssembler(throwingAssembler as any);
+
+        const phase = makePhase({ max_retries: 0 });
+        const runbook = { phases: [phase], status: 'running', project_id: 'test-project' };
+        engine.getRunbook.mockReturnValue(runbook);
+
+        // Should not throw — error is caught internally
+        await expect(
+            orchestrator.handleWorkerExited(phase.id as number, 1, '', 'error', true)
+        ).resolves.not.toThrow();
+
+        // Core failure handling should still work
+        expect(phase.status).toBe('failed');
+        expect(runbook.status).toBe('paused_error');
+    });
+});

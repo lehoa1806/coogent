@@ -18,11 +18,11 @@
 
 ### Package the Extension
 
-Always build from the `master` branch to ensure a stable, release-ready build:
+Always build from the `production` branch to ensure a stable, release-ready build:
 
 ```bash
-git checkout master
-git pull origin master
+git checkout production
+git pull origin production
 npm run prepackage             # Minified build (Extension Host + Webview)
 npm run package                # Produces coogent-<version>.vsix
 ```

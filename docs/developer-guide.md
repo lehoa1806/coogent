@@ -44,9 +44,9 @@ npm run dev:webview        # Watch mode with HMR
 #### Full Build
 
 > [!IMPORTANT]
-> Always checkout the `master` branch before building to ensure you are compiling from the latest stable source:
+> Always checkout the `production` branch before building to ensure you are compiling from the latest stable source:
 > ```bash
-> git checkout master && git pull
+> git checkout production && git pull
 > ```
 
 ```bash

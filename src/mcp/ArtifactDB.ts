@@ -14,6 +14,7 @@ import { VerdictRepository } from './repositories/VerdictRepository.js';
 import { SessionRepository } from './repositories/SessionRepository.js';
 import { AuditRepository } from './repositories/AuditRepository.js';
 import { ContextManifestRepository } from './repositories/ContextManifestRepository.js';
+import { FailureConsoleRepository } from './repositories/FailureConsoleRepository.js';
 import { initializeSchema, TENANT_TABLES, type Database, type SqlJsStatic } from './ArtifactDBSchema.js';
 import { ArtifactDBBackup } from './ArtifactDBBackup.js';
 
@@ -103,6 +104,7 @@ export class ArtifactDB {
     private _sessions: SessionRepository | undefined;
     private _audits: AuditRepository | undefined;
     private _contextManifests: ContextManifestRepository | undefined;
+    private _failureConsole: FailureConsoleRepository | undefined;
 
     /** Task aggregate repository. */
     get tasks(): TaskRepository {
@@ -137,6 +139,11 @@ export class ArtifactDB {
     /** Context manifest repository. */
     get contextManifests(): ContextManifestRepository {
         return (this._contextManifests ??= new ContextManifestRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
+    }
+
+    /** Failure console record repository. */
+    get failureConsole(): FailureConsoleRepository {
+        return (this._failureConsole ??= new FailureConsoleRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
     }
 
     /**
