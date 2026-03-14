@@ -163,6 +163,11 @@ export async function routeWebviewMessage(raw: unknown, deps: MessageRouterDeps)
                         );
                         if (choice !== 'Continue on Current Branch') {
                             deps.sendToWebview({
+                                type: 'RESTORE_PROMPT',
+                                payload: { prompt: pendingPrompt },
+                            });
+                            // Keep existing LAST_PROMPT log for backward compatibility
+                            deps.sendToWebview({
                                 type: 'LOG_ENTRY',
                                 payload: {
                                     timestamp: asTimestamp(),

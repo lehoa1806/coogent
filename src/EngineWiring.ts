@@ -6,7 +6,9 @@
 //   WorkerLauncher, and WorkerResultProcessor collaborators.
 
 import { randomUUID } from 'node:crypto';
-import { asTimestamp, EngineState, EngineEvent, type Phase, type HostToWebviewMessage } from './types/index.js';
+import { asTimestamp, asPhaseId, EngineState, EngineEvent, type Phase, type PhaseStatus, type HostToWebviewMessage } from './types/index.js';
+import { buildConsolidationPrompt } from './consolidation/consolidation-prompt.js';
+import { RESOURCE_URIS } from './mcp/types.js';
 import { MissionControlPanel } from './webview/MissionControlPanel.js';
 import log from './logger/log.js';
 import type { ServiceContainer } from './ServiceContainer.js';
@@ -275,9 +277,45 @@ export function wireEngine(
         asResultProcessorMCPBridge(mcpBridge),
     );
 
+    // ── Consolidation phase sentinel ID ────────────────────────────────
+    const CONSOLIDATION_PHASE_ID = 9999;
+
     // ── ADK → Engine (worker lifecycle) ────────────────────────────────
     adkController.on('worker:exited', (phaseId, exitCode) => {
         const { stdout, stderr } = drainWorkerAccumulators(phaseId);
+
+        // Consolidation worker — do NOT route through the normal FSM/result processor.
+        // Read the consolidation report from MCP (the worker submitted it via
+        // mcp_coogent_submit_consolidation_report) and broadcast to the webview.
+        if (phaseId === CONSOLIDATION_PHASE_ID) {
+            const taskId = getSessionDirName();
+            if (mcpBridge && taskId) {
+                const reportUri = RESOURCE_URIS.taskReport(taskId);
+                mcpBridge.readResource(reportUri)
+                    .then((markdown: string) => {
+                        if (markdown && markdown.trim()) {
+                            MissionControlPanel.broadcast({
+                                type: 'LOG_ENTRY',
+                                payload: {
+                                    timestamp: asTimestamp(),
+                                    level: 'info',
+                                    message: 'Consolidation report stored in MCP state.',
+                                },
+                            });
+                            MissionControlPanel.broadcast({
+                                type: 'CONSOLIDATION_REPORT',
+                                payload: { report: markdown },
+                            });
+                        } else {
+                            log.warn('[Coogent] Consolidation worker exited but report is empty.');
+                        }
+                    })
+                    .catch(err => {
+                        log.error('[Coogent] Failed to read consolidation report from MCP:', err);
+                    });
+            }
+            return; // Skip normal FSM processing for consolidation
+        }
 
         resultProcessor.processWorkerExit(
             phaseId,
@@ -290,12 +328,20 @@ export function wireEngine(
 
     adkController.on('worker:timeout', (phaseId) => {
         const { stdout, stderr } = drainWorkerAccumulators(phaseId);
+        if (phaseId === CONSOLIDATION_PHASE_ID) {
+            log.warn('[Coogent] Consolidation worker timed out.');
+            return;
+        }
         resultProcessor.processWorkerFailure(phaseId, 'timeout', stdout, stderr, svc.currentSessionDir)
             .catch(log.onError);
     });
 
     adkController.on('worker:crash', (phaseId) => {
         const { stdout, stderr } = drainWorkerAccumulators(phaseId);
+        if (phaseId === CONSOLIDATION_PHASE_ID) {
+            log.warn('[Coogent] Consolidation worker crashed.');
+            return;
+        }
         resultProcessor.processWorkerFailure(phaseId, 'crash', stdout, stderr, svc.currentSessionDir)
             .catch(log.onError);
     });
@@ -334,47 +380,103 @@ export function wireEngine(
         }
     });
 
-    // ── Engine → ConsolidationAgent ────────────────────────────────────
+    // ── Engine → ConsolidationAgent (ADK worker) ──────────────────────
     engine.on('run:consolidate', (evtSessionDir: string) => {
         const runbook = engine.getRunbook() ?? null;
-        const agent = consolidationAgent;
-        if (!agent || !runbook) return;
+        if (!runbook) return;
 
-        agent.generateReport(evtSessionDir, runbook, mcpBridge, getSessionDirName())
-            .then(async report => {
-                try {
-                    await agent.saveReport(evtSessionDir, report, mcpBridge, getSessionDirName(), svc.coogentDir);
-                } catch (err) {
-                    log.error('[Coogent] saveReport failed:', err);
+        const taskId = getSessionDirName();
+
+        // Build the consolidation prompt for the ADK worker
+        const consolidationPrompt = buildConsolidationPrompt({
+            masterTaskId: taskId,
+            projectId: runbook.project_id,
+            summary: runbook.summary ?? '',
+            phases: runbook.phases.map(p => ({
+                id: p.id as number,
+                mcpPhaseId: p.mcpPhaseId,
+                status: p.status,
+                context_summary: p.context_summary,
+            })),
+            workspaceRoot,
+        });
+
+        // Create a virtual consolidation phase
+        const consolidationPhase: Phase = {
+            id: asPhaseId(CONSOLIDATION_PHASE_ID),
+            status: 'running' as PhaseStatus,
+            prompt: consolidationPrompt,
+            context_files: [],
+            success_criteria: 'Consolidation report submitted to MCP and docs updated',
+            context_summary: 'Consolidation: aggregate results and update documentation',
+        };
+
+        MissionControlPanel.broadcast({
+            type: 'LOG_ENTRY',
+            payload: {
+                timestamp: asTimestamp(),
+                level: 'info',
+                message: '🔄 Starting consolidation agent in new conversation...',
+            },
+        });
+
+        // Override conversation mode to isolated so it always gets a fresh conversation
+        const originalSettings = adkController.conversationSettings;
+        adkController.setConversationSettings({ mode: 'isolated' });
+
+        adkController.spawnWorker(consolidationPhase, workerTimeoutMs, taskId)
+            .then((worker) => {
+                // Restore original conversation settings
+                adkController.setConversationSettings(originalSettings);
+
+                if (!worker) {
+                    log.warn('[Coogent] Consolidation worker spawn returned null — falling back to in-process.');
+                    return runInProcessConsolidation(evtSessionDir, runbook, taskId);
                 }
-                return report;
-            })
-            .then(report => {
-                MissionControlPanel.broadcast({
-                    type: 'LOG_ENTRY',
-                    payload: {
-                        timestamp: asTimestamp(),
-                        level: 'info',
-                        message: 'Consolidation report stored in MCP state.',
-                    },
-                });
-                const markdown = agent.formatAsMarkdown(report);
-                MissionControlPanel.broadcast({
-                    type: 'CONSOLIDATION_REPORT',
-                    payload: { report: markdown },
-                });
+
+                log.info('[Coogent] Consolidation worker spawned successfully.');
+                return undefined;
             })
             .catch(err => {
-                log.error('[Coogent] Consolidation error:', err);
-                MissionControlPanel.broadcast({
-                    type: 'LOG_ENTRY',
-                    payload: {
-                        timestamp: asTimestamp(),
-                        level: 'error',
-                        message: `Consolidation report generation failed: ${err instanceof Error ? err.message : String(err)}`,
-                    },
-                });
+                adkController.setConversationSettings(originalSettings);
+                log.error('[Coogent] Consolidation worker spawn failed:', err);
+
+                // Fallback to in-process consolidation
+                log.info('[Coogent] Falling back to in-process consolidation...');
+                runInProcessConsolidation(evtSessionDir, runbook, taskId);
             });
+
+        /** In-process fallback using the existing ConsolidationAgent. */
+        function runInProcessConsolidation(
+            sessionDir: string,
+            rb: import('./types/index.js').Runbook,
+            masterTaskId: string,
+        ): void {
+            const agent = consolidationAgent;
+            if (!agent) return;
+
+            agent.generateReport(sessionDir, rb, mcpBridge, masterTaskId)
+                .then(async report => {
+                    await agent.saveReport(sessionDir, report, mcpBridge, masterTaskId, svc.coogentDir);
+                    return report;
+                })
+                .then(report => {
+                    MissionControlPanel.broadcast({
+                        type: 'LOG_ENTRY',
+                        payload: {
+                            timestamp: asTimestamp(),
+                            level: 'info',
+                            message: 'Consolidation report stored in MCP state (in-process fallback).',
+                        },
+                    });
+                    const markdown = agent.formatAsMarkdown(report);
+                    MissionControlPanel.broadcast({
+                        type: 'CONSOLIDATION_REPORT',
+                        payload: { report: markdown },
+                    });
+                })
+                .catch(e => log.error('[Coogent] Fallback consolidation failed:', e));
+        }
     });
 }
 

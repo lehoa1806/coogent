@@ -82,9 +82,11 @@ function handleMessage(msg: HostToWebviewMessage): void {
             // as they would produce malformed coogent:// URIs in PhaseDetails.svelte.
             if (isValidMasterTaskId(masterTaskId)) {
                 appState.masterTaskId = masterTaskId;
-            } else {
-                // Clear stale masterTaskId on reset so PhaseDetails.svelte doesn't
-                // fire MCP_FETCH_RESOURCE requests for a purged task.
+            } else if (masterTaskId !== undefined) {
+                // Only clear masterTaskId when an explicitly invalid ID is received
+                // (e.g. a human-readable slug). When masterTaskId is simply absent
+                // from the snapshot (undefined), preserve the existing value so
+                // PhaseDetails.svelte doesn't lose its MCP resource URI base.
                 appState.masterTaskId = undefined;
             }
 
@@ -240,6 +242,12 @@ function handleMessage(msg: HostToWebviewMessage): void {
         // ── Session search results (response to CMD_SEARCH_SESSIONS) ──────
         case 'SESSION_SEARCH_RESULTS': {
             appState.sessions = msg.payload.sessions;
+            break;
+        }
+
+        // ── Restore prompt (git pre-flight cancel) ─────────────────────
+        case 'RESTORE_PROMPT': {
+            appState.lastPrompt = msg.payload.prompt;
             break;
         }
 

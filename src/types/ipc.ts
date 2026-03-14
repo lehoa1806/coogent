@@ -195,6 +195,14 @@ export interface AttachmentSelectedMessage {
     };
 }
 
+/** Restore prompt message — restores the user's prompt text after a cancelled git pre-flight check. */
+export interface RestorePromptMessage {
+    readonly type: 'RESTORE_PROMPT';
+    readonly payload: {
+        prompt: string;
+    };
+}
+
 /** Workers loaded message — sends loaded worker profiles to the Webview. */
 export interface WorkersLoadedMessage {
     readonly type: 'workers:loaded';
@@ -223,6 +231,7 @@ export type HostToWebviewMessage =
     | MCPResourceDataMessage
     | SuggestionDataMessage
     | AttachmentSelectedMessage
+    | RestorePromptMessage
     | WorkersLoadedMessage;
 
 // ═══════════════════════════════════════════════════════════════════════════════

@@ -380,6 +380,34 @@ describe('messageHandler', () => {
         });
     });
 
+    describe('RESTORE_PROMPT', () => {
+        beforeEach(() => {
+            initMessageHandler();
+        });
+
+        it('sets appState.lastPrompt to the provided prompt text', () => {
+            fireMessage({
+                type: 'RESTORE_PROMPT',
+                payload: { prompt: 'build auth module with OAuth2' },
+            });
+
+            expect(appState.lastPrompt).toBe('build auth module with OAuth2');
+        });
+
+        it('sets appState.lastPrompt with an empty string', () => {
+            // Pre-set lastPrompt to verify it gets overwritten
+            patchState({ lastPrompt: 'previous prompt' });
+            expect(appState.lastPrompt).toBe('previous prompt');
+
+            fireMessage({
+                type: 'RESTORE_PROMPT',
+                payload: { prompt: '' },
+            });
+
+            expect(appState.lastPrompt).toBe('');
+        });
+    });
+
     describe('MCP_RESOURCE_DATA', () => {
         beforeEach(() => {
             initMessageHandler();

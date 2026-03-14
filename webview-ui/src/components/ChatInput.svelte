@@ -139,6 +139,16 @@
         return () => window.removeEventListener("message", handleAttachment);
     });
 
+    // ── Restore prompt after git pre-flight cancel ──────────────────
+    $effect(() => {
+        const restored = appState.lastPrompt;
+        if (restored) {
+            prompt = restored;
+            patchState({ lastPrompt: '' });
+            autoResize();
+        }
+    });
+
     // ── Suggestion logic ────────────────────────────────────────────────
     function detectTrigger() {
         if (!textareaEl) return;
