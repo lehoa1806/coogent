@@ -77,7 +77,13 @@ export class FileStabilityWatcher {
             let lastSizeTime = 0;
             let resolved = false;
 
-            let stabilityRecheck: ReturnType<typeof setTimeout> | null = null;
+            // FIX: Single deferred-recheck timer tracked by cleanup().
+            let deferredRecheck: ReturnType<typeof setTimeout> | null = null;
+
+            // FIX: Concurrency guard — prevents concurrent checkStability()
+            // calls from racing on lastSize/lastSizeTime shared state.
+            let checking = false;
+
             const cleanup = () => {
                 if (this.watcher) {
                     this.watcher.close();
@@ -87,9 +93,9 @@ export class FileStabilityWatcher {
                     clearInterval(this.pollTimer);
                     this.pollTimer = undefined;
                 }
-                if (stabilityRecheck) {
-                    clearTimeout(stabilityRecheck);
-                    stabilityRecheck = null;
+                if (deferredRecheck) {
+                    clearTimeout(deferredRecheck);
+                    deferredRecheck = null;
                 }
                 clearTimeout(timeoutHandle);
             };
@@ -115,10 +121,16 @@ export class FileStabilityWatcher {
             }
 
             // Check if the file is "stable" (written and no longer changing)
+            //
+            // FIX: Guarded with `checking` flag to prevent concurrent calls
+            // from resetting the stability window. When fs.watch + polling
+            // both trigger checkStability(), only one runs at a time.
             const checkStability = async () => {
                 if (resolved) return;
+                if (checking) return;  // FIX: Skip if another check is in flight
                 if (options.cancellationToken?.isCancellationRequested) return;
 
+                checking = true;
                 try {
                     const stat = await fs.stat(filePath);
                     const size = stat.size;
@@ -148,20 +160,24 @@ export class FileStabilityWatcher {
                     }
                 } catch {
                     // File doesn't exist yet — keep waiting
+                } finally {
+                    checking = false;
                 }
             };
 
             // Set up fs.watch for fast detection of file creation
-            let stabilityTimer: ReturnType<typeof setTimeout> | null = null;
             try {
                 this.watcher = watch(dir, (_eventType, filename) => {
                     if (filename === basename) {
                         checkStability().catch(() => { });
                         // Schedule a deferred re-check to guarantee the stability
                         // window is fully evaluated even if no poll aligns with it.
-                        if (stabilityTimer) clearTimeout(stabilityTimer);
-                        stabilityTimer = setTimeout(() => {
-                            stabilityTimer = null;
+                        // FIX: Use the shared `deferredRecheck` variable so cleanup()
+                        // can clear it. Previous code used a separate `stabilityTimer`
+                        // that leaked on resolve.
+                        if (deferredRecheck) clearTimeout(deferredRecheck);
+                        deferredRecheck = setTimeout(() => {
+                            deferredRecheck = null;
                             checkStability().catch(() => { });
                         }, stabilityThresholdMs + 200);
                     }
