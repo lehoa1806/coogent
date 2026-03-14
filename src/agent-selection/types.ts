@@ -294,8 +294,13 @@ export interface AgentProfile {
     readonly default_output: DeliverableType;
     /** Self-checking capabilities the agent can perform post-execution. */
     readonly self_check_capabilities: readonly string[];
-    /** (Future scope) Restrict MCP tool access per agent. */
+    /**
+     * @deprecated Use `allowed_tools_policy` instead. Retained for backward compatibility.
+     * (Future scope) Restrict MCP tool access per agent.
+     */
     readonly allowed_tools?: readonly string[];
+    /** Per-worker tool access policy. When absent, inherits workspace default. */
+    readonly allowed_tools_policy?: import('../tool-policy/types.js').AllowedToolsPolicy | undefined;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════

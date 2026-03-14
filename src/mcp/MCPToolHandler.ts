@@ -18,6 +18,8 @@ import { MCP_TOOLS } from './types.js';
 import type { ArtifactDB } from './ArtifactDB.js';
 import type { TelemetryLogger } from '../logger/TelemetryLogger.js';
 import { ALL_TOOL_SCHEMAS, type ToolHandlerDeps } from './tool-schemas.js';
+import log from '../logger/log.js';
+import type { ToolExecutionGateway } from '../tool-policy/ToolExecutionGateway.js';
 
 // ── Handler imports ──────────────────────────────────────────────────────────
 import { handleSubmitImplementationPlan } from './handlers/SubmitImplementationPlanHandler.js';
@@ -45,6 +47,8 @@ export class MCPToolHandler {
     private readonly allowedRoots: string[];
     /** Optional telemetry logger for structured boundary events (P2.2). */
     private telemetryLogger?: TelemetryLogger;
+    /** Optional tool policy gateway for pre-dispatch enforcement (Phase 1: observe). */
+    private gateway?: ToolExecutionGateway;
 
     constructor(
         private readonly server: Server,
@@ -59,6 +63,11 @@ export class MCPToolHandler {
     /** Attach a TelemetryLogger for structured boundary event logging. */
     setTelemetryLogger(logger: TelemetryLogger): void {
         this.telemetryLogger = logger;
+    }
+
+    /** Attach a ToolExecutionGateway for policy enforcement. */
+    setGateway(gateway: ToolExecutionGateway): void {
+        this.gateway = gateway;
     }
 
     /**
@@ -114,6 +123,33 @@ export class MCPToolHandler {
             const { name } = request.params;
             const args = (request.params.arguments ?? {}) as Record<string, unknown>;
             const deps = this.getDeps();
+
+            // ── Tool policy gateway evaluation (Phase 1: observe mode) ───────
+            if (this.gateway) {
+                const ctx = {
+                    runId: 'unknown',
+                    sessionId: 'unknown',
+                    phaseId: 'unknown',
+                    workerId: 'unknown',
+                    requestedToolId: name,
+                };
+                const decision = await this.gateway.evaluateInvocation(ctx);
+                if (!decision.allowed) {
+                    // In observe mode the enforcer returns allowed=true even for
+                    // would-be denials, so reaching here means enforcement is
+                    // active (compatibility or enforce mode).
+                    log.warn(
+                        `[ToolPolicy] Blocking tool invocation: toolId=${decision.toolId} reason=${decision.reason ?? 'denied by policy'}`,
+                    );
+                    return {
+                        content: [{
+                            type: 'text' as const,
+                            text: `Tool invocation denied by policy: ${decision.reason ?? 'not in allowed tools list'}`,
+                        }],
+                        isError: true,
+                    };
+                }
+            }
 
             // Cross-process sync: reload from disk if the file has changed.
             // Ensures read tools (get_phase_handoff, get_file_slice, etc.)
