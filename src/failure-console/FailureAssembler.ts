@@ -7,6 +7,7 @@ import type {
     FailurePacket,
     FailureEvidence,
     FailureConsoleRecord,
+    SuggestedRecoveryAction,
 } from '../types/failure-console.js';
 import type { ErrorCode } from '../types/ipc.js';
 import type { FailureConsoleRepository } from '../mcp/repositories/FailureConsoleRepository.js';
@@ -33,11 +34,17 @@ export class FailureAssembler {
     /**
      * Assemble a complete {@link FailureConsoleRecord} from the given packet.
      *
-     * @param packet    The transient failure data bundle collected at runtime.
-     * @param errorCode Optional error code from the engine error path.
+     * @param packet           The transient failure data bundle collected at runtime.
+     * @param errorCode        Optional error code from the engine error path.
+     * @param suggestedActions  Optional pre-computed recovery suggestions (e.g. from
+     *                          {@link FailureConsoleCoordinator}). Defaults to `[]`.
      * @returns A fully populated, immutable failure record.
      */
-    assemble(packet: FailurePacket, errorCode?: ErrorCode): FailureConsoleRecord {
+    assemble(
+        packet: FailurePacket,
+        errorCode?: ErrorCode,
+        suggestedActions?: readonly SuggestedRecoveryAction[],
+    ): FailureConsoleRecord {
         // 1. Classify
         const classified = this.classifier.classify(packet, errorCode);
 
@@ -59,7 +66,7 @@ export class FailureAssembler {
             contributingEventIds: packet.timeline.map((e) => e.eventId),
             message: classified.message,
             evidence,
-            suggestedActions: [], // Stage 1 — model-generated suggestions come in Stage 4
+            suggestedActions: suggestedActions ? [...suggestedActions] : [],
             createdAt: now,
             updatedAt: now,
         };

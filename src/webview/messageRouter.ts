@@ -324,6 +324,14 @@ export async function routeWebviewMessage(raw: unknown, deps: MessageRouterDeps)
             break;
         }
 
+        // ── Failure Console recovery actions ───────────────────────────────
+        // TODO: Wire through RecoveryActionRouter once engine-side handler is ready (Phase 5+).
+        case 'CMD_RECOVERY_ACTION': {
+            log.info(`[MissionControl] CMD_RECOVERY_ACTION: action=${message.payload.action} record=${message.payload.failureRecordId} suggestedByModel=${message.payload.suggestedByModel}`);
+            // Stub: will route through RecoveryActionRouter in a later phase.
+            break;
+        }
+
         default: {
             const _exhaustive: never = message;
             log.warn('[MissionControl] Unknown message:', _exhaustive);

@@ -89,6 +89,8 @@ export interface SuggestedRecoveryAction {
     readonly title: string;
     readonly rationale: string;
     readonly confidence: 'low' | 'medium' | 'high';
+    readonly availability: 'enabled' | 'disabled';
+    readonly disabledReason?: string;
 }
 
 /** The operator's chosen recovery decision from the failure console. */

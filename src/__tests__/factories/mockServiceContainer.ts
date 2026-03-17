@@ -21,10 +21,12 @@ export function createMockSessionManager() {
 export function createMockMcpServer(overrides?: {
     getArtifactDB?: jest.Mock;
     upsertWorkerOutput?: jest.Mock;
+    clearCurrentWorkerContext?: jest.Mock;
 }) {
     return {
         getArtifactDB: overrides?.getArtifactDB ?? jest.fn().mockReturnValue(undefined),
         upsertWorkerOutput: overrides?.upsertWorkerOutput ?? jest.fn(),
+        clearCurrentWorkerContext: overrides?.clearCurrentWorkerContext ?? jest.fn(),
     } as unknown as NonNullable<ServiceContainer['mcpServer']>;
 }
 

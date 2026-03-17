@@ -7,13 +7,14 @@
 import { randomUUID } from 'node:crypto';
 import log from '../logger/log.js';
 import { EngineEvent, asTimestamp, type Phase, type EvaluationResult } from '../types/index.js';
-import type { FailurePacket } from '../types/failure-console.js';
+import type { FailurePacket, FailureConsoleRecord } from '../types/failure-console.js';
 import type { ErrorCode } from '../types/ipc.js';
 import type { EngineInternals } from './EngineInternals.js';
 import type { SelfHealingController } from './SelfHealing.js';
 import type { EvaluatorRegistryV2 } from '../evaluators/EvaluatorRegistry.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
-import type { FailureAssembler } from '../failure-console/FailureAssembler.js';
+import type { FailureConsoleCoordinator } from '../failure-console/FailureConsoleCoordinator.js';
+import type { ActionLegalityContext } from '../failure-console/RecoveryActionRouter.js';
 
 /**
  * Extracted evaluation logic from Engine.
@@ -24,7 +25,7 @@ import type { FailureAssembler } from '../failure-console/FailureAssembler.js';
 export class EvaluationOrchestrator {
     private db: ArtifactDB | undefined;
     private masterTaskId: string = '';
-    private failureAssembler?: FailureAssembler;
+    private coordinator?: FailureConsoleCoordinator;
 
     constructor(
         private readonly engine: EngineInternals,
@@ -41,10 +42,11 @@ export class EvaluationOrchestrator {
     }
 
     /**
-     * Inject the FailureAssembler for failure console record creation.
+     * Inject the FailureConsoleCoordinator for failure console record creation
+     * with model-generated, legality-filtered recovery suggestions.
      */
-    setFailureAssembler(assembler: FailureAssembler): void {
-        this.failureAssembler = assembler;
+    setFailureConsoleCoordinator(coordinator: FailureConsoleCoordinator): void {
+        this.coordinator = coordinator;
     }
 
     /**
@@ -328,7 +330,7 @@ export class EvaluationOrchestrator {
 
         // ── Failure console record assembly (purely additive) ────────────
         try {
-            if (this.failureAssembler) {
+            if (this.coordinator) {
                 const packet: FailurePacket = {
                     runId: runbook.project_id || '',
                     sessionId: '', // Will be populated when SessionController is connected
@@ -344,7 +346,8 @@ export class EvaluationOrchestrator {
                     ...(phase.success_criteria ? { successCriteria: [phase.success_criteria] } : {}),
                 };
                 const errorCode: ErrorCode = 'PHASE_FAILED';
-                const record = this.failureAssembler.assemble(packet, errorCode);
+                const legalityCtx = this.buildLegalityContext(phase, runbook);
+                const record = this.coordinator.build(packet, legalityCtx, errorCode);
                 this.engine.emitUIMessage({
                     type: 'FAILURE_CONSOLE_RECORD',
                     payload: { record },
@@ -442,7 +445,7 @@ export class EvaluationOrchestrator {
 
         // ── Failure console record assembly (purely additive) ────────────
         try {
-            if (this.failureAssembler) {
+            if (this.coordinator) {
                 const packet: FailurePacket = {
                     runId: runbook.project_id || '',
                     sessionId: '', // Will be populated when SessionController is connected
@@ -458,7 +461,8 @@ export class EvaluationOrchestrator {
                     ...(phase.success_criteria ? { successCriteria: [phase.success_criteria] } : {}),
                 };
                 const errorCode: ErrorCode = reason === 'timeout' ? 'WORKER_TIMEOUT' : 'WORKER_CRASH';
-                const record = this.failureAssembler.assemble(packet, errorCode);
+                const legalityCtx = this.buildLegalityContext(phase, runbook);
+                const record = this.coordinator.build(packet, legalityCtx, errorCode);
                 this.engine.emitUIMessage({
                     type: 'FAILURE_CONSOLE_RECORD',
                     payload: { record },
@@ -502,5 +506,78 @@ export class EvaluationOrchestrator {
         } catch (err) {
             log.warn('[EvaluationOrchestrator] Failed to persist evaluation result:', err);
         }
+    }
+
+    // ─── Session restore ─────────────────────────────────────────────────
+
+    /**
+     * Restore failure records from DB and emit them to the webview.
+     * Called during session restore to repopulate the failure console.
+     */
+    restoreFailureRecords(masterTaskId: string): void {
+        if (!this.db) return;
+        try {
+            const rows = this.db.failureConsole.listByTask(masterTaskId);
+            for (const row of rows) {
+                const record: FailureConsoleRecord = {
+                    id: row.id,
+                    runId: row.master_task_id,
+                    sessionId: row.session_id,
+                    ...(row.phase_id != null ? { phaseId: row.phase_id } : {}),
+                    ...(row.worker_id != null ? { workerId: row.worker_id } : {}),
+                    severity: row.severity as FailureConsoleRecord['severity'],
+                    scope: row.scope as FailureConsoleRecord['scope'],
+                    category: row.category as FailureConsoleRecord['category'],
+                    ...(row.root_event_id != null ? { rootEventId: row.root_event_id } : {}),
+                    contributingEventIds: JSON.parse(row.contributing_event_ids as string),
+                    message: row.message,
+                    evidence: JSON.parse(row.evidence_json as string),
+                    suggestedActions: JSON.parse(row.suggested_actions_json as string),
+                    ...(row.chosen_action_json != null
+                        ? { chosenAction: JSON.parse(row.chosen_action_json as string) }
+                        : {}),
+                    createdAt: row.created_at as number,
+                    updatedAt: row.updated_at as number,
+                };
+                this.engine.emitUIMessage({
+                    type: 'FAILURE_CONSOLE_RECORD',
+                    payload: { record },
+                });
+            }
+            if (rows.length > 0) {
+                log.info(`[EvaluationOrchestrator] Restored ${rows.length} failure record(s) for session ${masterTaskId}.`);
+            }
+        } catch (err) {
+            log.warn('[EvaluationOrchestrator] Failed to restore failure records (non-fatal):', err);
+        }
+    }
+
+    // ─── Legality context builder ────────────────────────────────────────
+
+    /**
+     * Build an {@link ActionLegalityContext} from the current engine/phase state.
+     * Used to evaluate which recovery actions are legal for the failure console.
+     */
+    private buildLegalityContext(
+        phase: Phase,
+        runbook: { phases: readonly Phase[] },
+    ): ActionLegalityContext {
+        // Check if any other phase depends on this phase
+        const hasDownstreamDependents = runbook.phases.some(
+            p => p.id !== phase.id && p.depends_on?.includes(phase.id),
+        );
+
+        return {
+            engineState: this.engine.getState(),
+            phaseStatus: phase.status,
+            phaseId: phase.id as number,
+            hasDownstreamDependents,
+            isCriticalPhase: hasDownstreamDependents, // simple heuristic
+            availableWorkerCount: 1, // single-worker mode default
+            failureCategory: 'unknown', // will be overridden by classified result inside coordinator
+            failureSeverity: 'recoverable', // will be overridden by classified result inside coordinator
+            currentRetryCount: this.healer.getAttemptCount(phase.id),
+            maxRetries: phase.max_retries ?? 3,
+        };
     }
 }

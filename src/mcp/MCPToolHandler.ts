@@ -57,6 +57,7 @@ export class MCPToolHandler {
         workerId: string;
         workerPolicy?: AllowedToolsPolicy;
         isLegacyWorker: boolean;
+        workspaceId?: string;
     } | null = null;
 
     constructor(
@@ -90,6 +91,7 @@ export class MCPToolHandler {
         workerId: string;
         workerPolicy?: AllowedToolsPolicy;
         isLegacyWorker: boolean;
+        workspaceId?: string;
     }): void {
         this.currentWorkerCtx = ctx;
     }
@@ -192,6 +194,14 @@ export class MCPToolHandler {
             // see data written by the extension host.
             await this.db.reloadIfStale();
 
+            // Apply workspace scope override if the worker context carries a
+            // workspaceId different from this server's default. This ensures
+            // cross-workspace workers query the correct tenant in the shared DB.
+            const workerWsId = this.currentWorkerCtx?.workspaceId;
+            if (workerWsId) {
+                this.db.setWorkspaceOverride(workerWsId);
+            }
+
             try {
                 switch (name) {
                     case MCP_TOOLS.SUBMIT_EXECUTION_PLAN:
@@ -220,6 +230,11 @@ export class MCPToolHandler {
                     content: [{ type: 'text' as const, text: message }],
                     isError: true,
                 };
+            } finally {
+                // Always clear the workspace override after the tool call
+                if (workerWsId) {
+                    this.db.clearWorkspaceOverride();
+                }
             }
         });
     }

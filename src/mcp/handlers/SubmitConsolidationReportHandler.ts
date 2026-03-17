@@ -8,10 +8,10 @@ import { ERR_WORKER_OUTPUT_VALIDATION_FAILED } from '../../logger/ErrorCodes.js'
 import log from '../../logger/log.js';
 import type { ToolHandlerDeps, MCPTextContent } from '../tool-schemas.js';
 
-export function handleSubmitConsolidationReport(
+export async function handleSubmitConsolidationReport(
     deps: ToolHandlerDeps,
     args: Record<string, unknown>,
-): MCPTextContent {
+): Promise<MCPTextContent> {
     const masterTaskId = MCPValidator.validateMasterTaskId(args['masterTaskId']);
     const markdownContent = MCPValidator.validateString(args['markdown_content'], 'markdown_content', 500_000);
 
@@ -39,6 +39,10 @@ export function handleSubmitConsolidationReport(
     log.info(
         `[MCPToolHandler] Consolidation report saved: ${masterTaskId}`
     );
+
+    // Cross-process sync: flush immediately so external MCP server processes
+    // can read this data from disk without waiting for the debounced flush.
+    await deps.db.forceFlush();
 
     return {
         content: [

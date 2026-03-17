@@ -13,7 +13,9 @@ import type { ArtifactDB } from './mcp/ArtifactDB.js';
 import { getDebugDir, IPC_RESPONSE_FILE } from './constants/paths.js';
 import type { Runbook, EngineState } from './types/index.js';
 import { FailureClassifier } from './failure-console/FailureClassifier.js';
-import { FailureAssembler } from './failure-console/FailureAssembler.js';
+import { RecoverySuggester } from './failure-console/RecoverySuggester.js';
+import { RecoveryActionRouter } from './failure-console/RecoveryActionRouter.js';
+import { FailureConsoleCoordinator } from './failure-console/FailureConsoleCoordinator.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  wirePlanner — connects PlannerAgent events to Engine and MCP
@@ -60,14 +62,21 @@ export function wirePlanner(
                         svc.handoffExtractor?.setArtifactDB(db, sessionDirName);
                         log.info('[PlannerWiring] StateManager + SessionManager + HandoffExtractor wired to ArtifactDB.');
 
-                        // Wire FailureAssembler into EvaluationOrchestrator
+                        // Wire FailureConsoleCoordinator into EvaluationOrchestrator
                         try {
                             const classifier = new FailureClassifier();
-                            const assembler = new FailureAssembler(classifier, db.failureConsole);
-                            engine.getEvaluation().setFailureAssembler(assembler);
-                            log.info('[PlannerWiring] FailureAssembler wired to EvaluationOrchestrator.');
+                            const suggester = new RecoverySuggester();
+                            const actionRouter = new RecoveryActionRouter();
+                            const coordinator = new FailureConsoleCoordinator(
+                                classifier,
+                                suggester,
+                                actionRouter,
+                                db.failureConsole,
+                            );
+                            engine.getEvaluation().setFailureConsoleCoordinator(coordinator);
+                            log.info('[PlannerWiring] FailureConsoleCoordinator wired to EvaluationOrchestrator.');
                         } catch (err) {
-                            log.warn('[PlannerWiring] Failed to wire FailureAssembler (non-fatal):', err);
+                            log.warn('[PlannerWiring] Failed to wire FailureConsoleCoordinator (non-fatal):', err);
                         }
                     }
                 }

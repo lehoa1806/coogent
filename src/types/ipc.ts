@@ -428,6 +428,16 @@ export interface CmdWorkersRequestMessage {
     readonly type: 'workers:request';
 }
 
+/** User initiates a recovery action from the Failure Console UI. */
+export interface CmdRecoveryActionMessage {
+    readonly type: 'CMD_RECOVERY_ACTION';
+    readonly payload: {
+        failureRecordId: string;
+        action: import('./failure-console.js').RecoveryActionType;
+        suggestedByModel: boolean;
+    };
+}
+
 /**
  * Discriminated union of all messages the Webview sends to the Extension Host.
  * Use `WebviewToHostMessageType` for the `type` string literal union.
@@ -458,6 +468,7 @@ export type WebviewToHostMessage =
     | CmdUploadFileMessage
     | CmdUploadImageMessage
     | CmdWorkersRequestMessage
+    | CmdRecoveryActionMessage
     | CmdListSessionsMessage
     | CmdSearchSessionsMessage
     | CmdLoadSessionMessage
