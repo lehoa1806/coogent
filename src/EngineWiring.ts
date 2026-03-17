@@ -318,6 +318,9 @@ export function wireEngine(
     adkController.on('worker:exited', (phaseId, exitCode) => {
         const { stdout, stderr } = drainWorkerAccumulators(phaseId);
 
+        // Clear tool policy worker context to prevent stale context leaking
+        mcpServer?.clearCurrentWorkerContext();
+
         // Consolidation worker — do NOT route through the normal FSM/result processor.
         // Read the consolidation report from MCP (the worker submitted it via
         // mcp_coogent_submit_consolidation_report) and broadcast to the webview.

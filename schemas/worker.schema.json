@@ -43,7 +43,26 @@
                 "items": {
                     "type": "string"
                 },
-                "description": "(Future) Restrict MCP tool access"
+                "description": "(Deprecated — use allowed_tools_policy) Restrict MCP tool access"
+            },
+            "allowed_tools_policy": {
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["inherit", "explicit"],
+                        "description": "'inherit' uses workspace defaults; 'explicit' uses the allowedTools list"
+                    },
+                    "allowedTools": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "Canonical tool IDs permitted for this worker (only used when mode is 'explicit')"
+                    }
+                },
+                "required": ["mode"],
+                "description": "Per-worker tool access policy. When absent, inherits workspace default."
             }
         },
         "additionalProperties": false
