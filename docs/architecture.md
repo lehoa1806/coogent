@@ -1273,4 +1273,3 @@ For detailed documentation on the hybrid storage model, tenant scoping, and data
 - [Persistence Boundaries](architecture/persistence-boundaries.md) — Subsystem ownership of data
 - [Data Ownership Matrix](architecture/data-ownership-matrix.md) — Complete data class reference
 - [MCP Integration](architecture/mcp-integration.md) — MCP server architecture, transports, resources, tools, and plugin system
-

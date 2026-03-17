@@ -5,6 +5,14 @@ jest.mock('vscode', () => ({
     Uri: { file: jest.fn((p: string) => ({ fsPath: p, scheme: 'file' })) },
 }), { virtual: true });
 
+jest.mock('node:fs/promises', () => ({
+    readFile: jest.fn().mockRejectedValue(new Error('ENOENT')),
+    mkdir: jest.fn().mockResolvedValue(undefined),
+    stat: jest.fn().mockRejectedValue(new Error('ENOENT')),
+    readdir: jest.fn().mockResolvedValue([]),
+    writeFile: jest.fn().mockResolvedValue(undefined),
+}));
+
 // Mock RepoFingerprinter so plan() doesn't hit the filesystem
 jest.mock('../../prompt-compiler/index.js', () => {
     const actual = jest.requireActual('../../prompt-compiler/index.js');
@@ -287,6 +295,89 @@ describe('PlannerAgent', () => {
             // returns true (file-based retry path is available), even though
             // no cached streaming output exists.
             expect(agent.hasTimeoutOutput()).toBe(true);
+        });
+    });
+
+    // ═══════════════════════════════════════════════════════════════════════
+    //  exitCode !== 0 disk recovery (file watcher timeout with runbook on disk)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    describe('exitCode !== 0 disk recovery', () => {
+        it('should emit plan:generated when .task-runbook.json exists on disk after non-zero exit', async () => {
+            const generatedSpy = jest.fn();
+            const timeoutSpy = jest.fn();
+            const statusSpy = jest.fn();
+            agent.on('plan:generated', generatedSpy);
+            agent.on('plan:timeout', timeoutSpy);
+            agent.on('plan:status', statusSpy);
+
+            // Set a masterTaskId so tryReadRunbookFromDisk can build the path
+            agent.setMasterTaskId('20260317-122137-test-task-id');
+
+            // Mock fs.readFile to return a valid runbook when reading .task-runbook.json
+            const fsMock = jest.requireMock('node:fs/promises') as { readFile: jest.Mock };
+            fsMock.readFile.mockImplementation(async (filePath: string) => {
+                if (typeof filePath === 'string' && filePath.includes('.task-runbook.json')) {
+                    return validRunbookJson;
+                }
+                throw new Error('ENOENT');
+            });
+
+            // Mock createSession to capture the exit callback
+            let capturedExitCb: ((code: number) => void) | null = null;
+            (adapter.createSession as jest.Mock).mockImplementation(async () => ({
+                sessionId: 'disk-recovery-test',
+                pid: 99997,
+                onOutput: jest.fn(),
+                onExit(cb: (code: number) => void) { capturedExitCb = cb; },
+            }));
+
+            await agent.plan('Build a todo app');
+
+            // Simulate exit code 1 (file watcher timeout)
+            expect(capturedExitCb).not.toBeNull();
+            capturedExitCb!(1);
+
+            // Wait for async tryReadRunbookFromDisk to resolve
+            await new Promise(r => setTimeout(r, 50));
+
+            expect(generatedSpy).toHaveBeenCalledWith(
+                expect.objectContaining({ project_id: 'test-project' }),
+                expect.any(Array),
+            );
+            expect(timeoutSpy).not.toHaveBeenCalled();
+            expect(statusSpy).toHaveBeenCalledWith('ready', 'Plan recovered from disk');
+        });
+
+        it('should emit plan:timeout when .task-runbook.json does not exist after non-zero exit', async () => {
+            const generatedSpy = jest.fn();
+            const timeoutSpy = jest.fn();
+            agent.on('plan:generated', generatedSpy);
+            agent.on('plan:timeout', timeoutSpy);
+
+            agent.setMasterTaskId('20260317-122137-no-runbook-id');
+
+            // Mock fs.readFile to always throw (no file on disk)
+            const fsMock = jest.requireMock('node:fs/promises') as { readFile: jest.Mock };
+            fsMock.readFile.mockRejectedValue(new Error('ENOENT'));
+
+            let capturedExitCb: ((code: number) => void) | null = null;
+            (adapter.createSession as jest.Mock).mockImplementation(async () => ({
+                sessionId: 'no-disk-recovery-test',
+                pid: 99996,
+                onOutput: jest.fn(),
+                onExit(cb: (code: number) => void) { capturedExitCb = cb; },
+            }));
+
+            await agent.plan('Build a todo app');
+
+            capturedExitCb!(1);
+
+            // Wait for async tryReadRunbookFromDisk to reject
+            await new Promise(r => setTimeout(r, 50));
+
+            expect(timeoutSpy).toHaveBeenCalled();
+        expect(generatedSpy).not.toHaveBeenCalled();
         });
     });
 });
