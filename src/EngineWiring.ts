@@ -277,6 +277,40 @@ export function wireEngine(
         asResultProcessorMCPBridge(mcpBridge),
     );
 
+    // ── In-process consolidation fallback ─────────────────────────────
+    // Extracted to wireEngine scope so both worker:exited (report read
+    // failure) and run:consolidate (spawn failure) can invoke it.
+    function runInProcessConsolidation(
+        sessionDir: string,
+        rb: import('./types/index.js').Runbook | null,
+        masterTaskId: string,
+    ): void {
+        const agent = consolidationAgent;
+        if (!agent || !rb) return;
+
+        agent.generateReport(sessionDir, rb, mcpBridge, masterTaskId)
+            .then(async report => {
+                await agent.saveReport(sessionDir, report, mcpBridge, masterTaskId, svc.coogentDir);
+                return report;
+            })
+            .then(report => {
+                MissionControlPanel.broadcast({
+                    type: 'LOG_ENTRY',
+                    payload: {
+                        timestamp: asTimestamp(),
+                        level: 'info',
+                        message: 'Consolidation report stored in MCP state (in-process fallback).',
+                    },
+                });
+                const markdown = agent.formatAsMarkdown(report);
+                MissionControlPanel.broadcast({
+                    type: 'CONSOLIDATION_REPORT',
+                    payload: { report: markdown },
+                });
+            })
+            .catch(e => log.error('[Coogent] Fallback consolidation failed:', e));
+    }
+
     // ── Consolidation phase sentinel ID ────────────────────────────────
     const CONSOLIDATION_PHASE_ID = 9999;
 
@@ -307,11 +341,15 @@ export function wireEngine(
                                 payload: { report: markdown },
                             });
                         } else {
-                            log.warn('[Coogent] Consolidation worker exited but report is empty.');
+                            log.warn('[Coogent] Consolidation worker exited but report is empty — falling back to in-process.');
+                            runInProcessConsolidation(svc.currentSessionDir ?? '', engine.getRunbook() ?? null, taskId);
                         }
                     })
                     .catch(err => {
-                        log.error('[Coogent] Failed to read consolidation report from MCP:', err);
+                        const detail = err instanceof Error ? err.message : JSON.stringify(err);
+                        log.error(`[Coogent] Failed to read consolidation report from MCP: ${detail}`);
+                        log.info('[Coogent] Falling back to in-process consolidation...');
+                        runInProcessConsolidation(svc.currentSessionDir ?? '', engine.getRunbook() ?? null, taskId);
                     });
             }
             return; // Skip normal FSM processing for consolidation
@@ -446,37 +484,7 @@ export function wireEngine(
                 runInProcessConsolidation(evtSessionDir, runbook, taskId);
             });
 
-        /** In-process fallback using the existing ConsolidationAgent. */
-        function runInProcessConsolidation(
-            sessionDir: string,
-            rb: import('./types/index.js').Runbook,
-            masterTaskId: string,
-        ): void {
-            const agent = consolidationAgent;
-            if (!agent) return;
-
-            agent.generateReport(sessionDir, rb, mcpBridge, masterTaskId)
-                .then(async report => {
-                    await agent.saveReport(sessionDir, report, mcpBridge, masterTaskId, svc.coogentDir);
-                    return report;
-                })
-                .then(report => {
-                    MissionControlPanel.broadcast({
-                        type: 'LOG_ENTRY',
-                        payload: {
-                            timestamp: asTimestamp(),
-                            level: 'info',
-                            message: 'Consolidation report stored in MCP state (in-process fallback).',
-                        },
-                    });
-                    const markdown = agent.formatAsMarkdown(report);
-                    MissionControlPanel.broadcast({
-                        type: 'CONSOLIDATION_REPORT',
-                        payload: { report: markdown },
-                    });
-                })
-                .catch(e => log.error('[Coogent] Fallback consolidation failed:', e));
-        }
+        // runInProcessConsolidation is defined at wireEngine scope (above)
     });
 }
 
