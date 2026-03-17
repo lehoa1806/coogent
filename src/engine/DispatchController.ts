@@ -97,6 +97,20 @@ export class DispatchController {
             return;
         }
 
+        // Cross-process sync: force-flush ArtifactDB to disk before spawning
+        // workers.  The stdio MCP server is a separate process that reads the
+        // DB file via reloadIfStale().  Without this flush, the task row may
+        // still be in-memory (debounced 500ms) when the first worker calls
+        // get_modified_file_content, resulting in an "Unauthorized" error.
+        const resolvedDb = typeof this.artifactDb === 'function' ? this.artifactDb() : this.artifactDb;
+        if (resolvedDb) {
+            try {
+                await resolvedDb.forceFlush();
+            } catch (err) {
+                log.warn('[DispatchController] Pre-dispatch forceFlush failed (non-fatal):', err);
+            }
+        }
+
         for (const phase of readyPhases) {
             const guardResult = this.runAgentSelectionGuard(phase);
             const shouldDispatch = typeof guardResult === 'boolean'
