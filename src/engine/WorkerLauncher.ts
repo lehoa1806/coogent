@@ -6,6 +6,7 @@
 import { asTimestamp, type Phase } from '../types/index.js';
 import { MissionControlPanel } from '../webview/MissionControlPanel.js';
 import { RESOURCE_URIS } from '../mcp/types.js';
+import { deriveWorkspaceId } from '../constants/WorkspaceIdentity.js';
 import log from '../logger/log.js';
 import type { ExecutionMode } from '../adk/ExecutionModeResolver.js';
 import type { ServiceContainer } from '../ServiceContainer.js';
@@ -293,6 +294,12 @@ export class WorkerLauncher {
         // ── Tool policy: Set worker context before spawn ─────────────────
         if (mcpServer) {
             const isLegacy = !resolvedAgentProfile || !resolvedAgentProfile.allowed_tools_policy;
+            // Derive workspaceId from the primary workspace root so the MCP
+            // server can scope DB queries to the correct tenant, even when the
+            // stdio server was started with a different workspace context.
+            const workspaceId = _workspaceRoots.length > 0
+                ? deriveWorkspaceId(_workspaceRoots[0])
+                : undefined;
             mcpServer.setCurrentWorkerContext({
                 masterTaskId,
                 phaseId: phase.mcpPhaseId ?? `phase-${phase.id}`,
@@ -301,6 +308,7 @@ export class WorkerLauncher {
                     ? { workerPolicy: resolvedAgentProfile.allowed_tools_policy }
                     : {}),
                 isLegacyWorker: isLegacy,
+                ...(workspaceId ? { workspaceId } : {}),
             });
         }
 
