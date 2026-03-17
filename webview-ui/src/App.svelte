@@ -21,7 +21,7 @@
 
   import ReportModal from "./components/ReportModal.svelte";
   import FailureConsole from "./components/FailureConsole.svelte";
-  import { latestFailure, clearFailureRecords } from "./stores/failureConsole.svelte.js";
+  import { getLatestFailure, clearFailureRecords } from "./stores/failureConsole.svelte.js";
 
   let showTerminal = $state(false);
   /** Controls the View-All plan modal triggered from ExecutionControls */
@@ -191,9 +191,9 @@
     {/if}
   </div>
 
-  {#if latestFailure}
+  {#if getLatestFailure()}
     <div class="failure-console-wrapper">
-      <FailureConsole record={latestFailure} ondismiss={clearFailureRecords} />
+      <FailureConsole record={getLatestFailure()!} ondismiss={clearFailureRecords} />
     </div>
   {/if}
 

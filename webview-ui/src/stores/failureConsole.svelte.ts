@@ -126,27 +126,33 @@ export interface FailureConsoleRecord {
 //  Reactive Store (Svelte 5 runes)
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/** Internal reactive state — not exported directly to avoid state_invalid_export. */
+const store = $state<{ records: FailureConsoleRecord[] }>({ records: [] });
+
 /** All received failure records, ordered by arrival. */
-export let failureRecords: FailureConsoleRecord[] = $state([]);
+export function getFailureRecords(): FailureConsoleRecord[] {
+    return store.records;
+}
 
 /**
  * The most recent failure record by `createdAt` timestamp.
  * Returns `undefined` when there are no records.
  */
-export const latestFailure: FailureConsoleRecord | undefined = $derived(
-    failureRecords.length === 0
+export function getLatestFailure(): FailureConsoleRecord | undefined {
+    return store.records.length === 0
         ? undefined
-        : failureRecords.reduce((latest, r) =>
+        : store.records.reduce((latest, r) =>
               r.createdAt > latest.createdAt ? r : latest,
-          ),
-);
+          );
+}
 
 /** Append a new failure record to the store. */
 export function addFailureRecord(record: FailureConsoleRecord): void {
-    failureRecords = [...failureRecords, record];
+    store.records = [...store.records, record];
 }
 
 /** Clear all failure records from the store. */
 export function clearFailureRecords(): void {
-    failureRecords = [];
+    store.records = [];
 }
+
