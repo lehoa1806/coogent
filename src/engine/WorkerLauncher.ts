@@ -195,9 +195,11 @@ export class WorkerLauncher {
         }
 
         // Step 5.6: Resolve agent profile from AgentRegistry
+        let resolvedAgentProfile: import('../agent-selection/types.js').AgentProfile | undefined;
         if (agentRegistry) {
             try {
                 const agentProfile = await agentRegistry.getBestAgent(phase.required_capabilities ?? []);
+                resolvedAgentProfile = agentProfile;
                 log.info(`[EngineWiring] Phase ${phase.id}: routed to agent '${agentProfile.id}' (${agentProfile.name})`);
 
                 // Derive plan requirement from agent's default_output
@@ -286,6 +288,20 @@ export class WorkerLauncher {
             if (parentHandoffs.length > 0) {
                 mcpResourceUris.parentHandoffs = parentHandoffs;
             }
+        }
+
+        // ── Tool policy: Set worker context before spawn ─────────────────
+        if (mcpServer) {
+            const isLegacy = !resolvedAgentProfile || !resolvedAgentProfile.allowed_tools_policy;
+            mcpServer.setCurrentWorkerContext({
+                masterTaskId,
+                phaseId: phase.mcpPhaseId ?? `phase-${phase.id}`,
+                workerId: resolvedAgentProfile?.id ?? `worker-phase-${phase.id}`,
+                ...(resolvedAgentProfile?.allowed_tools_policy
+                    ? { workerPolicy: resolvedAgentProfile.allowed_tools_policy }
+                    : {}),
+                isLegacyWorker: isLegacy,
+            });
         }
 
         await this.adkController.spawnWorker(effectivePhase, timeoutMs, masterTaskId, mcpResourceUris);

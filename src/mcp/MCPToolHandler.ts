@@ -20,6 +20,7 @@ import type { TelemetryLogger } from '../logger/TelemetryLogger.js';
 import { ALL_TOOL_SCHEMAS, type ToolHandlerDeps } from './tool-schemas.js';
 import log from '../logger/log.js';
 import type { ToolExecutionGateway } from '../tool-policy/ToolExecutionGateway.js';
+import type { AllowedToolsPolicy } from '../tool-policy/types.js';
 
 // ── Handler imports ──────────────────────────────────────────────────────────
 import { handleSubmitImplementationPlan } from './handlers/SubmitImplementationPlanHandler.js';
@@ -49,6 +50,14 @@ export class MCPToolHandler {
     private telemetryLogger?: TelemetryLogger;
     /** Optional tool policy gateway for pre-dispatch enforcement (Phase 1: observe). */
     private gateway?: ToolExecutionGateway;
+    /** Current worker context for policy evaluation. */
+    private currentWorkerCtx: {
+        masterTaskId: string;
+        phaseId: string;
+        workerId: string;
+        workerPolicy?: AllowedToolsPolicy;
+        isLegacyWorker: boolean;
+    } | null = null;
 
     constructor(
         private readonly server: Server,
@@ -68,6 +77,28 @@ export class MCPToolHandler {
     /** Attach a ToolExecutionGateway for policy enforcement. */
     setGateway(gateway: ToolExecutionGateway): void {
         this.gateway = gateway;
+    }
+
+    /**
+     * Set the current worker context for tool policy evaluation.
+     * Called by the engine before spawning a worker so that every MCP tool call
+     * made by that worker is evaluated with real identity and policy.
+     */
+    setCurrentWorkerContext(ctx: {
+        masterTaskId: string;
+        phaseId: string;
+        workerId: string;
+        workerPolicy?: AllowedToolsPolicy;
+        isLegacyWorker: boolean;
+    }): void {
+        this.currentWorkerCtx = ctx;
+    }
+
+    /**
+     * Clear the current worker context (e.g., on worker exit).
+     */
+    clearCurrentWorkerContext(): void {
+        this.currentWorkerCtx = null;
     }
 
     /**
@@ -126,14 +157,19 @@ export class MCPToolHandler {
 
             // ── Tool policy gateway evaluation (Phase 1: observe mode) ───────
             if (this.gateway) {
+                const wCtx = this.currentWorkerCtx;
                 const ctx = {
-                    runId: 'unknown',
-                    sessionId: 'unknown',
-                    phaseId: 'unknown',
-                    workerId: 'unknown',
+                    runId: wCtx?.masterTaskId ?? 'unknown',
+                    sessionId: wCtx?.masterTaskId ?? 'unknown',
+                    phaseId: wCtx?.phaseId ?? 'unknown',
+                    workerId: wCtx?.workerId ?? 'unknown',
                     requestedToolId: name,
                 };
-                const decision = await this.gateway.evaluateInvocation(ctx);
+                const decision = await this.gateway.evaluateInvocation(
+                    ctx,
+                    wCtx?.workerPolicy,
+                    wCtx?.isLegacyWorker ?? true,
+                );
                 if (!decision.allowed) {
                     // In observe mode the enforcer returns allowed=true even for
                     // would-be denials, so reaching here means enforcement is

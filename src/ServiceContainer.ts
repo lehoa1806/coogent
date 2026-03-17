@@ -26,6 +26,7 @@ import type { SidebarMenuProvider } from './webview/SidebarMenuProvider.js';
 import type { AgentRegistry } from './agent-selection/AgentRegistry.js';
 import type { ContextPackBuilder } from './context/ContextPackBuilder.js';
 import type { SessionHistoryService } from './session/SessionHistoryService.js';
+import type { ToolExecutionGateway } from './tool-policy/ToolExecutionGateway.js';
 
 /**
  * Centralised container holding all extension service instances.
@@ -61,6 +62,7 @@ export class ServiceContainer {
     agentRegistry: AgentRegistry | undefined;
     contextPackBuilder: ContextPackBuilder | undefined;
     sessionHistoryService: SessionHistoryService | undefined;
+    toolExecutionGateway: ToolExecutionGateway | undefined;
     /** Resolves once MCP server + ArtifactDB are fully initialised. */
     mcpReady: Promise<void> | undefined;
     workspaceRoots: string[] | undefined;
@@ -230,6 +232,7 @@ export type ResolvableServices = {
     agentRegistry: AgentRegistry;
     contextPackBuilder: ContextPackBuilder;
     sessionHistoryService: SessionHistoryService;
+    toolExecutionGateway: ToolExecutionGateway;
     mcpReady: Promise<void>;
     workspaceRoots: string[];
     storageBase: string;
@@ -260,6 +263,7 @@ const RESOLVABLE_KEYS: Record<keyof ResolvableServices, true> = {
     agentRegistry: true,
     contextPackBuilder: true,
     sessionHistoryService: true,
+    toolExecutionGateway: true,
     mcpReady: true,
     workspaceRoots: true,
     storageBase: true,

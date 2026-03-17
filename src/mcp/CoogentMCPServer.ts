@@ -162,6 +162,7 @@ export class CoogentMCPServer {
     private readonly workspaceRoot: string;
     private pluginLoader: PluginLoader | null = null;
     private backupManager: ArtifactDBBackup | null = null;
+    private toolHandler: MCPToolHandler | null = null;
 
     constructor(workspaceRoot: string) {
         this.workspaceRoot = workspaceRoot;
@@ -210,7 +211,8 @@ export class CoogentMCPServer {
         // Register protocol handlers now that DB is ready
         log.info('[CoogentMCPServer] Registering MCP protocol handlers...');
         new MCPResourceHandler(this.server, this.db).register();
-        new MCPToolHandler(this.server, this.db, this.workspaceRoot, this.emitter).register();
+        this.toolHandler = new MCPToolHandler(this.server, this.db, this.workspaceRoot, this.emitter);
+        this.toolHandler.register();
         new MCPPromptHandler(this.server).register();
         log.info('[CoogentMCPServer] MCP protocol handlers registered.');
 
@@ -264,6 +266,38 @@ export class CoogentMCPServer {
     /** Get the underlying MCP `Server` instance for transport wiring. */
     getServer(): Server {
         return this.server;
+    }
+
+    /**
+     * Wire a ToolExecutionGateway into the MCPToolHandler for policy enforcement.
+     * Must be called after `init()` so that the tool handler exists.
+     */
+    setToolGateway(gateway: import('../tool-policy/ToolExecutionGateway.js').ToolExecutionGateway): void {
+        if (this.toolHandler) {
+            this.toolHandler.setGateway(gateway);
+            log.info('[CoogentMCPServer] ToolExecutionGateway wired into MCPToolHandler.');
+        } else {
+            log.warn('[CoogentMCPServer] setToolGateway called before init() — gateway not wired.');
+        }
+    }
+
+    /**
+     * Set the current worker context for tool policy evaluation.
+     * Called before spawning a worker so tool calls carry real identity.
+     */
+    setCurrentWorkerContext(ctx: {
+        masterTaskId: string;
+        phaseId: string;
+        workerId: string;
+        workerPolicy?: import('../tool-policy/types.js').AllowedToolsPolicy;
+        isLegacyWorker: boolean;
+    }): void {
+        this.toolHandler?.setCurrentWorkerContext(ctx);
+    }
+
+    /** Clear the active worker context (e.g., on worker exit). */
+    clearCurrentWorkerContext(): void {
+        this.toolHandler?.clearCurrentWorkerContext();
     }
 
     /** Get the underlying ArtifactDB for direct DB access (e.g., StateManager runbook mirror). */

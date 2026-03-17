@@ -38,6 +38,11 @@ import { ContextPackBuilder } from './context/ContextPackBuilder.js';
 import { SessionRestoreService } from './session/SessionRestoreService.js';
 import { SessionDeleteService } from './session/SessionDeleteService.js';
 import { SessionHistoryService } from './session/SessionHistoryService.js';
+import { ToolRegistry } from './tool-policy/ToolRegistry.js';
+import { ToolPolicyResolver } from './tool-policy/ToolPolicyResolver.js';
+import { ToolPolicyEnforcer } from './tool-policy/ToolPolicyEnforcer.js';
+import { ToolExecutionGateway } from './tool-policy/ToolExecutionGateway.js';
+import type { EnforcementMode } from './tool-policy/types.js';
 
 import type { ServiceContainer } from './ServiceContainer.js';
 import { wireEngine } from './EngineWiring.js';
@@ -179,6 +184,22 @@ export function createServices(
     svc.agentRegistry = new AgentRegistry(primaryRoot);
     log.info('[Coogent] AgentRegistry initialized');
 
+    // ── Tool Policy Gateway ────────────────────────────────────────────
+    const enforcementMode = extConfig.get<string>('enforcementMode', 'observe') as EnforcementMode;
+    const toolRegistry = new ToolRegistry();
+    const toolPolicyResolver = new ToolPolicyResolver(toolRegistry);
+    const toolPolicyEnforcer = new ToolPolicyEnforcer();
+    svc.toolExecutionGateway = new ToolExecutionGateway(
+        toolRegistry,
+        toolPolicyResolver,
+        toolPolicyEnforcer,
+        {
+            defaultPolicy: { mode: 'inherit' },
+            enforcementMode,
+        },
+    );
+    log.info(`[Coogent] ToolExecutionGateway initialized (enforcementMode=${enforcementMode})`);
+
     return {
         config: { tokenLimit, workerTimeoutMs, contextBudgetTokens },
         primaryRoot,
@@ -223,6 +244,11 @@ export function startMCPServer(svc: ServiceContainer, primaryRoot: string): void
     svc.mcpReady = svc.mcpServer.init(globalDir, workspaceId)
         .then(async () => {
             log.info('[Coogent] ArtifactDB initialised (global dir).');
+
+            // Wire ToolExecutionGateway into MCPToolHandler
+            if (svc.toolExecutionGateway) {
+                svc.mcpServer!.setToolGateway(svc.toolExecutionGateway);
+            }
 
             // Initialize ContextPackBuilder now that ArtifactDB is available
             if (svc.contextScoper) {
@@ -367,6 +393,16 @@ export function registerReactiveConfig(
                 svc.adkController?.setMaxConcurrent(
                     updated.get<number>('maxConcurrentWorkers', 4)
                 );
+            }
+
+            // R3: Reactive update for enforcementMode
+            if (e.affectsConfiguration('coogent.enforcementMode')) {
+                const newMode = updated.get<string>('enforcementMode', 'observe') as EnforcementMode;
+                svc.toolExecutionGateway?.setWorkspacePolicy({
+                    defaultPolicy: { mode: 'inherit' },
+                    enforcementMode: newMode,
+                });
+                log.info(`[Coogent] enforcementMode updated to: ${newMode}`);
             }
         })
     );
