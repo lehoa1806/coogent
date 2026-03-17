@@ -8,10 +8,10 @@ import { ERR_WORKER_OUTPUT_VALIDATION_FAILED } from '../../logger/ErrorCodes.js'
 import log from '../../logger/log.js';
 import type { ToolHandlerDeps, MCPTextContent } from '../tool-schemas.js';
 
-export function handleSubmitImplementationPlan(
+export async function handleSubmitImplementationPlan(
     deps: ToolHandlerDeps,
     args: Record<string, unknown>,
-): MCPTextContent {
+): Promise<MCPTextContent> {
     const masterTaskId = MCPValidator.validateMasterTaskId(args['masterTaskId']);
     const markdownContent = MCPValidator.validateString(args['markdown_content'], 'markdown_content', 500_000);
     const phaseId = args['phaseId'] != null
@@ -49,6 +49,11 @@ export function handleSubmitImplementationPlan(
             `[MCPToolHandler] Master implementation plan saved: ${masterTaskId}`
         );
     }
+
+    // Cross-process sync: flush immediately so external MCP server processes
+    // (e.g. the stdio server used by spawned workers) can read this data from
+    // disk without waiting for the debounced 500ms flush window.
+    await deps.db.forceFlush();
 
     return {
         content: [

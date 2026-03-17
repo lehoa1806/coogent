@@ -255,4 +255,5 @@ export type WebviewToHostMessage =
     | { type: 'CMD_SEARCH_SESSIONS'; payload: { query: string } }
     | { type: 'CMD_LOAD_SESSION'; payload: { sessionId: string } }
     | { type: 'CMD_DELETE_SESSION'; payload: { sessionId: string } }
+    | { type: 'CMD_RECOVERY_ACTION'; payload: { failureRecordId: string; action: string; suggestedByModel: boolean } }
     | { type: 'workers:request' };

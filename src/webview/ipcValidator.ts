@@ -94,6 +94,14 @@ export function isValidWebviewMessage(raw: unknown): raw is WebviewToHostMessage
         return p !== undefined && typeof p.sessionId === 'string';
     }
 
+    if (msg.type === 'CMD_RECOVERY_ACTION') {
+        const p = extractPayload(msg);
+        return p !== undefined
+            && typeof p.failureRecordId === 'string'
+            && typeof p.action === 'string'
+            && typeof p.suggestedByModel === 'boolean';
+    }
+
     return false;
 }
 
@@ -142,6 +150,7 @@ type _ExhaustiveWebviewMessageTypes = {
     CMD_SEARCH_SESSIONS: true;
     CMD_LOAD_SESSION: true;
     CMD_DELETE_SESSION: true;
+    CMD_RECOVERY_ACTION: true;
     'workers:request': true;
 };
 

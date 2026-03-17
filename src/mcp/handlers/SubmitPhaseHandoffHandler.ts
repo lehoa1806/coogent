@@ -9,10 +9,10 @@ import log from '../../logger/log.js';
 import type { PhaseHandoff } from '../types.js';
 import type { ToolHandlerDeps, MCPTextContent } from '../tool-schemas.js';
 
-export function handleSubmitPhaseHandoff(
+export async function handleSubmitPhaseHandoff(
     deps: ToolHandlerDeps,
     args: Record<string, unknown>,
-): MCPTextContent {
+): Promise<MCPTextContent> {
     const masterTaskId = MCPValidator.validateMasterTaskId(args['masterTaskId']);
     const phaseId = MCPValidator.validatePhaseId(args['phaseId']);
     // D-3: Pass enforcement opts so the runtime gate matches the schema declaration.
@@ -110,6 +110,10 @@ export function handleSubmitPhaseHandoff(
         `[MCPToolHandler] Phase handoff saved: ${masterTaskId} / ${phaseId} — ` +
         `${decisions.length} decisions, ${modifiedFiles.length} files, ${blockers.length} blockers`
     );
+
+    // Cross-process sync: flush immediately so downstream workers can
+    // read this handoff from disk without waiting for the debounced flush.
+    await deps.db.forceFlush();
 
     // Fire the phaseCompleted event
     deps.emitter.emit('phaseCompleted', handoff);

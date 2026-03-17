@@ -6,6 +6,7 @@
 
 <script lang="ts">
     import type { FailureConsoleRecord } from "../stores/failureConsole.svelte.js";
+    import { postMessage } from "../stores/vscode.svelte.js";
 
     // ── Props ────────────────────────────────────────────────────────────
     interface Props {
@@ -154,6 +155,47 @@
                 </div>
             </div>
         </div>
+
+        <!-- ── Suggested Actions ──────────────────────────────────── -->
+        {#if record.suggestedActions && record.suggestedActions.length > 0}
+            <div class="fc-actions-section">
+                <span class="fc-label">Suggested Actions</span>
+                <div class="fc-actions-list">
+                    {#each record.suggestedActions as suggestion}
+                        <div class="fc-action-item">
+                            <div class="fc-action-row">
+                                <button
+                                    class="fc-action-btn"
+                                    disabled={suggestion.availability === 'disabled'}
+                                    title={suggestion.availability === 'disabled' ? (suggestion.disabledReason ?? 'Action unavailable') : suggestion.title}
+                                    onclick={() => {
+                                        postMessage({
+                                            type: 'CMD_RECOVERY_ACTION',
+                                            payload: {
+                                                failureRecordId: record.id,
+                                                action: suggestion.action,
+                                                suggestedByModel: true,
+                                            },
+                                        });
+                                    }}
+                                >
+                                    {suggestion.title}
+                                </button>
+                                <span
+                                    class="fc-confidence-badge"
+                                    class:fc-confidence-high={suggestion.confidence === 'high'}
+                                    class:fc-confidence-medium={suggestion.confidence === 'medium'}
+                                    class:fc-confidence-low={suggestion.confidence === 'low'}
+                                >
+                                    {suggestion.confidence}
+                                </span>
+                            </div>
+                            <p class="fc-action-rationale">{suggestion.rationale}</p>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+        {/if}
 
         <!-- ── Timeline Block (collapsible, expanded by default) ──── -->
         <button
@@ -651,5 +693,89 @@
     .fc-raw-toggle:hover {
         background: var(--vscode-button-secondaryHoverBackground, var(--vscode-sideBar-background));
         color: var(--vscode-foreground);
+    }
+
+    /* ── Suggested Actions ────────────────────────────────────────── */
+    .fc-actions-section {
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    }
+
+    .fc-actions-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-top: 6px;
+    }
+
+    .fc-action-item {
+        background: var(--vscode-editor-background);
+        border-radius: 4px;
+        padding: 8px 10px;
+        border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    }
+
+    .fc-action-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .fc-action-btn {
+        font-family: var(--vscode-font-family);
+        font-size: 11px;
+        font-weight: 600;
+        padding: 4px 12px;
+        border-radius: 4px;
+        border: 1px solid var(--vscode-button-border, transparent);
+        background: var(--vscode-button-secondaryBackground, color-mix(in srgb, var(--vscode-foreground) 10%, transparent));
+        color: var(--vscode-button-secondaryForeground, var(--vscode-foreground));
+        cursor: pointer;
+        transition: all 0.15s ease;
+        white-space: nowrap;
+    }
+
+    .fc-action-btn:hover:not(:disabled) {
+        background: var(--vscode-button-secondaryHoverBackground, color-mix(in srgb, var(--vscode-foreground) 16%, transparent));
+    }
+
+    .fc-action-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .fc-confidence-badge {
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        padding: 2px 6px;
+        border-radius: 10px;
+        white-space: nowrap;
+    }
+
+    .fc-confidence-high {
+        color: var(--vscode-charts-green, #3fb950);
+        background: color-mix(in srgb, var(--vscode-charts-green, #3fb950) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--vscode-charts-green, #3fb950) 30%, transparent);
+    }
+
+    .fc-confidence-medium {
+        color: var(--vscode-charts-yellow, #d29922);
+        background: color-mix(in srgb, var(--vscode-charts-yellow, #d29922) 12%, transparent);
+        border: 1px solid color-mix(in srgb, var(--vscode-charts-yellow, #d29922) 30%, transparent);
+    }
+
+    .fc-confidence-low {
+        color: var(--vscode-descriptionForeground, #8b949e);
+        background: color-mix(in srgb, var(--vscode-descriptionForeground, #8b949e) 10%, transparent);
+        border: 1px solid color-mix(in srgb, var(--vscode-descriptionForeground, #8b949e) 20%, transparent);
+    }
+
+    .fc-action-rationale {
+        font-size: 11px;
+        line-height: 1.4;
+        color: var(--vscode-descriptionForeground);
+        margin: 4px 0 0 0;
     }
 </style>

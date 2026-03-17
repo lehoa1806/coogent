@@ -368,7 +368,7 @@ All schemas use Zod with explicit `.max()` bounds on strings and arrays to preve
 
 ## Failure Console Pipeline
 
-The **Human-in-the-Loop Failure Console** provides structured, normalised failure records that surface actionable diagnostic information when engine failures occur.
+The **Human-in-the-Loop Failure Console** provides structured, normalised failure records with model-generated recovery suggestions that surface actionable diagnostic information when engine failures occur.
 
 ### Architecture
 
@@ -377,33 +377,75 @@ Engine Failure Path (handleFailure / handleWorkerFailed)
          │
          ├── Build FailurePacket (error code, worker output, phase context)
          │
-         └── FailureAssembler.assemble(packet)
+         └── FailureConsoleCoordinator.build(packet, legalityContext)
                   │
                   ├── FailureClassifier.classify(errorCode)
                   │   └── ERROR_CODE_MAP → { category, severity, scope }
                   │
-                  ├── Build FailureTimeline + FailureEvidence
+                  ├── RecoverySuggester.suggest(category, context)
+                  │   └── Rule table → ranked SuggestedRecoveryAction[]
                   │
-                  ├── FailureConsoleRepository.upsert() (optional persistence)
+                  ├── RecoveryActionRouter.filterSuggestions(suggestions, ctx)
+                  │   └── Annotates each action with availability/disabledReason
                   │
-                  └── Return FailureConsoleRecord
+                  └── FailureAssembler.assemble(packet, suggestedActions)
                            │
-                           └── IPC: FAILURE_CONSOLE_RECORD → Webview
+                           ├── Build FailureTimeline + FailureEvidence
+                           ├── FailureConsoleRepository.upsert() (optional persistence)
+                           │
+                           └── Return FailureConsoleRecord
                                     │
-                                    └── failureConsole store → FailureConsole.svelte
+                                    └── IPC: FAILURE_CONSOLE_RECORD → Webview
+                                             │
+                                             ├── failureConsole store
+                                             └── FailureConsole.svelte
+                                                  └── Recovery action buttons
+                                                       └── CMD_RECOVERY_ACTION → Extension Host
 ```
 
 ### Components
 
 | Component | File | Purpose |
 |---|---|---|
-| Types (11) | `src/types/failure-console.ts` | `FailureConsoleRecord`, `FailureCategory`, `FailureSeverity`, `FailureScope`, `FailureTimeline`, `FailureEvidence`, etc. |
+| Types (11+) | `src/types/failure-console.ts` | `FailureConsoleRecord`, `FailureCategory`, `FailureSeverity`, `FailureScope`, `FailureTimeline`, `FailureEvidence`, `SuggestedRecoveryAction`, etc. |
 | `FailureClassifier` | `src/failure-console/FailureClassifier.ts` | Deterministic error-code-to-classification mapping via `ERROR_CODE_MAP` (`Record<string, ClassificationRule>`) |
-| `FailureAssembler` | `src/failure-console/FailureAssembler.ts` | Orchestrates classification, timeline/evidence building, optional persistence, and UUID generation |
+| `RecoverySuggester` | `src/failure-console/RecoverySuggester.ts` | Heuristic rule-table mapping `FailureCategory` → ranked `SuggestedRecoveryAction[]` with confidence levels (high/medium/low) |
+| `RecoveryActionRouter` | `src/failure-console/RecoveryActionRouter.ts` | Validates action legality against runtime `ActionLegalityContext` (engine state, retry limits, worker availability, phase status) |
+| `FailureConsoleCoordinator` | `src/failure-console/FailureConsoleCoordinator.ts` | Composes classifier → suggester → router → assembler pipeline; error-safe fallback assembles without suggestions |
+| `FailureAssembler` | `src/failure-console/FailureAssembler.ts` | Orchestrates classification, timeline/evidence building, optional persistence, and UUID generation; accepts optional `suggestedActions` |
 | `FailureConsoleRepository` | `src/mcp/repositories/FailureConsoleRepository.ts` | CRUD with `INSERT OR REPLACE` upsert, `workspace_id` tenant isolation |
-| IPC message | `src/types/ipc.ts` | `FAILURE_CONSOLE_RECORD` message type added to `HostToWebviewMessage` union |
-| Svelte store | `webview-ui/src/stores/failureConsole.svelte.ts` | Svelte 5 `$state`/`$derived` rune-based store for failure records |
-| UI component | `webview-ui/src/components/FailureConsole.svelte` | Slide-up panel with severity-coloured cards, progressive disclosure (timeline expanded, advanced collapsed) |
+| IPC messages | `src/types/ipc.ts` | `FAILURE_CONSOLE_RECORD` (host→webview) and `CMD_RECOVERY_ACTION` (webview→host) |
+| Svelte store | `webview-ui/src/stores/failureConsole.svelte.ts` | Svelte 5 `$state`/`$derived` rune-based store for failure records with `SuggestedRecoveryAction` types |
+| UI component | `webview-ui/src/components/FailureConsole.svelte` | Slide-up panel with severity-coloured cards, recovery action buttons with confidence badges, progressive disclosure |
+
+### Recovery Suggestion Pipeline
+
+The `RecoverySuggester` uses a declarative `ReadonlyMap<FailureCategory, SuggestionRule[]>` rule table:
+
+| Action | Applicable Categories | Confidence |
+|---|---|---|
+| `retry` | `tool_execution`, `worker_crash`, `llm_error` | high/medium |
+| `retry_with_more_context` | `context_overflow`, `evaluation_failure` | high/medium |
+| `edit_success_criteria` | All failed phases | medium |
+| `skip_phase` | Non-critical phases | low |
+| `inspect_repair_prompt` | All categories (fallback) | low |
+
+Categories not in the explicit rule table (`success_criteria_mismatch`, `scheduler_stall`, `planner_invalid_output`) fall through to the `inspect_repair_prompt` fallback. Suggestions are sorted by confidence rank (high=3, medium=2, low=1).
+
+### Action Legality Validation
+
+The `RecoveryActionRouter` validates each action against an `ActionLegalityContext`:
+
+| Action | Legality Rule |
+|---|---|
+| `retry` | Engine not completed/aborted AND `retryCount < maxRetries` |
+| `retry_with_more_context` | Category not `context_overflow` AND `retryCount < maxRetries` |
+| `skip_phase` | Not a critical phase (`!isCriticalPhase`) |
+| `edit_success_criteria` | Phase status is `'failed'` |
+| `inspect_repair_prompt` | Always enabled |
+| `abort` | Engine not already completed/aborted |
+
+`filterSuggestions` annotates (not removes) disabled suggestions with a `disabledReason`, allowing the UI to display them greyed-out.
 
 ### Classification Rules
 
@@ -419,12 +461,17 @@ The `FailureClassifier` maps canonical `ErrorCode` values to `{ category, severi
 
 Unknown error codes default to `{ category: 'unknown', severity: 'recoverable', scope: 'phase' }`.
 
+### Session Restore
+
+`EvaluationOrchestrator.restoreFailureRecords(masterTaskId)` rehydrates persisted failure records from `FailureConsoleRepository` and emits `FAILURE_CONSOLE_RECORD` IPC messages to the webview on session load.
+
 ### Design Decisions
 
 - **Failure isolation**: All failure console code is wrapped in `try/catch` with `log.warn` — failures in the console pipeline never impact the existing engine failure handling
-- **Stage 1 scope**: `suggestedActions` is always an empty array; model-generated suggestions are deferred to a future stage
-- **sessionId placeholder**: Currently set to empty string; will be populated when `SessionController` integration is added
+- **Coordinator composition**: `FailureConsoleCoordinator` composes `FailureAssembler` internally rather than duplicating evidence-building logic; error-safe fallback assembles without suggestions if the pipeline throws
+- **Annotation over removal**: `filterSuggestions` annotates disabled actions with `disabledReason` rather than removing them, enabling greyed-out UI display
 - **Parallel mode gap**: `applyVerdictInPlace` does not yet assemble failure console records; only the shared `handleFailure` and `handleWorkerFailed` paths do
+- **Stub handler**: `CMD_RECOVERY_ACTION` in `messageRouter.ts` is currently a stub — engine-side dispatch deferred to a follow-up
 
 ---
 

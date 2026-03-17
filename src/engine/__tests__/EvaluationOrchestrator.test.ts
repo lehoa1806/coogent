@@ -33,6 +33,7 @@ function makeMockEngine() {
         stopStallWatchdog: jest.fn(),
         addHealingTimer: jest.fn(),
         removeHealingTimer: jest.fn(),
+        getState: jest.fn().mockReturnValue('ERROR_PAUSED'),
     } as any;
 }
 
@@ -205,8 +206,8 @@ describe('EvaluationOrchestrator — failure console record emission', () => {
     let orchestrator: EvaluationOrchestrator;
     let mockDB: ReturnType<typeof makeMockDB>;
 
-    const mockAssembler = {
-        assemble: jest.fn().mockReturnValue({
+    const mockCoordinator = {
+        build: jest.fn().mockReturnValue({
             id: 'fc-test-001',
             runId: 'test-run',
             sessionId: '',
@@ -228,11 +229,11 @@ describe('EvaluationOrchestrator — failure console record emission', () => {
         orchestrator = new EvaluationOrchestrator(engine, healer, null);
         mockDB = makeMockDB();
         orchestrator.setArtifactDB(mockDB, 'task-001');
-        mockAssembler.assemble.mockClear();
+        mockCoordinator.build.mockClear();
     });
 
-    it('handleFailure emits FAILURE_CONSOLE_RECORD when FailureAssembler is set', async () => {
-        orchestrator.setFailureAssembler(mockAssembler as any);
+    it('handleFailure emits FAILURE_CONSOLE_RECORD when FailureConsoleCoordinator is set', async () => {
+        orchestrator.setFailureConsoleCoordinator(mockCoordinator as any);
 
         const phase = makePhase({ max_retries: 0 });
         const runbook = { phases: [phase], status: 'running', project_id: 'test-project' };
@@ -241,8 +242,8 @@ describe('EvaluationOrchestrator — failure console record emission', () => {
         // Trigger failure path via handleWorkerExited with failing exit code
         await orchestrator.handleWorkerExited(phase.id as number, 1, '', 'error text', true);
 
-        // The assembler should have been called
-        expect(mockAssembler.assemble).toHaveBeenCalledTimes(1);
+        // The coordinator should have been called
+        expect(mockCoordinator.build).toHaveBeenCalledTimes(1);
         // A FAILURE_CONSOLE_RECORD message should have been emitted
         expect(engine.emitUIMessage).toHaveBeenCalledWith(
             expect.objectContaining({
@@ -256,8 +257,8 @@ describe('EvaluationOrchestrator — failure console record emission', () => {
         );
     });
 
-    it('handleWorkerFailed emits FAILURE_CONSOLE_RECORD when FailureAssembler is set', async () => {
-        orchestrator.setFailureAssembler(mockAssembler as any);
+    it('handleWorkerFailed emits FAILURE_CONSOLE_RECORD when FailureConsoleCoordinator is set', async () => {
+        orchestrator.setFailureConsoleCoordinator(mockCoordinator as any);
 
         const phase = makePhase({ max_retries: 0 });
         const runbook = { phases: [phase], status: 'running', project_id: 'test-project' };
@@ -265,11 +266,15 @@ describe('EvaluationOrchestrator — failure console record emission', () => {
 
         await orchestrator.handleWorkerFailed(phase, true, 'timeout');
 
-        expect(mockAssembler.assemble).toHaveBeenCalledTimes(1);
-        // Verify the error code matches the reason
-        expect(mockAssembler.assemble).toHaveBeenCalledWith(
+        expect(mockCoordinator.build).toHaveBeenCalledTimes(1);
+        // Verify that build was called with a packet containing the runId and a legality context
+        expect(mockCoordinator.build).toHaveBeenCalledWith(
             expect.objectContaining({
                 runId: 'test-project',
+            }),
+            expect.objectContaining({
+                engineState: expect.any(String),
+                phaseId: expect.any(Number),
             }),
             'WORKER_TIMEOUT'
         );
@@ -281,7 +286,7 @@ describe('EvaluationOrchestrator — failure console record emission', () => {
     });
 
     it('handleWorkerFailed with crash reason uses WORKER_CRASH error code', async () => {
-        orchestrator.setFailureAssembler(mockAssembler as any);
+        orchestrator.setFailureConsoleCoordinator(mockCoordinator as any);
 
         const phase = makePhase({ max_retries: 0 });
         const runbook = { phases: [phase], status: 'running', project_id: 'proj-1' };
@@ -289,22 +294,23 @@ describe('EvaluationOrchestrator — failure console record emission', () => {
 
         await orchestrator.handleWorkerFailed(phase, true, 'crash');
 
-        expect(mockAssembler.assemble).toHaveBeenCalledWith(
+        expect(mockCoordinator.build).toHaveBeenCalledWith(
+            expect.anything(),
             expect.anything(),
             'WORKER_CRASH'
         );
     });
 
-    it('does not emit FAILURE_CONSOLE_RECORD when no FailureAssembler is set', async () => {
-        // Do NOT call setFailureAssembler
+    it('does not emit FAILURE_CONSOLE_RECORD when no FailureConsoleCoordinator is set', async () => {
+        // Do NOT call setFailureConsoleCoordinator
         const phase = makePhase({ max_retries: 0 });
         const runbook = { phases: [phase], status: 'running', project_id: 'test-project' };
         engine.getRunbook.mockReturnValue(runbook);
 
         await orchestrator.handleWorkerExited(phase.id as number, 1, '', 'error', true);
 
-        // Should not call assembler at all
-        expect(mockAssembler.assemble).not.toHaveBeenCalled();
+        // Should not call coordinator at all
+        expect(mockCoordinator.build).not.toHaveBeenCalled();
         // No FAILURE_CONSOLE_RECORD should be emitted
         const fcMessages = engine.emitUIMessage.mock.calls.filter(
             (call: any[]) => call[0]?.type === 'FAILURE_CONSOLE_RECORD'
@@ -312,13 +318,13 @@ describe('EvaluationOrchestrator — failure console record emission', () => {
         expect(fcMessages).toHaveLength(0);
     });
 
-    it('does not break existing behavior when assembler throws', async () => {
-        const throwingAssembler = {
-            assemble: jest.fn().mockImplementation(() => {
-                throw new Error('Assembler exploded');
+    it('does not break existing behavior when coordinator throws', async () => {
+        const throwingCoordinator = {
+            build: jest.fn().mockImplementation(() => {
+                throw new Error('Coordinator exploded');
             }),
         };
-        orchestrator.setFailureAssembler(throwingAssembler as any);
+        orchestrator.setFailureConsoleCoordinator(throwingCoordinator as any);
 
         const phase = makePhase({ max_retries: 0 });
         const runbook = { phases: [phase], status: 'running', project_id: 'test-project' };

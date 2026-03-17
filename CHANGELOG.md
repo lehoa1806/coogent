@@ -4,6 +4,26 @@ All notable changes to Coogent are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [Unreleased]
+
+### Added
+
+- **RecoveryActionRouter** (`src/failure-console/RecoveryActionRouter.ts`) — Pure-logic action legality validator; checks engine state, retry limits, phase criticality, and worker availability per recovery action
+- **RecoverySuggester** (`src/failure-console/RecoverySuggester.ts`) — Heuristic rule-table engine generating ranked recovery suggestions (high/medium/low confidence) per failure category
+- **FailureConsoleCoordinator** (`src/failure-console/FailureConsoleCoordinator.ts`) — Composes classifier → suggester → router → assembler pipeline with error-safe fallback
+- **Recovery action buttons** (`webview-ui/src/components/FailureConsole.svelte`) — Actionable recovery buttons with confidence badges and rationale tooltips in the failure console UI
+- **`CMD_RECOVERY_ACTION` IPC message** (`src/types/ipc.ts`) — New webview→host message type for dispatching recovery commands from the UI
+- **Session restore for failure records** (`src/engine/EvaluationOrchestrator.ts`) — `restoreFailureRecords()` rehydrates persisted failure records from `FailureConsoleRepository` on session load
+
+### Changed
+
+- **FailureAssembler** — `assemble()` now accepts optional `suggestedActions` parameter (default `[]`) for backward compatibility
+- **EvaluationOrchestrator** — Replaced direct `FailureAssembler` usage with `FailureConsoleCoordinator` for the full classify→suggest→route→assemble pipeline
+- **PlannerWiring** — Instantiates the full coordinator pipeline (classifier → suggester → router → coordinator)
+- **Failure console webview store** (`webview-ui/src/stores/failureConsole.svelte.ts`) — Updated types to include `SuggestedRecoveryAction` with availability/disabledReason fields
+- **IPC exhaustiveness guards** — `ipcValidator`, `messageRouter`, and `ipcContract` test updated for `CMD_RECOVERY_ACTION`
+
+---
 
 ## [0.3.0] — 2026-03-14
 

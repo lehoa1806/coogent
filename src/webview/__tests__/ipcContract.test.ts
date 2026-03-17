@@ -70,6 +70,7 @@ const WEBVIEW_TO_HOST_TYPES: WebviewToHostMessageType[] = [
     'CMD_SEARCH_SESSIONS',
     'CMD_LOAD_SESSION',
     'CMD_DELETE_SESSION',
+    'CMD_RECOVERY_ACTION',
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -145,6 +146,7 @@ function validateWebviewMessage(msg: WebviewToHostMessage): string {
         case 'CMD_SEARCH_SESSIONS': return msg.payload.query;
         case 'CMD_LOAD_SESSION': return msg.payload.sessionId;
         case 'CMD_DELETE_SESSION': return msg.payload.sessionId;
+        case 'CMD_RECOVERY_ACTION': return msg.payload.failureRecordId;
         default: {
             const _exhaustive: never = msg;
             return _exhaustive;

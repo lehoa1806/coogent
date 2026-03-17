@@ -67,6 +67,14 @@ export class ArtifactDB {
     private readonly dbPath: string;
     private readonly workspaceId: string;
 
+    /**
+     * Temporary workspace scope override for cross-workspace tool calls.
+     * When set, repository accessors use this instead of the instance-level
+     * workspaceId. Set/cleared by MCPToolHandler around each tool call when
+     * the worker belongs to a different workspace than the stdio server.
+     */
+    private _workspaceOverride: string | null = null;
+
     /** Cached sql.js factory for creating temporary merge databases during flush. */
     private readonly SQL: SqlJsStatic;
 
@@ -96,6 +104,49 @@ export class ArtifactDB {
         this.backupManager = mgr;
     }
 
+    // ── Workspace Scope Override ─────────────────────────────────────────
+
+    /**
+     * The effective workspace ID for the current context.
+     * Returns the override if active, otherwise the instance default.
+     */
+    get effectiveWorkspaceId(): string {
+        return this._workspaceOverride ?? this.workspaceId;
+    }
+
+    /**
+     * Temporarily override the workspace scope for cross-workspace tool calls.
+     * Invalidates cached repository instances so they pick up the new scope.
+     *
+     * Must be paired with `clearWorkspaceOverride()` after the tool call.
+     * Safe in single-threaded Node.js — MCP tool calls are serialized.
+     */
+    setWorkspaceOverride(workspaceId: string): void {
+        this._workspaceOverride = workspaceId;
+        this.invalidateRepositories();
+    }
+
+    /**
+     * Clear the workspace scope override, reverting to instance default.
+     * Invalidates cached repository instances.
+     */
+    clearWorkspaceOverride(): void {
+        this._workspaceOverride = null;
+        this.invalidateRepositories();
+    }
+
+    /** Reset all cached repository instances so the next access uses the current workspaceId. */
+    private invalidateRepositories(): void {
+        this._tasks = undefined;
+        this._phases = undefined;
+        this._handoffs = undefined;
+        this._verdicts = undefined;
+        this._sessions = undefined;
+        this._audits = undefined;
+        this._contextManifests = undefined;
+        this._failureConsole = undefined;
+    }
+
     // ── Repository accessors (lazy-initialized) ──────────────────────────
     private _tasks: TaskRepository | undefined;
     private _phases: PhaseRepository | undefined;
@@ -108,42 +159,42 @@ export class ArtifactDB {
 
     /** Task aggregate repository. */
     get tasks(): TaskRepository {
-        return (this._tasks ??= new TaskRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
+        return (this._tasks ??= new TaskRepository(this.db, () => this.scheduleFlush(), this.effectiveWorkspaceId));
     }
 
     /** Phase aggregate repository (plans, outputs, logs). */
     get phases(): PhaseRepository {
-        return (this._phases ??= new PhaseRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
+        return (this._phases ??= new PhaseRepository(this.db, () => this.scheduleFlush(), this.effectiveWorkspaceId));
     }
 
     /** Handoff repository. */
     get handoffs(): HandoffRepository {
-        return (this._handoffs ??= new HandoffRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
+        return (this._handoffs ??= new HandoffRepository(this.db, () => this.scheduleFlush(), this.effectiveWorkspaceId));
     }
 
     /** Verdict repository (evaluations + healing attempts). */
     get verdicts(): VerdictRepository {
-        return (this._verdicts ??= new VerdictRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
+        return (this._verdicts ??= new VerdictRepository(this.db, () => this.scheduleFlush(), this.effectiveWorkspaceId));
     }
 
     /** Session repository. */
     get sessions(): SessionRepository {
-        return (this._sessions ??= new SessionRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
+        return (this._sessions ??= new SessionRepository(this.db, () => this.scheduleFlush(), this.effectiveWorkspaceId));
     }
 
     /** Audit repository (plan revisions + selection audits). */
     get audits(): AuditRepository {
-        return (this._audits ??= new AuditRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
+        return (this._audits ??= new AuditRepository(this.db, () => this.scheduleFlush(), this.effectiveWorkspaceId));
     }
 
     /** Context manifest repository. */
     get contextManifests(): ContextManifestRepository {
-        return (this._contextManifests ??= new ContextManifestRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
+        return (this._contextManifests ??= new ContextManifestRepository(this.db, () => this.scheduleFlush(), this.effectiveWorkspaceId));
     }
 
     /** Failure console record repository. */
     get failureConsole(): FailureConsoleRepository {
-        return (this._failureConsole ??= new FailureConsoleRepository(this.db, () => this.scheduleFlush(), this.workspaceId));
+        return (this._failureConsole ??= new FailureConsoleRepository(this.db, () => this.scheduleFlush(), this.effectiveWorkspaceId));
     }
 
     /**
