@@ -403,9 +403,28 @@ export class PlannerAgent extends EventEmitter {
             const errorMsg = `Planner agent exited with code ${exitCode}. Detail: ${detail.slice(0, 500)}`;
             log.error(`[PlannerAgent] ERROR: ${errorMsg}`);
 
-            // Emit timeout-style event so the user can attempt retry parse
-            this.emit('plan:status', 'timeout', errorMsg);
-            this.emit('plan:timeout', this.accumulatedOutput.length > 0);
+            // Attempt recovery: the chat agent may have written .task-runbook.json
+            // before response.md, causing the file watcher to time out even though
+            // the runbook is available on disk.
+            this.emit('plan:status', 'parsing', 'Checking for runbook on disk...');
+            this.tryReadRunbookFromDisk()
+                .then(diskRunbook => {
+                    if (diskRunbook) {
+                        this.planRetryCount = 0;
+                        log.info(`[PlannerAgent] Recovery: Plan loaded from .task-runbook.json after exit code ${exitCode}`);
+                        this.draft = diskRunbook;
+                        this.emit('plan:status', 'ready', 'Plan recovered from disk');
+                        this.emit('plan:generated', diskRunbook, this.fileTree);
+                        return;
+                    }
+                    // No runbook on disk — emit timeout as before
+                    this.emit('plan:status', 'timeout', errorMsg);
+                    this.emit('plan:timeout', this.accumulatedOutput.length > 0);
+                })
+                .catch(() => {
+                    this.emit('plan:status', 'timeout', errorMsg);
+                    this.emit('plan:timeout', this.accumulatedOutput.length > 0);
+                });
             return;
         }
 
