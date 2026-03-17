@@ -291,6 +291,7 @@ export class CoogentMCPServer {
         workerId: string;
         workerPolicy?: import('../tool-policy/types.js').AllowedToolsPolicy;
         isLegacyWorker: boolean;
+        workspaceId?: string;
     }): void {
         this.toolHandler?.setCurrentWorkerContext(ctx);
     }
