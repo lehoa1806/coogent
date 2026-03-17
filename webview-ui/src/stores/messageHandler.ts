@@ -7,6 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { appState, appendPhaseOutput } from './vscode.svelte.js';
+import { addFailureRecord } from './failureConsole.svelte.js';
 import type { HostToWebviewMessage, Phase } from '../types.js';
 
 /**
@@ -248,6 +249,12 @@ function handleMessage(msg: HostToWebviewMessage): void {
         // ── Restore prompt (git pre-flight cancel) ─────────────────────
         case 'RESTORE_PROMPT': {
             appState.lastPrompt = msg.payload.prompt;
+            break;
+        }
+
+        // ── Failure console record ──────────────────────────────────────
+        case 'FAILURE_CONSOLE_RECORD': {
+            addFailureRecord(msg.payload.record);
             break;
         }
 

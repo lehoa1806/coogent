@@ -35,6 +35,7 @@ const HOST_TO_WEBVIEW_TYPES: HostToWebviewMessageType[] = [
     'SUGGESTION_DATA',
     'ATTACHMENT_SELECTED',
     'RESTORE_PROMPT',
+    'FAILURE_CONSOLE_RECORD',
     'workers:loaded',
 ];
 
@@ -100,6 +101,7 @@ function validateHostMessage(msg: HostToWebviewMessage): string {
         case 'SUGGESTION_DATA': return String(msg.payload.mentions.length);
         case 'ATTACHMENT_SELECTED': return String(msg.payload.paths.length);
         case 'RESTORE_PROMPT': return msg.payload.prompt;
+        case 'FAILURE_CONSOLE_RECORD': return msg.payload.record.id;
         case 'workers:loaded': return String(msg.workers.length);
         default: {
             // Compile-time exhaustiveness check

@@ -4,12 +4,16 @@
 // Sprint 1 Extract: Evaluation cluster from Engine.ts.
 // Handles onWorkerExited, evaluatePhaseResult, applyVerdict, applyVerdictInPlace.
 
+import { randomUUID } from 'node:crypto';
 import log from '../logger/log.js';
 import { EngineEvent, asTimestamp, type Phase, type EvaluationResult } from '../types/index.js';
+import type { FailurePacket } from '../types/failure-console.js';
+import type { ErrorCode } from '../types/ipc.js';
 import type { EngineInternals } from './EngineInternals.js';
 import type { SelfHealingController } from './SelfHealing.js';
 import type { EvaluatorRegistryV2 } from '../evaluators/EvaluatorRegistry.js';
 import type { ArtifactDB } from '../mcp/ArtifactDB.js';
+import type { FailureAssembler } from '../failure-console/FailureAssembler.js';
 
 /**
  * Extracted evaluation logic from Engine.
@@ -20,6 +24,7 @@ import type { ArtifactDB } from '../mcp/ArtifactDB.js';
 export class EvaluationOrchestrator {
     private db: ArtifactDB | undefined;
     private masterTaskId: string = '';
+    private failureAssembler?: FailureAssembler;
 
     constructor(
         private readonly engine: EngineInternals,
@@ -33,6 +38,13 @@ export class EvaluationOrchestrator {
     setArtifactDB(db: ArtifactDB, masterTaskId: string): void {
         this.db = db;
         this.masterTaskId = masterTaskId;
+    }
+
+    /**
+     * Inject the FailureAssembler for failure console record creation.
+     */
+    setFailureAssembler(assembler: FailureAssembler): void {
+        this.failureAssembler = assembler;
     }
 
     /**
@@ -313,6 +325,34 @@ export class EvaluationOrchestrator {
                 phaseId: phase.id,
             },
         });
+
+        // ── Failure console record assembly (purely additive) ────────────
+        try {
+            if (this.failureAssembler) {
+                const packet: FailurePacket = {
+                    runId: runbook.project_id || '',
+                    sessionId: '', // Will be populated when SessionController is connected
+                    ...(phase.mcpPhaseId !== undefined ? { phaseId: phase.mcpPhaseId } : {}),
+                    timeline: [{
+                        eventId: randomUUID(),
+                        timestamp: Date.now(),
+                        source: 'evaluator' as const,
+                        summary: result.reason || `Phase ${phase.id} failed`,
+                        isRootCandidate: true,
+                    }],
+                    latestError: stderr?.slice(-4096),
+                    ...(phase.success_criteria ? { successCriteria: [phase.success_criteria] } : {}),
+                };
+                const errorCode: ErrorCode = 'PHASE_FAILED';
+                const record = this.failureAssembler.assemble(packet, errorCode);
+                this.engine.emitUIMessage({
+                    type: 'FAILURE_CONSOLE_RECORD',
+                    payload: { record },
+                });
+            }
+        } catch (err) {
+            log.warn('[EvaluationOrchestrator] Failure console record assembly failed (non-fatal):', err);
+        }
     }
 
     /**
@@ -399,6 +439,34 @@ export class EvaluationOrchestrator {
                 phaseId: phase.id,
             },
         });
+
+        // ── Failure console record assembly (purely additive) ────────────
+        try {
+            if (this.failureAssembler) {
+                const packet: FailurePacket = {
+                    runId: runbook.project_id || '',
+                    sessionId: '', // Will be populated when SessionController is connected
+                    ...(phase.mcpPhaseId !== undefined ? { phaseId: phase.mcpPhaseId } : {}),
+                    timeline: [{
+                        eventId: randomUUID(),
+                        timestamp: Date.now(),
+                        source: 'worker' as const,
+                        summary: `Phase ${phase.id} ${reasonLabel}`,
+                        isRootCandidate: true,
+                    }],
+                    latestError: syntheticStderr,
+                    ...(phase.success_criteria ? { successCriteria: [phase.success_criteria] } : {}),
+                };
+                const errorCode: ErrorCode = reason === 'timeout' ? 'WORKER_TIMEOUT' : 'WORKER_CRASH';
+                const record = this.failureAssembler.assemble(packet, errorCode);
+                this.engine.emitUIMessage({
+                    type: 'FAILURE_CONSOLE_RECORD',
+                    payload: { record },
+                });
+            }
+        } catch (err) {
+            log.warn('[EvaluationOrchestrator] Failure console record assembly failed (non-fatal):', err);
+        }
     }
 
     /**

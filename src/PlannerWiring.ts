@@ -12,6 +12,8 @@ import type { ServiceContainer } from './ServiceContainer.js';
 import type { ArtifactDB } from './mcp/ArtifactDB.js';
 import { getDebugDir, IPC_RESPONSE_FILE } from './constants/paths.js';
 import type { Runbook, EngineState } from './types/index.js';
+import { FailureClassifier } from './failure-console/FailureClassifier.js';
+import { FailureAssembler } from './failure-console/FailureAssembler.js';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  wirePlanner — connects PlannerAgent events to Engine and MCP
@@ -57,6 +59,16 @@ export function wirePlanner(
                         svc.sessionManager?.setArtifactDB(db);
                         svc.handoffExtractor?.setArtifactDB(db, sessionDirName);
                         log.info('[PlannerWiring] StateManager + SessionManager + HandoffExtractor wired to ArtifactDB.');
+
+                        // Wire FailureAssembler into EvaluationOrchestrator
+                        try {
+                            const classifier = new FailureClassifier();
+                            const assembler = new FailureAssembler(classifier, db.failureConsole);
+                            engine.getEvaluation().setFailureAssembler(assembler);
+                            log.info('[PlannerWiring] FailureAssembler wired to EvaluationOrchestrator.');
+                        } catch (err) {
+                            log.warn('[PlannerWiring] Failed to wire FailureAssembler (non-fatal):', err);
+                        }
                     }
                 }
 

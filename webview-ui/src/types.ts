@@ -219,6 +219,7 @@ export type HostToWebviewMessage =
     | { type: 'RESTORE_PROMPT'; payload: { prompt: string } }
     | { type: 'SESSION_LIST'; payload: { sessions: SessionSummary[] } }
     | { type: 'SESSION_SEARCH_RESULTS'; payload: { query: string; sessions: SessionSummary[] } }
+    | { type: 'FAILURE_CONSOLE_RECORD'; payload: { record: import('./stores/failureConsole.svelte.js').FailureConsoleRecord } }
     | { type: 'workers:loaded'; workers: WorkerProfile[] };
 
 // ═══════════════════════════════════════════════════════════════════════════════

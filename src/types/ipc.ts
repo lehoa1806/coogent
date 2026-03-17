@@ -203,6 +203,14 @@ export interface RestorePromptMessage {
     };
 }
 
+/** Failure console record — structured failure data for the failure console UI. */
+export interface FailureConsoleRecordMessage {
+    readonly type: 'FAILURE_CONSOLE_RECORD';
+    readonly payload: {
+        record: import('./failure-console.js').FailureConsoleRecord;
+    };
+}
+
 /** Workers loaded message — sends loaded worker profiles to the Webview. */
 export interface WorkersLoadedMessage {
     readonly type: 'workers:loaded';
@@ -232,6 +240,7 @@ export type HostToWebviewMessage =
     | SuggestionDataMessage
     | AttachmentSelectedMessage
     | RestorePromptMessage
+    | FailureConsoleRecordMessage
     | WorkersLoadedMessage;
 
 // ═══════════════════════════════════════════════════════════════════════════════

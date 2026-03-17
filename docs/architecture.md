@@ -26,11 +26,12 @@
 18. [MCP Plugin System](#mcp-plugin-system)
 19. [MCP Validator & Error Codes](#mcp-validator--error-codes)
 20. [End-to-End Request Lifecycle](#end-to-end-request-lifecycle)
-21. [Webview Architecture](#webview-architecture)
-22. [Build Pipeline](#build-pipeline)
-23. [Persistence & Crash Recovery](#persistence--crash-recovery)
-24. [Git Sandboxing](#git-sandboxing)
-25. [Tech Stack](#tech-stack)
+21. [Failure Console Pipeline](#failure-console-pipeline)
+22. [Webview Architecture](#webview-architecture)
+23. [Build Pipeline](#build-pipeline)
+24. [Persistence & Crash Recovery](#persistence--crash-recovery)
+25. [Git Sandboxing](#git-sandboxing)
+26. [Tech Stack](#tech-stack)
 
 ---
 
@@ -208,7 +209,7 @@ The `CoogentMCPServer` is the single source of truth for all runtime artifacts.
 Artifacts are persisted in a **SQLite database** (via `sql.js` WASM) managed by `ArtifactDB`:
 
 - **Durability**: Database file (`artifacts.db`) stored under extension-managed storage for cross-session access
-- **Schema**: 11 tenant-owned tables + 1 system table, with monotonic `schema_version` tracking (current: v11)
+- **Schema**: 12 tenant-owned tables + 1 system table, with monotonic `schema_version` tracking (current: v12)
 - **In-Memory Cache**: Reads are served from an in-memory `sql.js` instance; writes schedule a debounced flush to disk
 - **Multi-Window Safety**: Uses a reload-before-write merge strategy — see [Multi-Window ArtifactDB Concurrency](#multi-window-artifactdb-concurrency)
 - **Workspace Tenanting**: All tenant-owned tables include a `workspace_id` column — see [Workspace Identity & Tenanting](#workspace-identity--tenanting)
@@ -228,6 +229,7 @@ Artifacts are persisted in a **SQLite database** (via `sql.js` WASM) managed by 
 | `plan_revisions` | Plan revision history for audit trail (draft JSON, raw LLM output, compilation manifest) |
 | `selection_audits` | Agent selection decision records |
 | `context_manifests` | Context pack assembly manifests for observability (per-phase budget and mode decisions) |
+| `failure_console_records` | Normalised failure records with classification, timeline, evidence, and contributing event IDs |
 | `schema_version` | Migration version tracking (system table, not tenant-scoped) |
 
 Schema DDL and migration logic are extracted into `ArtifactDBSchema.ts` (`src/mcp/ArtifactDBSchema.ts`). Migrations are idempotent — `initializeSchema()` is safe to call on every database open. Column additions use `ALTER TABLE ADD COLUMN` wrapped in try/catch for idempotency.
@@ -361,6 +363,68 @@ V2 enhancement: when a token budget is provided, the selector estimates the cost
 - Returns a discriminated union: `{ success: true, data }` or `{ success: false, error }`
 
 All schemas use Zod with explicit `.max()` bounds on strings and arrays to prevent unbounded payloads.
+
+---
+
+## Failure Console Pipeline
+
+The **Human-in-the-Loop Failure Console** provides structured, normalised failure records that surface actionable diagnostic information when engine failures occur.
+
+### Architecture
+
+```
+Engine Failure Path (handleFailure / handleWorkerFailed)
+         │
+         ├── Build FailurePacket (error code, worker output, phase context)
+         │
+         └── FailureAssembler.assemble(packet)
+                  │
+                  ├── FailureClassifier.classify(errorCode)
+                  │   └── ERROR_CODE_MAP → { category, severity, scope }
+                  │
+                  ├── Build FailureTimeline + FailureEvidence
+                  │
+                  ├── FailureConsoleRepository.upsert() (optional persistence)
+                  │
+                  └── Return FailureConsoleRecord
+                           │
+                           └── IPC: FAILURE_CONSOLE_RECORD → Webview
+                                    │
+                                    └── failureConsole store → FailureConsole.svelte
+```
+
+### Components
+
+| Component | File | Purpose |
+|---|---|---|
+| Types (11) | `src/types/failure-console.ts` | `FailureConsoleRecord`, `FailureCategory`, `FailureSeverity`, `FailureScope`, `FailureTimeline`, `FailureEvidence`, etc. |
+| `FailureClassifier` | `src/failure-console/FailureClassifier.ts` | Deterministic error-code-to-classification mapping via `ERROR_CODE_MAP` (`Record<string, ClassificationRule>`) |
+| `FailureAssembler` | `src/failure-console/FailureAssembler.ts` | Orchestrates classification, timeline/evidence building, optional persistence, and UUID generation |
+| `FailureConsoleRepository` | `src/mcp/repositories/FailureConsoleRepository.ts` | CRUD with `INSERT OR REPLACE` upsert, `workspace_id` tenant isolation |
+| IPC message | `src/types/ipc.ts` | `FAILURE_CONSOLE_RECORD` message type added to `HostToWebviewMessage` union |
+| Svelte store | `webview-ui/src/stores/failureConsole.svelte.ts` | Svelte 5 `$state`/`$derived` rune-based store for failure records |
+| UI component | `webview-ui/src/components/FailureConsole.svelte` | Slide-up panel with severity-coloured cards, progressive disclosure (timeline expanded, advanced collapsed) |
+
+### Classification Rules
+
+The `FailureClassifier` maps canonical `ErrorCode` values to `{ category, severity, scope }`:
+
+| Category | Example Error Codes | Severity |
+|---|---|---|
+| `tool_execution` | `TOOL_EXECUTION_FAILED`, `TOOL_TIMEOUT` | `recoverable` |
+| `worker_crash` | `WORKER_CRASH`, `WORKER_TIMEOUT` | `hard_failure` |
+| `evaluation_failure` | `EVALUATION_FAILED`, `EVALUATOR_UNKNOWN` | `recoverable` |
+| `context_overflow` | `TOKEN_BUDGET_EXCEEDED` | `warning` |
+| `llm_error` | `LLM_REFUSED` | `recoverable` |
+
+Unknown error codes default to `{ category: 'unknown', severity: 'recoverable', scope: 'phase' }`.
+
+### Design Decisions
+
+- **Failure isolation**: All failure console code is wrapped in `try/catch` with `log.warn` — failures in the console pipeline never impact the existing engine failure handling
+- **Stage 1 scope**: `suggestedActions` is always an empty array; model-generated suggestions are deferred to a future stage
+- **sessionId placeholder**: Currently set to empty string; will be populated when `SessionController` integration is added
+- **Parallel mode gap**: `applyVerdictInPlace` does not yet assemble failure console records; only the shared `handleFailure` and `handleWorkerFailed` paths do
 
 ---
 
